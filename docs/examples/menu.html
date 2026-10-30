@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Meal Plan: May 31 – Jun 6</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #f8fafc; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState } = React;
+
+const PREP_SESSIONS = [
+  {
+    id: "sunday",
+    title: "Sunday Prep Session (~1.5 hours)",
+    covers: "Covers Sunday dinner through Wednesday",
+    tasks: [
+      {
+        name: "Start the Gravlax (cures 48h — ready Tuesday)",
+        time: "15 min",
+        instructions: "Take ~300g of the salmon fillet (skin on if possible). Mix cure: 30g coarse salt + 25g sugar + 1 tbsp crushed black pepper + a big bunch of chopped dill (stalks too). Optional: 1 tbsp vodka or aquavit. Lay salmon skin-side down on cling film, pack the cure all over the flesh, press extra dill on top. Wrap tightly. Place in a dish, put a smaller dish + a couple of cans on top to weight it. Refrigerate. Flip once a day. Ready Tuesday evening — scrape off cure, pat dry, slice thin against the grain. Keeps 5 days. Used: Wed breakfast, Thu lunch, Sat breakfast."
+      },
+      {
+        name: "Portion & Freeze Salmon",
+        time: "5 min",
+        instructions: "From the 1.2kg fillet: 300g went to gravlax. Portion the rest — keep ~600g (4 portions) in the fridge for Sun/Mon/Tue dinners. Wrap ~300g (2 portions) and freeze for a later week."
+      },
+      {
+        name: "Overnight Oats × 1 jar (single serving)",
+        time: "3 min",
+        instructions: "One jar: 60g oats + 200ml oat milk + 1 tbsp chia + 30g walnuts + cinnamon (Mon). Top with grated apple day-of."
+      },
+      {
+        name: "Air-Fryer Roasted Chickpeas",
+        time: "20 min",
+        instructions: "Drain + pat dry 1 can chickpeas. Toss with 1 tsp olive oil, ½ tsp smoked paprika, ½ tsp cumin, salt. Air-fry at 200°C for 12-15 min, shaking halfway, until crunchy. Store in a jar (they soften over time but stay good 3 days). Used: salad topper Mon + Tue, snack option."
+      },
+      {
+        name: "Cook Brown Rice + Quick-Pickled Red Onion",
+        time: "25 min",
+        instructions: "Cook 200g dry brown rice; store. Also: thinly slice 1 red onion, cover with 4 tbsp red wine vinegar + 1 tsp sugar + ½ tsp salt + 100ml hot water. Jar it. Both used across several meals this week."
+      }
+    ]
+  },
+  {
+    id: "wednesday",
+    title: "Wednesday Evening Prep (~45 min)",
+    covers: "Covers Thursday through Saturday",
+    tasks: [
+      {
+        name: "Overnight Oats × 1 jar (single serving)",
+        time: "3 min",
+        instructions: "One jar: 60g oats + 200ml oat milk + 1 tbsp chia + 1 tbsp cocoa + 20g almond butter (Thu). Banana day-of."
+      },
+      {
+        name: "Lentil & Roasted Veg Salad (3 portions)",
+        time: "35 min (mostly air fryer + simmer)",
+        instructions: "Cook 150g dry green/Puy lentils ~20 min until tender; drain. Air-fry 1 diced courgette + 1 diced red pepper + 1 red onion (wedges) with 1 tsp olive oil, salt, at 200°C for 15 min. Combine lentils + roasted veg. Dressing: 2 tbsp olive oil, 1 tbsp red wine vinegar, 1 tsp Dijon, salt. Stores 3 days. Used: Thu lunch + Fri lunch (+ side option)."
+      },
+      {
+        name: "Marinate Chicken Thighs × 4 (harissa-yogurt)",
+        time: "5 min",
+        instructions: "Mix 2 tbsp skyr, 1 tbsp harissa, 1 garlic clove (minced), 1 tsp cumin, juice of ½ lemon, salt. Coat 4 skinless chicken thighs. Refrigerate. Used: Fri dinner (air-fryer)."
+      }
+    ]
+  }
+];
+
+const SHOPPING_LISTS = {
+  sunday_shop: {
+    label: "🛒 Sunday Shop → covers Sun–Wed",
+    note: "You have: 1.2kg salmon, okroshka ×2, hard cheese (Manchego/Allgäuer), oats, walnuts, almonds, chia, soy, miso, spices, dill/salt/sugar for gravlax.",
+    categories: [
+      {
+        name: "Produce",
+        items: [
+          "1 cucumber",
+          "1 courgette",
+          "1 red pepper",
+          "2 red onions",
+          "1 bag baby spinach (200g)",
+          "1 bag mixed salad leaves",
+          "Cherry tomatoes",
+          "1 bunch dill (extra, for gravlax + garnish)",
+          "1 bunch parsley",
+          "1 avocado",
+          "1 lemon", "2 limes",
+          "1 apple", "2 bananas",
+          "200g mixed berries",
+          "Fresh ginger"
+        ]
+      },
+      {
+        name: "Dairy / Chilled",
+        items: [
+          "2L oat milk",
+          "Skyr (400g)"
+        ]
+      },
+      {
+        name: "Canned / Pantry",
+        items: [
+          "2 cans chickpeas",
+          "Capers (small jar — for gravlax service)",
+          "Honey (if low)"
+        ]
+      },
+      {
+        name: "Bakery",
+        items: ["1 loaf dark rye bread", "1 loaf sourdough"]
+      }
+    ]
+  },
+  wednesday_shop: {
+    label: "🛒 Wednesday Top-Up → covers Thu–Sat",
+    note: "Small trip. Gravlax should be ready now. Lentils/rice from Sunday still going.",
+    categories: [
+      {
+        name: "Meat",
+        items: ["4 skinless chicken thighs (~400g)"]
+      },
+      {
+        name: "Produce",
+        items: [
+          "1 courgette",
+          "1 red pepper",
+          "1 small bunch coriander",
+          "1 bunch radishes",
+          "1 cucumber",
+          "1 lemon",
+          "2 bananas",
+          "Cherry tomatoes (small punnet)"
+        ]
+      },
+      {
+        name: "Dairy / Chilled",
+        items: [
+          "1L oat milk (top up)",
+          "Skyr (200g)",
+          "150g frozen edamame"
+        ]
+      },
+      {
+        name: "Pantry",
+        items: [
+          "150g green/Puy lentils (if low)",
+          "Harissa paste (if not stocked)",
+          "Cocoa powder (if not stocked)"
+        ]
+      }
+    ]
+  }
+};
+
+const DAYS = [
+  {
+    day: "Sunday",
+    shoppingList: "sunday_shop",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Bircher Muesli",
+        desc: "60g oats soaked overnight, grated apple, 30g walnuts, 100g skyr, honey",
+        kcal: 440, protein: 14, fat: 18, carbs: 54, fiber: 8,
+        forTwo: false,
+        assemblyTime: "5 min",
+        tip: "Soak Saturday night, or microwave-cheat 60g oats + 150ml oat milk 2 min.",
+        steps: [
+          "Take soaked oats from fridge. Grate ½ apple in.",
+          "Top with 100g skyr, 30g walnuts, ½ tsp honey, cinnamon."
+        ]
+      },
+      {
+        type: "Lunch",
+        name: "Manchego, Apple & Walnut Salad",
+        desc: "Per person: mixed leaves, ~30g shaved Manchego, ½ apple, 20g walnuts, lemon-olive oil",
+        kcal: 380, protein: 14, fat: 24, carbs: 24, fiber: 6,
+        forTwo: true,
+        assemblyTime: "8 min",
+        tip: "Use ~30g Manchego per serving for flavor. Add walnuts for crunch.",
+        steps: [
+          "Bed of mixed leaves. Thinly sliced apple, toasted walnuts.",
+          "Shave ~30g Manchego over each plate with a peeler.",
+          "Dressing: olive oil, lemon juice, Dijon, salt, pepper."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Air-Fryer Salmon with Roasted Veg & Brown Rice",
+        desc: "Per person: 150g salmon, air-fried courgette + pepper, brown rice, lemon",
+        kcal: 560, protein: 38, fat: 24, carbs: 46, fiber: 6,
+        forTwo: true,
+        cookTime: "20 min",
+        tip: "First salmon dinner — air fryer gives a crisp exterior with very little oil. New toy, perfect job.",
+        steps: [
+          "Pat 2 salmon fillets dry. Season with salt, pepper, lemon zest, drizzle of olive oil.",
+          "Air-fry at 200°C for 8-10 min (depending on thickness) until just cooked.",
+          "Air-fry diced courgette + red pepper alongside or first: 1 tsp oil, salt, 200°C 12 min.",
+          "Cook/serve brown rice (from prep).",
+          "Plate: rice, veg, salmon. Squeeze lemon, dill.",
+          "⏰ After dinner: Sunday prep — start gravlax, portion salmon, oats, chickpeas, rice, pickled onion."
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Apple + Peanut Butter",
+        desc: "1 apple, 20g peanut butter",
+        kcal: 210, protein: 5, fat: 10, carbs: 28, fiber: 5,
+        forTwo: false,
+        assemblyTime: "1 min",
+        tip: "Slice the apple just before serving.",
+        steps: ["Slice apple. Dip."]
+      }
+    ]
+  },
+  {
+    day: "Monday",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Overnight Oats — Apple & Walnut",
+        desc: "60g oats, 200ml oat milk, 30g walnuts, grated apple, chia, cinnamon",
+        kcal: 430, protein: 14, fat: 18, carbs: 52, fiber: 10,
+        forTwo: false,
+        assemblyTime: "2 min",
+        tip: "Prepped Sunday.",
+        steps: ["Grab jar. Grate ½ apple on top. Cinnamon."]
+      },
+      {
+        type: "Lunch",
+        name: "Okroshka (option A) / Spinach & Chickpea Salad (option B)",
+        desc: "Option A: 1 portion okroshka. Option B: spinach salad with roasted chickpeas, avocado, lemon",
+        kcal: 380, protein: 16, fat: 16, carbs: 42, fiber: 10,
+        forTwo: false,
+        assemblyTime: "5 min",
+        tip: "Serve the soup alongside a fresh salad with chickpeas from Sunday prep.",
+        steps: [
+          "Option A: serve 1 portion of okroshka, cold, with extra dill.",
+          "Option B: baby spinach, roasted chickpeas, ½ avocado, cherry tomatoes, lemon-olive oil dressing."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Miso-Glazed Salmon with Sesame Greens & Rice",
+        desc: "Per person: 150g salmon, miso-honey glaze, wilted spinach, brown rice, sesame",
+        kcal: 560, protein: 38, fat: 22, carbs: 52, fiber: 6,
+        forTwo: true,
+        cookTime: "20 min",
+        tip: "Miso gives this salmon dish a savory glaze.",
+        steps: [
+          "Glaze: 1 tbsp white miso, 1 tsp honey, 1 tsp soy sauce, 1 tsp sesame oil.",
+          "Brush 2 salmon fillets. Air-fry at 200°C 8-10 min (or oven/grill) until caramelized.",
+          "Wilt spinach in a pan with sesame oil, 1 min.",
+          "Serve with brown rice. Sesame seeds, spring onion.",
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Walnuts",
+        desc: "30g walnuts",
+        kcal: 200, protein: 5, fat: 18, carbs: 3, fiber: 2,
+        forTwo: false,
+        assemblyTime: "0 min",
+        tip: "Toast walnuts briefly for extra flavor.",
+        steps: ["30g."]
+      }
+    ]
+  },
+  {
+    day: "Tuesday",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Skyr Bowl with Berries & Almonds",
+        desc: "200g skyr, 80g berries, 20g almonds, honey",
+        kcal: 320, protein: 26, fat: 10, carbs: 30, fiber: 4,
+        forTwo: false,
+        assemblyTime: "2 min",
+        tip: "High protein. Gravlax ready tonight!",
+        steps: ["Skyr + berries + almonds + honey."]
+      },
+      {
+        type: "Lunch",
+        name: "Okroshka (option A) / Lentil-Style Leaves (option B)",
+        desc: "Option A: last portion okroshka. Option B: salad leaves with roasted chickpeas, avocado, cheese accent",
+        kcal: 380, protein: 16, fat: 18, carbs: 38, fiber: 9,
+        forTwo: false,
+        assemblyTime: "5 min",
+        tip: "Use the remaining soup. Option B: leaves + remaining roasted chickpeas + ~20g shaved Allgäuer.",
+        steps: [
+          "Option A: last portion of okroshka, cold, lots of dill.",
+          "Option B: salad leaves, roasted chickpeas, avocado, ~20g shaved Allgäuer, lemon-olive oil."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Salmon en Papillote with Lemon, Dill & Courgette",
+        desc: "Per person: 150g salmon baked in parchment with courgette ribbons, lemon, dill, white wine splash",
+        kcal: 460, protein: 38, fat: 22, carbs: 14, fiber: 4,
+        forTwo: true,
+        cookTime: "25 min",
+        tip: "Third and final fresh salmon — steamed in its own parcel, light and elegant. Different again.",
+        steps: [
+          "Preheat oven to 200°C. Cut 2 large parchment squares.",
+          "On each: a bed of courgette ribbons (use a peeler), salmon fillet on top.",
+          "Season: salt, pepper, lemon slices, dill, a splash of white wine or water, drizzle olive oil.",
+          "Fold parchment into sealed parcels. Bake 15-18 min.",
+          "Open at the table (careful — steam). Serve with a slice of sourdough or small potatoes.",
+          "🐟 Gravlax should be ready — scrape, pat dry, slice for tomorrow."
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Skyr with Berries",
+        desc: "200g skyr, 80g berries",
+        kcal: 180, protein: 22, fat: 0, carbs: 22, fiber: 2,
+        forTwo: false,
+        assemblyTime: "1 min",
+        tip: "High protein.",
+        steps: ["Skyr + berries."]
+      }
+    ]
+  },
+  {
+    day: "Wednesday",
+    shoppingList: "wednesday_shop",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Homemade Gravlax on Dark Rye",
+        desc: "Per person: ~50g gravlax, 2 slices dark rye, skyr-dill spread, capers, red onion",
+        kcal: 380, protein: 26, fat: 14, carbs: 36, fiber: 6,
+        forTwo: true,
+        assemblyTime: "5 min",
+        tip: "Gravlax is ready after the 48h cure. Slice thinly to serve.",
+        steps: [
+          "Toast 4 slices dark rye.",
+          "Spread skyr mixed with chopped dill on each.",
+          "Lay slices of gravlax on top (~50g per person).",
+          "Garnish with capers, pickled red onion, extra dill, black pepper."
+        ]
+      },
+      {
+        type: "Lunch",
+        name: "Spinach & Chickpea Salad with Cheese Accent",
+        desc: "Per person: spinach, chickpeas, cherry tomatoes, ~25g hard cheese, lemon-olive oil",
+        kcal: 400, protein: 16, fat: 20, carbs: 36, fiber: 10,
+        forTwo: true,
+        assemblyTime: "8 min",
+        tip: "Uses the last roasted chickpeas + a cheese accent. Wed top-up shop today.",
+        steps: [
+          "Spinach base, chickpeas, halved cherry tomatoes.",
+          "Shave ~25g Manchego or Allgäuer over each.",
+          "Lemon-olive oil dressing.",
+          "🛒 Wed top-up shop. Small prep after (oats, lentil salad, marinate chicken)."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Air-Fryer Tofu Katsu with Rice & Cabbage Slaw",
+        desc: "Per person: breaded air-fried tofu, brown rice, quick cabbage slaw, tonkatsu-style sauce",
+        kcal: 540, protein: 24, fat: 18, carbs: 66, fiber: 8,
+        forTwo: true,
+        cookTime: "25 min",
+        tip: "Japanese-inspired, vegetarian. Air fryer makes katsu crispy with barely any oil. New dish!",
+        steps: [
+          "Press 400g firm tofu, slice into thick slabs.",
+          "Dredge: flour → beaten egg (or plant milk) → panko. Press to coat.",
+          "Air-fry at 200°C 14-16 min, flipping once, until deep golden and crisp.",
+          "Slaw: shred cabbage + carrot, toss with 1 tbsp rice vinegar, pinch sugar, salt.",
+          "Quick sauce: 2 tbsp ketchup, 1 tbsp Worcestershire, 1 tsp soy, ½ tsp honey.",
+          "Serve tofu sliced over rice, slaw alongside, sauce drizzled. Sesame seeds."
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Edamame",
+        desc: "150g edamame, sea salt",
+        kcal: 190, protein: 17, fat: 8, carbs: 8, fiber: 5,
+        forTwo: false,
+        assemblyTime: "4 min",
+        tip: "Serve edamame warm with a pinch of salt.",
+        steps: ["Boil 150g frozen edamame 3-4 min. Salt."]
+      }
+    ]
+  },
+  {
+    day: "Thursday",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Overnight Oats — Chocolate & Almond",
+        desc: "60g oats, 200ml oat milk, cocoa, almond butter, chia, banana",
+        kcal: 460, protein: 16, fat: 18, carbs: 58, fiber: 10,
+        forTwo: false,
+        assemblyTime: "2 min",
+        tip: "Prepped Wednesday. Cocoa adds a rich flavor.",
+        steps: ["Grab jar. Top with sliced banana."]
+      },
+      {
+        type: "Lunch",
+        name: "Lentil & Roasted Veg Salad with Gravlax",
+        desc: "Per person: lentil-veg salad (from prep), ~50g gravlax draped on top, lemon",
+        kcal: 480, protein: 28, fat: 20, carbs: 44, fiber: 14,
+        forTwo: true,
+        assemblyTime: "5 min",
+        tip: "Lentil salad from Wed prep + sliced gravlax. Protein-rich, no cooking.",
+        steps: [
+          "Scoop 2 portions of lentil & roasted veg salad.",
+          "Drape ~50g gravlax over each. Extra dill, lemon, pickled onion.",
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Shakshuka Verde (Green Shakshuka)",
+        desc: "Per person: 2 egg whites + 1 whole egg poached in a green spinach-herb sauce, sourdough",
+        kcal: 420, protein: 22, fat: 18, carbs: 38, fiber: 8,
+        forTwo: true,
+        cookTime: "20 min",
+        tip: "A green twist on shakshuka — spinach, courgette, herbs instead of tomato. New dish.",
+        steps: [
+          "Sauté 1 chopped onion + 1 diced courgette in olive oil 6 min.",
+          "Add 2 garlic cloves, 1 tsp cumin. Add 200g spinach + handful herbs, wilt.",
+          "Blend half for a saucy base (or leave chunky), return to pan, loosen with a splash of water.",
+          "Make wells, add 2 whole eggs + whites from 4 eggs. Cover, cook 6-8 min.",
+          "Serve with toasted sourdough.",
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Dark Chocolate & Almonds",
+        desc: "20g dark chocolate (85%+), 20g almonds",
+        kcal: 210, protein: 5, fat: 16, carbs: 10, fiber: 3,
+        forTwo: false,
+        assemblyTime: "0 min",
+        tip: "Serve with fresh fruit.",
+        steps: ["Chocolate + almonds."]
+      }
+    ]
+  },
+  {
+    day: "Friday",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Warm Porridge with PB & Banana",
+        desc: "60g oats, 200ml oat milk, 20g peanut butter, ½ banana, cinnamon",
+        kcal: 440, protein: 16, fat: 16, carbs: 56, fiber: 9,
+        forTwo: false,
+        cookTime: "5 min",
+        tip: "Warm start to end the week.",
+        steps: [
+          "60g oats + 200ml oat milk. Microwave 2.5 min, stir.",
+          "Stir in peanut butter, top with banana, cinnamon."
+        ]
+      },
+      {
+        type: "Lunch",
+        name: "Lentil-Veg Salad (leftover) with Cheese Accent",
+        desc: "Per person: last of the lentil-veg salad, ~25g shaved hard cheese, leaves",
+        kcal: 440, protein: 18, fat: 20, carbs: 46, fiber: 12,
+        forTwo: true,
+        assemblyTime: "5 min",
+        tip: "Finishes the lentil salad. Cheese accent for interest.",
+        steps: [
+          "Last 2 portions of lentil-veg salad over a handful of fresh leaves.",
+          "Shave ~25g Manchego/Allgäuer over each. Lemon, olive oil."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Air-Fryer Harissa Chicken Thighs with Bulgur & Herb Salad",
+        desc: "Per person: 2 harissa-yogurt chicken thighs, bulgur or rice, big herb-cucumber salad",
+        kcal: 560, protein: 42, fat: 20, carbs: 48, fiber: 6,
+        forTwo: true,
+        cookTime: "25 min",
+        tip: "Chicken marinated Wed. Air fryer gets the skin-side crisp. North-African-inspired heat.",
+        steps: [
+          "Air-fry 4 marinated chicken thighs at 200°C for 18-22 min until cooked through (74°C) and charred at edges.",
+          "Serve over bulgur or remaining brown rice.",
+          "Herb salad: cucumber, parsley, mint, lemon, olive oil.",
+          "Save 2 thighs for tomorrow's lunch if you like."
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Skyr with Berries",
+        desc: "200g skyr, 80g berries",
+        kcal: 180, protein: 22, fat: 0, carbs: 22, fiber: 2,
+        forTwo: false,
+        assemblyTime: "1 min",
+        tip: "High protein.",
+        steps: ["Skyr + berries."]
+      }
+    ]
+  },
+  {
+    day: "Saturday",
+    meals: [
+      {
+        type: "Breakfast",
+        name: "Gravlax & Avocado on Sourdough",
+        desc: "Per person: ~50g gravlax, sourdough toast, ½ avocado, lemon, dill",
+        kcal: 420, protein: 24, fat: 22, carbs: 34, fiber: 7,
+        forTwo: true,
+        assemblyTime: "5 min",
+        tip: "Last of the gravlax — a fitting send-off. Omega-3 + good fats.",
+        steps: [
+          "Toast sourdough. Smash avocado on each slice.",
+          "Drape remaining gravlax on top. Lemon, dill, black pepper, pickled onion."
+        ]
+      },
+      {
+        type: "Lunch",
+        name: "Chicken & Herb Grain Bowl (leftover)",
+        desc: "Per person: sliced leftover harissa chicken, grains, herb salad, lemon",
+        kcal: 480, protein: 36, fat: 16, carbs: 46, fiber: 6,
+        forTwo: true,
+        assemblyTime: "5 min",
+        tip: "Reformats Friday's chicken into a bowl. Uses up any remaining grains and herbs.",
+        steps: [
+          "Slice leftover chicken thighs.",
+          "Bowl: grains, chicken, herb-cucumber salad, pickled onion. Lemon-olive oil."
+        ]
+      },
+      {
+        type: "Dinner",
+        name: "Thai-Style Coconut Vegetable Curry",
+        desc: "Per person: light coconut curry with seasonal veg, brown rice or noodles, herbs, lime",
+        kcal: 480, protein: 14, fat: 18, carbs: 64, fiber: 8,
+        forTwo: true,
+        cookTime: "25 min",
+        tip: "Vegetarian and fragrant; use a mix of seasonal vegetables.",
+        steps: [
+          "Sauté aromatics: ginger, garlic, chili, spring onion — 2 min.",
+          "Add any remaining veg (pepper, courgette, spinach), stir-fry 3 min.",
+          "Add 1 small can light coconut milk + 1 tbsp soy + 1 tsp fish sauce + lime + pinch sugar.",
+          "Simmer 8 min. Serve over rice or noodles. Coriander, lime, chili.",
+          "🛒 Plan next week while you're at it."
+        ]
+      },
+      {
+        type: "Snack",
+        name: "Dark Chocolate & Almonds",
+        desc: "20g dark chocolate (85%+), 20g almonds",
+        kcal: 210, protein: 5, fat: 16, carbs: 10, fiber: 3,
+        forTwo: false,
+        assemblyTime: "0 min",
+        tip: "Serve with fresh fruit.",
+        steps: ["Chocolate + almonds."]
+      }
+    ]
+  }
+];
+
+const PLAN_DATES = [
+  "2026-05-31",
+  "2026-06-01",
+  "2026-06-02",
+  "2026-06-03",
+  "2026-06-04",
+  "2026-06-05",
+  "2026-06-06",
+];
+
+function formatDateRange() {
+  const start = new Date(PLAN_DATES[0] + "T00:00:00");
+  const end = new Date(PLAN_DATES[PLAN_DATES.length - 1] + "T00:00:00");
+  const fmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${fmt(start)} – ${fmt(end)}`;
+}
+
+const mealTypeColors = {
+  Breakfast: { bg: "#FFF7ED", border: "#FB923C", icon: "☀️" },
+  Lunch: { bg: "#F0FDF4", border: "#4ADE80", icon: "🥗" },
+  Dinner: { bg: "#EFF6FF", border: "#60A5FA", icon: "🍽️" },
+  Snack: { bg: "#FDF4FF", border: "#C084FC", icon: "🥜" },
+};
+
+function DaySummary({ meals }) {
+  const totals = meals.reduce(
+    (acc, m) => ({ kcal: acc.kcal + m.kcal, protein: acc.protein + m.protein, fat: acc.fat + m.fat, carbs: acc.carbs + m.carbs, fiber: acc.fiber + m.fiber }),
+    { kcal: 0, protein: 0, fat: 0, carbs: 0, fiber: 0 }
+  );
+  return (
+    <div style={{ display: "flex", gap: "16px", flexWrap: "wrap", padding: "14px 18px", background: "linear-gradient(135deg, #1a1a2e, #16213e)", borderRadius: "10px", marginBottom: "16px" }}>
+      {[
+        { label: "Calories", value: totals.kcal, unit: "kcal", color: "#f8fafc" },
+        { label: "Protein", value: totals.protein, unit: "g", color: "#fb923c" },
+        { label: "Fat", value: totals.fat, unit: "g", color: "#60a5fa" },
+        { label: "Carbs", value: totals.carbs, unit: "g", color: "#4ade80" },
+        { label: "Fiber", value: totals.fiber, unit: "g", color: "#c084fc" },
+      ].map((item) => (
+        <div key={item.label} style={{ textAlign: "center", minWidth: "56px", flex: 1 }}>
+          <div style={{ fontSize: "20px", fontWeight: 700, color: item.color, fontFamily: "'JetBrains Mono', monospace" }}>
+            {item.value}<span style={{ fontSize: "11px", fontWeight: 400, opacity: 0.7 }}>{item.unit}</span>
+          </div>
+          <div style={{ fontSize: "10px", color: "#94a3b8", textTransform: "uppercase", letterSpacing: "0.5px", marginTop: "2px" }}>{item.label}</div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MealCard({ meal }) {
+  const [expanded, setExpanded] = useState(false);
+  const colors = mealTypeColors[meal.type] || mealTypeColors.Snack;
+  return (
+    <div onClick={() => setExpanded(!expanded)} style={{
+      background: "#fff", borderRadius: "10px", border: "1px solid #e2e8f0", borderLeft: `4px solid ${colors.border}`,
+      padding: "14px 16px", marginBottom: "10px", cursor: "pointer", transition: "all 0.2s ease",
+      boxShadow: expanded ? "0 4px 12px rgba(0,0,0,0.08)" : "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px", flexWrap: "wrap" }}>
+            <span style={{ fontSize: "14px" }}>{colors.icon}</span>
+            <span style={{ fontSize: "10px", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.8px", color: colors.border, fontFamily: "'JetBrains Mono', monospace" }}>{meal.type}</span>
+            {meal.forTwo && <span style={{ fontSize: "9px", fontWeight: 600, background: "#dbeafe", color: "#1d4ed8", padding: "2px 6px", borderRadius: "4px" }}>FOR TWO</span>}
+            {meal.assemblyTime && <span style={{ fontSize: "9px", fontWeight: 600, background: "#dcfce7", color: "#166534", padding: "2px 6px", borderRadius: "4px" }}>⚡ {meal.assemblyTime}</span>}
+            {meal.cookTime && <span style={{ fontSize: "9px", fontWeight: 600, background: "#fef3c7", color: "#92400e", padding: "2px 6px", borderRadius: "4px" }}>🍳 {meal.cookTime}</span>}
+          </div>
+          <div style={{ fontSize: "15px", fontWeight: 600, color: "#1e293b", lineHeight: 1.3, fontFamily: "'Source Serif 4', Georgia, serif" }}>{meal.name}</div>
+        </div>
+        {meal.kcal > 0 && <div style={{ fontSize: "14px", fontWeight: 700, color: "#64748b", fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap", marginLeft: "12px" }}>{meal.kcal}</div>}
+      </div>
+      {expanded && (
+        <div style={{ marginTop: "12px", paddingTop: "12px", borderTop: "1px solid #f1f5f9" }}>
+          <p style={{ fontSize: "13px", color: "#475569", lineHeight: 1.5, margin: "0 0 10px 0", fontStyle: "italic" }}>{meal.desc}</p>
+          <div style={{ display: "flex", gap: "12px", flexWrap: "wrap", marginBottom: "10px" }}>
+            {[
+              { label: "P", value: meal.protein, color: "#fb923c" },
+              { label: "F", value: meal.fat, color: "#60a5fa" },
+              { label: "C", value: meal.carbs, color: "#4ade80" },
+              { label: "Fib", value: meal.fiber, color: "#c084fc" },
+            ].map((m) => (
+              <span key={m.label} style={{ fontSize: "11px", fontFamily: "'JetBrains Mono', monospace", color: m.color, fontWeight: 600 }}>{m.label} {m.value}g</span>
+            ))}
+          </div>
+          <div style={{ marginBottom: "10px" }}>
+            <div style={{ fontSize: "11px", fontWeight: 700, color: "#334155", textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: "6px" }}>Instructions</div>
+            <ol style={{ fontSize: "12.5px", color: "#334155", margin: 0, paddingLeft: "18px", lineHeight: 1.7 }}>
+              {meal.steps.map((step, i) => <li key={i} style={{ marginBottom: "4px" }}>{step}</li>)}
+            </ol>
+          </div>
+          {meal.tip && <div style={{ background: "#fefce8", border: "1px solid #fde68a", borderRadius: "6px", padding: "8px 10px", fontSize: "12px", color: "#92400e", lineHeight: 1.4 }}>💡 {meal.tip}</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PrepCard({ session }) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div onClick={() => setExpanded(!expanded)} style={{
+      background: "#fffbeb", borderRadius: "10px", border: "1px solid #fde68a", padding: "16px", marginBottom: "12px", cursor: "pointer",
+      boxShadow: expanded ? "0 4px 12px rgba(0,0,0,0.08)" : "0 1px 3px rgba(0,0,0,0.04)",
+    }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <div style={{ fontSize: "16px", fontWeight: 700, color: "#92400e", fontFamily: "'Source Serif 4', Georgia, serif" }}>🔪 {session.title}</div>
+          <div style={{ fontSize: "12px", color: "#b45309", marginTop: "2px" }}>{session.covers}</div>
+        </div>
+        <span style={{ fontSize: "18px", color: "#92400e" }}>{expanded ? "−" : "+"}</span>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #fde68a" }}>
+          {session.tasks.map((task, i) => (
+            <div key={i} style={{ marginBottom: "12px", padding: "10px 12px", background: "#fff", borderRadius: "8px", border: "1px solid #fef3c7" }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "4px" }}>
+                <span style={{ fontSize: "13px", fontWeight: 600, color: "#1e293b" }}>{task.name}</span>
+                <span style={{ fontSize: "10px", fontWeight: 600, color: "#92400e", background: "#fef3c7", padding: "2px 6px", borderRadius: "4px", fontFamily: "'JetBrains Mono', monospace" }}>{task.time}</span>
+              </div>
+              <p style={{ fontSize: "12px", color: "#475569", lineHeight: 1.6, margin: 0 }}>{task.instructions}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShoppingListCard({ list }) {
+  const [expanded, setExpanded] = useState(false);
+  const [checked, setChecked] = useState({});
+  const toggleItem = (catIdx, itemIdx, e) => { e.stopPropagation(); const key = `${catIdx}-${itemIdx}`; setChecked(prev => ({ ...prev, [key]: !prev[key] })); };
+  const totalItems = list.categories.reduce((acc, c) => acc + c.items.length, 0);
+  const checkedCount = Object.values(checked).filter(Boolean).length;
+  return (
+    <div style={{ background: "#fff0f6", borderRadius: "10px", border: "1px solid #fbb6ce", padding: "16px", marginBottom: "12px", boxShadow: expanded ? "0 4px 12px rgba(0,0,0,0.08)" : "0 1px 3px rgba(0,0,0,0.04)" }}>
+      <div onClick={() => setExpanded(!expanded)} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", cursor: "pointer" }}>
+        <div>
+          <div style={{ fontSize: "15px", fontWeight: 700, color: "#9d174d", fontFamily: "'Source Serif 4', Georgia, serif" }}>{list.label}</div>
+          <div style={{ fontSize: "11px", color: "#be185d", marginTop: "2px" }}>{checkedCount}/{totalItems} items · {list.note}</div>
+        </div>
+        <span style={{ fontSize: "18px", color: "#9d174d" }}>{expanded ? "−" : "+"}</span>
+      </div>
+      {expanded && (
+        <div style={{ marginTop: "14px", paddingTop: "12px", borderTop: "1px solid #fbb6ce" }}>
+          {list.categories.map((cat, catIdx) => (
+            <div key={catIdx} style={{ marginBottom: "12px" }}>
+              <div style={{ fontSize: "12px", fontWeight: 700, color: "#9d174d", marginBottom: "4px" }}>{cat.name}</div>
+              {cat.items.map((item, itemIdx) => {
+                const key = `${catIdx}-${itemIdx}`; const isChecked = checked[key];
+                return (
+                  <div key={itemIdx} onClick={(e) => toggleItem(catIdx, itemIdx, e)} style={{ display: "flex", alignItems: "center", gap: "8px", padding: "5px 8px", borderRadius: "6px", background: isChecked ? "#f0fdf4" : "transparent", cursor: "pointer", transition: "background 0.15s ease" }}>
+                    <div style={{ width: "18px", height: "18px", borderRadius: "4px", border: isChecked ? "2px solid #16a34a" : "2px solid #d4d4d8", background: isChecked ? "#16a34a" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all 0.15s ease" }}>
+                      {isChecked && <span style={{ color: "#fff", fontSize: "11px", fontWeight: 700 }}>✓</span>}
+                    </div>
+                    <span style={{ fontSize: "12px", color: isChecked ? "#6b7280" : "#334155", textDecoration: isChecked ? "line-through" : "none", lineHeight: 1.5 }}>{item}</span>
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MealPlan() {
+  const [activeTab, setActiveTab] = useState("plan");
+  const [selectedDay, setSelectedDay] = useState(() => {
+    const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const todayName = dayNames[new Date().getDay()];
+    const idx = DAYS.findIndex(d => d.day === todayName);
+    return idx >= 0 ? idx : 0;
+  });
+  return (
+    <div style={{ fontFamily: "'Inter', -apple-system, sans-serif", maxWidth: "540px", margin: "0 auto", padding: "20px 16px", background: "#f8fafc", minHeight: "100vh" }}>
+      <link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+      <div style={{ marginBottom: "16px" }}>
+        <h1 style={{ fontSize: "22px", fontWeight: 700, color: "#0f172a", margin: "0 0 4px 0", fontFamily: "'Source Serif 4', Georgia, serif" }}>Meal Plan: {formatDateRange()}</h1>
+        <p style={{ fontSize: "12px", color: "#64748b", margin: 0 }}>Salmon week · Homemade gravlax · Air fryer · Seasonal variety · Sun + Wed shop</p>
+      </div>
+      <div style={{ display: "flex", gap: "8px", marginBottom: "16px" }}>
+        {[{ id: "plan", label: "Daily Plan" }, { id: "prep", label: "Prep Sessions" }, { id: "strategy", label: "Strategy" }].map((tab) => (
+          <button key={tab.id} onClick={() => setActiveTab(tab.id)} style={{
+            padding: "8px 16px", borderRadius: "8px", border: "none",
+            background: activeTab === tab.id ? "linear-gradient(135deg, #1a1a2e, #16213e)" : "#fff",
+            color: activeTab === tab.id ? "#f8fafc" : "#64748b", fontSize: "12px", fontWeight: 600, cursor: "pointer",
+            boxShadow: activeTab === tab.id ? "0 2px 8px rgba(26,26,46,0.3)" : "0 1px 2px rgba(0,0,0,0.06)",
+          }}>{tab.label}</button>
+        ))}
+      </div>
+      {activeTab === "plan" && (
+        <>
+          <div style={{ display: "flex", gap: "6px", marginBottom: "16px", overflowX: "auto", paddingBottom: "4px" }}>
+            {DAYS.map((d, i) => (
+              <button key={d.day} onClick={() => setSelectedDay(i)} style={{
+                padding: "8px 14px", borderRadius: "8px", border: "none",
+                background: selectedDay === i ? "linear-gradient(135deg, #1a1a2e, #16213e)" : "#fff",
+                color: selectedDay === i ? "#f8fafc" : "#64748b", fontSize: "12px", fontWeight: 600, cursor: "pointer", whiteSpace: "nowrap",
+                boxShadow: selectedDay === i ? "0 2px 8px rgba(26,26,46,0.3)" : "0 1px 2px rgba(0,0,0,0.06)",
+              }}>{d.day.slice(0, 3)}</button>
+            ))}
+          </div>
+          {DAYS[selectedDay].shoppingList && <ShoppingListCard list={SHOPPING_LISTS[DAYS[selectedDay].shoppingList]} />}
+          <DaySummary meals={DAYS[selectedDay].meals} />
+          {DAYS[selectedDay].meals.map((meal, i) => <MealCard key={`${selectedDay}-${i}`} meal={meal} />)}
+          {DAYS[selectedDay].day === "Saturday" && (
+            <div style={{
+              marginTop: "8px", padding: "14px 16px",
+              background: "linear-gradient(135deg, #eff6ff, #dbeafe)",
+              borderRadius: "10px", border: "1px solid #93c5fd",
+              display: "flex", alignItems: "center", gap: "10px",
+            }}>
+              <span style={{ fontSize: "20px" }}>📋</span>
+              <div>
+                <div style={{ fontSize: "13px", fontWeight: 600, color: "#1e40af" }}>Time for next week's plan!</div>
+                <div style={{ fontSize: "12px", color: "#3b82f6", marginTop: "2px" }}>Ask Claude to generate your meal plan for next week.</div>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+      {activeTab === "prep" && (
+        <>
+          <p style={{ fontSize: "13px", color: "#475569", marginTop: 0, marginBottom: "16px", lineHeight: 1.5 }}>
+            Sunday covers Sun dinner–Wed (and starts the gravlax). Wednesday is a smaller session for Thu–Sat.
+          </p>
+          {PREP_SESSIONS.map((s) => <PrepCard key={s.id} session={s} />)}
+        </>
+      )}
+      {activeTab === "strategy" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+          <div style={{ padding: "14px 16px", background: "linear-gradient(135deg, #ecfdf5, #f0fdf4)", borderRadius: "10px", border: "1px solid #bbf7d0" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "#166534", marginBottom: "6px" }}>🐟 Weekly Variety</div>
+            <ul style={{ fontSize: "12px", color: "#15803d", margin: 0, paddingLeft: "16px", lineHeight: 1.7 }}>
+              <li>Oily fish 5× (fresh salmon ×3 + gravlax across several meals)</li>
+              <li>Legumes daily (chickpeas, lentils, edamame)</li>
+              <li>Oats and cocoa breakfasts for variety</li>
+              <li>Nuts daily — walnuts & almonds</li>
+              <li>Hard cheese as a garnish (~25-30g)</li>
+              <li>Mix fresh and cooked vegetables throughout the week</li>
+            </ul>
+          </div>
+          <div style={{ padding: "14px 16px", background: "#eff6ff", borderRadius: "10px", border: "1px solid #bfdbfe" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "#1e40af", marginBottom: "6px" }}>🍳 Air Fryer Features</div>
+            <ul style={{ fontSize: "12px", color: "#1e40af", margin: 0, paddingLeft: "16px", lineHeight: 1.7 }}>
+              <li>Sun: crispy salmon + roasted veg</li>
+              <li>Sun prep: roasted chickpeas (salad topper)</li>
+              <li>Wed: tofu katsu (crispy, barely any oil)</li>
+              <li>Wed prep: roasted veg for lentil salad</li>
+              <li>Fri: harissa chicken thighs</li>
+            </ul>
+          </div>
+          <div style={{ padding: "14px 16px", background: "#fdf4ff", borderRadius: "10px", border: "1px solid #e9d5ff" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "#7e22ce", marginBottom: "6px" }}>🐟 The Salmon Plan (1.2 kg)</div>
+            <ul style={{ fontSize: "12px", color: "#7e22ce", margin: 0, paddingLeft: "16px", lineHeight: 1.7 }}>
+              <li>~300g → gravlax (cure Sun, ready Tue) → Wed/Thu/Sat meals</li>
+              <li>~600g → 3 fresh dinners (air-fried Sun, miso Mon, en papillote Tue)</li>
+              <li>~300g → frozen for a later week</li>
+              <li>Each fresh prep is different to avoid salmon fatigue</li>
+            </ul>
+          </div>
+          <div style={{ padding: "14px 16px", background: "#fefce8", borderRadius: "10px", border: "1px solid #fde68a" }}>
+            <div style={{ fontSize: "13px", fontWeight: 600, color: "#92400e", marginBottom: "6px" }}>📝 This Week's Notes</div>
+            <ul style={{ fontSize: "12px", color: "#92400e", margin: 0, paddingLeft: "16px", lineHeight: 1.7 }}>
+              <li>Okroshka: soup or salad options for Mon + Tue</li>
+              <li>Hard cheese: Manchego/Allgäuer as salad accents only</li>
+              <li>Cuisines: Nordic (gravlax), Japanese (miso, katsu), French (papillote), N. African (harissa), Thai (curry)</li>
+              <li>Sun + Wed shop split</li>
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<MealPlan />);
+</script>
+</body>
+</html>
