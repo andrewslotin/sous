@@ -32,7 +32,9 @@ Browser → HTTP service
              └── application queries → SQLite
 ```
 
-The application serves frontend assets and data from the same origin and reads from one SQLite database. Separate transport handlers, application queries, and persistence code. Backend language and SQLite library remain implementation choices; they must support transactions and foreign keys.
+The application serves frontend assets and data from the same origin and reads from one SQLite database. Use Rust with Axum and Tokio, SQLx for SQLite queries and versioned migrations, and Serde for serialization. Separate transport handlers, application queries, and persistence code. Use runtime-checked queries with temporary-database integration tests; compilation does not require a database. Compile the existing React frontend at build time and embed its assets in the `sous` binary.
+
+The [feature tracker](README.md) links the five incremental implementation specs.
 
 ## Calendar and routing
 
@@ -99,11 +101,11 @@ Expanded cards and selected tabs are transient browser state. No persisted UI st
 
 Use relational tables with stable UUID text IDs for independently addressable content. Keep IDs stable when editing or reordering existing records. Week identity is the unique `(iso_year, iso_week)` pair.
 
-All child collections have an integer `position >= 0`, unique within their parent. Positions need not be contiguous. Queries always order explicitly by position. Required text columns are non-null; optional text uses NULL. No stored HTML, JavaScript, or arbitrary CSS.
+Ordered child collections have an integer `position >= 0`, unique within their parent. Days instead use their unique weekday number. Positions need not be contiguous. Queries always order explicitly. Required text columns are non-null; optional text uses NULL. No stored HTML, JavaScript, or arbitrary CSS.
 
 | Table | Fields and constraints |
 | --- | --- |
-| `schema_migrations` | Applied migration version and application timestamp; managed by the service only. |
+| SQLx migration bookkeeping | Applied migration metadata; managed by SQLx only, not part of the content contract. |
 | `weeks` | `id` PK, `iso_year`, `iso_week`, optional `subtitle`, optional `prep_intro`; unique year/week; application/writer validates ISO week existence. |
 | `days` | `id` PK, `week_id` FK, `weekday` integer 1–7 (Monday=1), optional `reminder_title`, optional `reminder_body`, optional `reminder_icon`; unique week/weekday. |
 | `meals` | `id` PK, `day_id` FK, `position`, `type` enum Breakfast/Lunch/Dinner/Snack, `name`, `description`, `kcal`, `protein_g`, `fat_g`, `carbs_g`, `fiber_g`, `for_two` boolean, optional `assembly_time`, optional `cook_time`, optional `tip`. |
