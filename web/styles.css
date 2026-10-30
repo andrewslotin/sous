@@ -1,0 +1,97 @@
+@font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/source-serif-4-400.woff2) format("woff2"); }
+@font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/source-serif-4-600.woff2) format("woff2"); }
+@font-face { font-family: "Source Serif 4"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/source-serif-4-700.woff2) format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url(fonts/jetbrains-mono-400.woff2) format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 600; font-display: swap; src: url(fonts/jetbrains-mono-600.woff2) format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url(fonts/jetbrains-mono-700.woff2) format("woff2"); }
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #f8fafc; }
+
+.app {
+  font-family: 'Inter', -apple-system, sans-serif;
+  max-width: 540px;
+  margin: 0 auto;
+  padding: 20px 16px;
+  background: #f8fafc;
+  min-height: 100vh;
+}
+
+button:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+.header { margin-bottom: 16px; }
+.title { font-size: 22px; font-weight: 700; color: #0f172a; margin: 0 0 4px 0; font-family: 'Source Serif 4', Georgia, serif; }
+.subtitle { font-size: 12px; color: #64748b; margin: 0; }
+
+.days { display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 4px; }
+.day-button {
+  padding: 8px 14px; border-radius: 8px; border: none; background: #fff; color: #64748b;
+  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+}
+.day-button[aria-pressed="true"] {
+  background: linear-gradient(135deg, #1a1a2e, #16213e); color: #f8fafc;
+  box-shadow: 0 2px 8px rgba(26,26,46,0.3);
+}
+
+.summary {
+  display: flex; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
+  background: linear-gradient(135deg, #1a1a2e, #16213e); border-radius: 10px; margin-bottom: 16px;
+}
+.summary-item { text-align: center; min-width: max-content; flex: 1; }
+.summary-value { font-size: 20px; font-weight: 700; font-family: 'JetBrains Mono', monospace; }
+.summary-unit { font-size: 11px; font-weight: 400; opacity: 0.7; }
+.summary-label { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+.c-kcal { color: #f8fafc; }
+.c-protein { color: #fb923c; }
+.c-fat { color: #60a5fa; }
+.c-carbs { color: #4ade80; }
+.c-fiber { color: #c084fc; }
+
+.empty {
+  padding: 14px 16px; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+  font-size: 13px; color: #64748b; line-height: 1.5;
+}
+
+.meal {
+  --accent: #c084fc;
+  background: #fff; border-radius: 10px; border: 1px solid #e2e8f0; border-left: 4px solid var(--accent);
+  margin-bottom: 10px; transition: all 0.2s ease;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+}
+.meal.is-open { box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
+.meal-breakfast { --accent: #FB923C; }
+.meal-lunch { --accent: #4ADE80; }
+.meal-dinner { --accent: #60A5FA; }
+.meal-snack { --accent: #C084FC; }
+
+.meal-toggle {
+  display: block; width: 100%; padding: 14px 16px; border: none; background: none; border-radius: 10px;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
+}
+.meal-toggle:focus-visible, .day-button:focus-visible { outline-offset: -2px; }
+.meal.is-open .meal-toggle { padding-bottom: 12px; }
+.meal-head { display: flex; justify-content: space-between; align-items: flex-start; }
+.meal-main { flex: 1; }
+.meal-meta { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap; }
+.meal-icon { font-size: 14px; }
+.meal-type { font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.8px; color: var(--accent); font-family: 'JetBrains Mono', monospace; }
+.badge { font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 4px; }
+.badge-two { background: #dbeafe; color: #1d4ed8; }
+.badge-assembly { background: #dcfce7; color: #166534; }
+.badge-cook { background: #fef3c7; color: #92400e; }
+.meal-name { font-size: 15px; font-weight: 600; color: #1e293b; line-height: 1.3; font-family: 'Source Serif 4', Georgia, serif; }
+.meal-kcal { font-size: 14px; font-weight: 700; color: #64748b; font-family: 'JetBrains Mono', monospace; white-space: nowrap; margin-left: 12px; }
+
+.meal-details { margin: 0 16px; padding: 12px 0 14px; border-top: 1px solid #f1f5f9; }
+.meal-desc { font-size: 13px; color: #475569; line-height: 1.5; margin: 0 0 10px 0; font-style: italic; }
+.macros { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.macro { font-size: 11px; font-family: 'JetBrains Mono', monospace; font-weight: 600; }
+.steps-block { margin-bottom: 10px; }
+.steps-title { font-size: 11px; font-weight: 700; color: #334155; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+.steps { font-size: 12.5px; color: #334155; margin: 0; padding-left: 18px; line-height: 1.7; }
+.steps li { margin-bottom: 4px; }
+.tip { background: #fefce8; border: 1px solid #fde68a; border-radius: 6px; padding: 8px 10px; font-size: 12px; color: #92400e; line-height: 1.4; }
