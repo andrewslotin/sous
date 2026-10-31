@@ -8,7 +8,7 @@ Depends on: none. See the [technical design](../technical-design.md) and [visual
 
 ## Scope
 
-- Establish the Rust/Axum/Tokio service, SQLx migrations, Serde response types, and React asset build described in the [implementation baseline](../README.md#implementation-baseline).
+- Establish the Rust/Axum/Tokio service, SQLx migrations, Serde response types, and React asset build described in the [technical design](../technical-design.md#architecture).
 - Embed compiled JavaScript, styles, and reference fonts in `sous`. Serve them from the same origin, without runtime Babel or CDN dependencies.
 - Create `weeks`, `days`, `meals`, and `meal_steps`, with migration bookkeeping. Include week subtitle; defer prep introduction and day reminder columns to feature 4.
 - Implement the `/<year>/<week>` page and a reusable query that assembles one week's content in a single read transaction.

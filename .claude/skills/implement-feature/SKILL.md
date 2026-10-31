@@ -13,7 +13,7 @@ Keep going through the whole loop without stopping between steps. Stop only for 
 
 Read these before planning anything:
 - the feature spec passed as the argument. Its acceptance criteria are binding.
-- `docs/README.md` (tracker and implementation baseline) and `docs/technical-design.md`.
+- `docs/README.md` (feature tracker) and `docs/technical-design.md`.
 - `tasks/lessons.md`. Apply every lesson in it.
 - the NEXT feature spec, but only to find where this feature's scope ends. Do not build anything it owns.
   Example: feature 1 returned a plain 404 for `/2026/04` because feature 2 owns canonical redirects.

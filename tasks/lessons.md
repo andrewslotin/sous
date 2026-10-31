@@ -13,7 +13,7 @@
   commit-message hook.
 - Before reading something outside the task (e.g. the next feature's spec), say why in one line.
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
-- Check the toolchain against the baseline before planning. Raise a missing tool once, with a recommendation.
+- Check the toolchain against the technical design's architecture before planning. Raise a missing tool once, with a recommendation.
 - Verify facts before putting them in an agent brief; agents copy mistakes. Check worker-written docs (OpenAPI
   ranges, formats, descriptions) against the code too, before review. Validate documented example payloads against
   the advertised schema in a test: `expectedRevision: null` was required but the schema said string only.

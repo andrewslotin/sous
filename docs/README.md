@@ -14,14 +14,3 @@ Implement features in the order below. Each iteration includes its own verificat
 | 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Done | 5 |
 | 7 | [Year archive pages](features/007-year-archive.md) | Planned | 2 |
 | 8 | [API routes matching page routes](features/008-api-routes.md) | Planned | 7 |
-
-## Implementation baseline
-
-- Rust binary named `sous`.
-- Axum and Tokio for HTTP handling; SQLx for SQLite queries and versioned migrations; Serde for serialization.
-- Runtime-checked SQL queries, verified against temporary SQLite databases in integration tests. Compilation does not require a database or checked-in SQLx query metadata.
-- Existing React presentation, compiled at build time and embedded with its assets in the binary.
-- Separate HTTP handlers, application queries, and persistence code without a generic repository framework.
-- Introduce migrations and fixture-based verification in feature 1; extend them with each feature.
-
-Features 1–5 cover the read-only service baseline. Feature 6 extends it with MCP access for agent-driven meal planning, recipe recall, and shopping-list queries and updates. Feature 7 splits the archive into one page per year, and feature 8 gives the read API matching paths. Data-entry UI and deployment procedures remain outside scope.
