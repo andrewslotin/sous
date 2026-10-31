@@ -17,3 +17,5 @@
   spec when the user says so.
 - Keep a shared control in the same place on every page kind (e.g. the "All weeks" link in the header row), so
   pages stay consistent with the plan page.
+- When the spec is silent on how an empty child collection displays (e.g. a prep session with no tasks), ask the
+  user before building it. Don't settle it myself and list it as a scope decision.
