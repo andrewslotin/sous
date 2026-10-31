@@ -2,10 +2,11 @@
 
 Sous is a small, single-household web service that shows a weekly meal plan. It reads the plan from a SQLite
 database and serves it as a mobile-friendly page: daily meals with nutrition summaries, shopping lists, prep
-sessions and strategy cards. It also has a week archive and a JSON read API.
+sessions and strategy cards. It also has a week archive, a JSON read API and an MCP endpoint for AI assistants.
 
-Sous only displays data. You fill the database with another tool, such as `sqlite3` or a script. Changes show up on
-the next page load. The app has no accounts or authentication.
+The web pages and the API are read-only. To add or change plans, connect an assistant over [MCP](#mcp), or edit the
+database with another tool, such as `sqlite3` or a script. Changes show up on the next page load. The app has no
+accounts or authentication.
 
 ## Install
 
@@ -39,6 +40,8 @@ Configure it with environment variables:
 | `SOUS_ADDR` | `127.0.0.1:3000` | Listen address |
 | `APP_TIMEZONE` | `Europe/Berlin` | Timezone used to work out today and the current week |
 | `RUST_LOG` | unset: errors only (`make` sets `info`) | Log level, e.g. `info` or `sous=debug` |
+| `SOUS_MCP_ALLOWED_HOSTS` | `localhost,127.0.0.1,::1` | Comma-separated `Host` values the MCP endpoint accepts |
+| `SOUS_MCP_ALLOWED_ORIGINS` | unset: none | Comma-separated `Origin` values the MCP endpoint accepts; requests with any other `Origin` are rejected |
 
 ### Pages and API
 
@@ -61,15 +64,30 @@ lists. To connect Claude Code:
 claude mcp add --transport http sous http://127.0.0.1:3000/mcp
 ```
 
+Then ask it, for example, "What casserole did we have three weeks ago, and how do I make it?" or "What's on today's
+shopping list?"
+
+| Tool | Does |
+| --- | --- |
+| `get_context` | Today's date, the timezone and the current week |
+| `list_weeks` | Stored weeks in a date range |
+| `get_week` | One complete week and its revision |
+| `search_meals` | Meals whose name or description contains some text |
+| `get_meal` | One meal with its recipe and date |
+| `get_shopping_lists` | The shopping lists for one day, today by default |
+| `save_week` | Creates or replaces one complete week |
+
+`save_week` is the only tool that writes. It replaces the whole week in one transaction, and it fails with a conflict
+if the week changed since the assistant read it.
+
 There is no authentication: keep Sous on the loopback address, or put an authenticated layer in front of it. The
-`SOUS_MCP_ALLOWED_HOSTS` and `SOUS_MCP_ALLOWED_ORIGINS` variables control which `Host` and `Origin` values are
-accepted. The [MCP guide](docs/mcp.md) lists every tool, the save semantics and worked examples.
+[MCP guide](docs/mcp.md) covers every tool, the save semantics and worked examples.
 
 ### Adding data
 
 The schema is defined in the [migrations](migrations) and documented in the
-[technical design](docs/technical-design.md). The [fixtures](fixtures) are a complete example week.
-To load them into a fresh database:
+[technical design](docs/technical-design.md). The [fixtures](fixtures) hold a complete example week plus two
+earlier weeks for trying recipe recall. To load them into a fresh database:
 
 ```sh
 make reset      # deletes sous.db, migrates, and loads the fixtures
