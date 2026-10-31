@@ -48,7 +48,8 @@ stand on its own:
   never `cat`/heredoc appends. For migration-preservation tests, keep earlier features' fixture files frozen and put new content in
   a separate fixture, so the upgrade test loads real earlier-iteration data into the old schema.
 
-If the agents will run in parallel, first land any stubs the contract needs yourself, so the crate compiles on its
+When the frontend's browser tests need the new backend behaviour, run the backend agent first and the frontend agent
+after it, with no stubs. Otherwise, if the agents will run in parallel, first land any stubs the contract needs yourself, so the crate compiles on its
 own. Before you start, tell the user in one line that this stub step is the skill's own and that the workers write
 all logic and tests. Keep stubs to signatures and `todo!()`. Run `cargo check` and launch the workers as soon as it
 passes.
@@ -80,11 +81,16 @@ cargo test --test browser -- --ignored
 Read the key new code: the migration, the handlers, the queries and the changed JSX/CSS. Compare it with the spec
 and the reference, and catch scope creep or gaps before asking Codex to review.
 
+Sweep the docs, not just the files the spec names. Grep the README and `docs/` (design, verification record,
+OpenAPI, MCP guide) for every route, payload and test name the feature changed. Fix stale current-contract
+references, and check that every test name the verification record cites still exists.
+
 ## 5. Ask Codex to review
 
 Find Codex's pane. It is usually the split pane of this session (`splitForeground` contains `codex`). If the user
 names a pane UUID, address it with `--pane-id <uuid>` (`--pane` takes only left/right/scratch), and give Codex your
-own pane UUID for its reply (`agtermctl tree --json | grep -o '"paneID":"[^"]*"'`). Check it is idle before typing:
+own pane UUID for its reply (`agtermctl tree --json | grep -o '"paneID":"[^"]*"'`). Check it is idle before typing.
+If it shows an approval prompt, do not type (keystrokes would answer it): ask the user to resolve it first.
 
 ```bash
 agtermctl tree --json --socket "$AGTERM_SOCKET"     # find the session or pane running codex
@@ -94,6 +100,7 @@ agtermctl session text --target "$AGTERM_SESSION_ID" --pane right --lines 20 --s
 Write the request as ONE line, because a newline submits early. Include:
 - what changed and where, and the test results;
 - scope decisions Codex should not flag, such as work that belongs to a later feature;
+- doc coverage: which docs changed and what the step 4 sweep checked;
 - what to review against: the spec path and `docs/technical-design.md`;
 - "Do not edit source files";
 - **how to reply**: over agterm into your pane, never in a file. Codex should run
@@ -143,4 +150,5 @@ That evidence is a test, or a check Codex did in a browser.
   - what still needs the user, such as a visual check with `make run`, since you never run the server. Suggest
     `make reset` only when a migration or fixture changed.
 - **Commit only when the user asks.** Create a branch first, unless the user names one (e.g. "commit on main"). Use a single-line message with no Claude attribution and
-  no Co-Authored-By. Fast-forward `main` or open a PR only when asked.
+  no Co-Authored-By. Fast-forward `main` or open a PR only when asked. Stage the session's files by name, never
+  `git add -A`: the user may have uncommitted edits of their own, which stay out unless they say otherwise.
