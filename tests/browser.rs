@@ -1886,3 +1886,239 @@ fn weekly_layout_at_375px() {
 fn weekly_layout_at_1280px() {
     assert_weekly_layout(1280);
 }
+
+// ---- Feature 5: no third-party requests, visual capture -----------------------------------
+
+impl Harness {
+    /// Every URL the current document requested (navigation + subresources).
+    fn requested_urls(&self) -> Vec<String> {
+        let v = self.js(
+            "[...performance.getEntriesByType('navigation'), ...performance.getEntriesByType('resource')].map(e => e.name)",
+        );
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// Assert the current document made only same-origin requests and embeds no foreign URL.
+    fn assert_same_origin_only(&self, what: &str) {
+        let base = self.base.as_str();
+        for url in self.requested_urls() {
+            assert!(url.starts_with(base), "{what}: third-party request {url}");
+        }
+        let html = self
+            .js("document.documentElement.outerHTML")
+            .as_str()
+            .unwrap()
+            .to_string();
+        for (i, _) in html.match_indices("http") {
+            let rest = &html[i..];
+            if rest.starts_with("http://") || rest.starts_with("https://") {
+                assert!(
+                    rest.starts_with(base),
+                    "{what}: foreign URL in HTML: {}",
+                    rest.chars().take(60).collect::<String>()
+                );
+            }
+        }
+    }
+
+    /// Click every collapsed toggle matching `selector`.
+    fn expand_all(&self, selector: &str) {
+        self.js(&format!(
+            "document.querySelectorAll('{selector}[aria-expanded=false]').forEach(b => b.click())"
+        ));
+        self.wait_for(&format!(
+            "[...document.querySelectorAll('{selector}')].every(b => b.getAttribute('aria-expanded') === 'true')"
+        ));
+    }
+
+    /// Wait for fonts, then write a full-page PNG to `target/visual/<width>-<name>.png`.
+    fn capture(&self, width: u32, name: &str) {
+        use headless_chrome::protocol::cdp::Page::{
+            CaptureScreenshot, CaptureScreenshotFormatOption,
+        };
+        self.tab
+            .evaluate("document.fonts.ready.then(() => true)", true)
+            .unwrap();
+        let data = self
+            .tab
+            .call_method(CaptureScreenshot {
+                format: Some(CaptureScreenshotFormatOption::Png),
+                quality: None,
+                clip: None,
+                from_surface: Some(true),
+                capture_beyond_viewport: Some(true),
+                optimize_for_speed: None,
+            })
+            .unwrap()
+            .data;
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/visual");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join(format!("{width}-{name}.png"));
+        std::fs::write(&file, base64_decode(&data)).unwrap();
+        assert!(std::fs::metadata(&file).unwrap().len() > 0, "{name}");
+    }
+}
+
+/// Minimal base64 decoder (the crate has no base64 dev-dependency).
+fn base64_decode(s: &str) -> Vec<u8> {
+    let (mut out, mut acc, mut bits) = (Vec::new(), 0u32, 0u32);
+    for c in s.bytes() {
+        let v = match c {
+            b'A'..=b'Z' => c - b'A',
+            b'a'..=b'z' => c - b'a' + 26,
+            b'0'..=b'9' => c - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => continue,
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    out
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn no_third_party_requests_on_any_page() {
+    // Plan page: every tab, every card expanded.
+    let h = Opts::new().launch();
+    for day in 0..7 {
+        h.select_day(day);
+        if h.count(".meal-toggle") > 0 {
+            h.expand_all(".meal-toggle");
+        }
+        if h.count(".shop-toggle") > 0 {
+            h.expand_all(".shop-toggle");
+        }
+    }
+    h.select_tab(1);
+    h.expand_all(".prep-toggle");
+    h.select_tab(2);
+    h.select_tab(0);
+    h.wait_for("[...document.fonts].some(f => f.status === 'loaded')");
+    let urls = h.requested_urls();
+    assert!(
+        urls.iter()
+            .any(|u| u.starts_with(&format!("{}/assets/", h.base)) && u.ends_with(".woff2")),
+        "no woff2 from /assets/: {urls:?}"
+    );
+    h.assert_same_origin_only("/2026/44");
+
+    // Other pages of the same server.
+    for path in ["/weeks", "/2026/45", "/2025/53"] {
+        h.goto_page(path);
+        h.assert_same_origin_only(path);
+    }
+
+    // `/` with the clock inside W44.
+    let h = Opts::new()
+        .clock(clock_at(2026, 10, 28, 11, 0, 0))
+        .path("/")
+        .launch();
+    h.assert_same_origin_only("/");
+
+    // Unavailable page.
+    let h = Opts::new().db(Db::ClosedPool).path("/").launch();
+    assert_eq!(h.status(), 503);
+    h.assert_same_origin_only("unavailable");
+}
+
+/// Full-page screenshots at `width` for human review, with the selections and texts asserted.
+fn visual_capture(w: u32) {
+    // Current week: today (Wednesday 2026-10-28) is selected.
+    let h = Opts::new()
+        .width(w)
+        .clock(clock_at(2026, 10, 28, 11, 0, 0))
+        .path("/")
+        .launch();
+    assert_eq!(h.pathname(), "/");
+    assert_eq!(
+        h.pressed(),
+        [false, false, true, false, false, false, false]
+    );
+    h.capture(w, "current-week-today");
+
+    // Archived week (clock in W49): Monday is selected. Week 49 has no weekly content.
+    let h = Opts::new().width(w).sql(&crafted_week(49, &[])).launch();
+    assert_eq!(h.pathname(), "/2026/44");
+    assert_eq!(
+        h.pressed(),
+        [true, false, false, false, false, false, false]
+    );
+    h.capture(w, "archived-week-monday");
+
+    h.click(".meal-toggle");
+    h.wait_for("document.querySelector('.meal-details') !== null");
+    h.capture(w, "daily-meal-expanded");
+    h.click(".meal-toggle");
+    h.wait_for("document.querySelector('.meal-details') === null");
+
+    h.click(".shop-toggle");
+    h.wait_for("document.querySelector('.shop-body') !== null");
+    h.capture(w, "daily-shopping-expanded");
+
+    h.select_day(3);
+    assert_eq!(h.text(".empty"), "No meals planned for this day.");
+    h.capture(w, "daily-empty-day");
+
+    h.select_tab(1);
+    assert_eq!(h.count(".prep-body"), 0);
+    h.capture(w, "prep-tab");
+    h.click(".prep-toggle");
+    h.wait_for("document.querySelector('.prep-body') !== null");
+    h.capture(w, "prep-expanded");
+
+    h.select_tab(2);
+    assert_eq!(h.count(".strategy"), 4);
+    h.capture(w, "strategy-tab");
+
+    // A week without weekly content.
+    h.goto("/2026/49");
+    h.select_tab(1);
+    assert_eq!(h.text(".empty"), "No prep sessions planned.");
+    h.capture(w, "prep-empty");
+    h.select_tab(2);
+    assert_eq!(h.text(".empty"), "No strategy notes for this week.");
+    h.capture(w, "strategy-empty");
+
+    h.goto_page("/weeks");
+    assert_eq!(h.text(".title"), "All weeks");
+    h.capture(w, "archive");
+    h.goto_page("/2026/50");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    h.capture(w, "missing-week");
+    h.goto_page("/2025/53");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts(".empty"), ["Invalid week."]);
+    h.capture(w, "invalid-week");
+
+    let h = Opts::new().width(w).db(Db::ClosedPool).path("/").launch();
+    assert_eq!(h.status(), 503);
+    assert_eq!(
+        h.texts(".empty"),
+        ["Meal plans are temporarily unavailable."]
+    );
+    h.capture(w, "unavailable");
+
+    let h = Opts::new().width(w).db(Db::Empty).path("/weeks").launch();
+    assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
+    h.capture(w, "empty-archive");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_at_375px() {
+    visual_capture(375);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_at_1280px() {
+    visual_capture(1280);
+}

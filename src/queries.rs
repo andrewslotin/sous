@@ -12,6 +12,18 @@ pub async fn load_week(
     iso_year: i32,
     iso_week: u32,
 ) -> Result<Option<WeekDocument>, sqlx::Error> {
+    load_week_with_pause(pool, iso_year, iso_week, std::future::ready(())).await
+}
+
+/// Test seam for snapshot tests: `pause` is awaited after the week row has been read (the read snapshot is
+/// open) and before any related rows are read.
+#[doc(hidden)]
+pub async fn load_week_with_pause(
+    pool: &SqlitePool,
+    iso_year: i32,
+    iso_week: u32,
+    pause: impl std::future::Future<Output = ()>,
+) -> Result<Option<WeekDocument>, sqlx::Error> {
     let Some(dates) = week_dates(iso_year, iso_week) else {
         return Ok(None);
     };
@@ -28,6 +40,7 @@ pub async fn load_week(
         return Ok(None);
     };
     let week_id: String = week_row.get("id");
+    pause.await;
 
     let mut days: Vec<Day> = dates
         .iter()

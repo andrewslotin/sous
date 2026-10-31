@@ -570,6 +570,8 @@ async fn invalid_paths_are_404_invalid_and_never_500() {
         "/2026/%204",
         "/2026/%EF%BC%94",
         "/2026/abc",
+        "/%FF/1",
+        "/2026/%FF",
         "/2026/99999999999999999999",
         "/2026/00000000000000000000000000",
     ] {
@@ -712,7 +714,7 @@ async fn non_get_methods_are_405() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
     for uri in ["/", "/weeks", "/2026/44"] {
-        for method in ["POST", "PUT", "DELETE"] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
             let res = sous::app(pool.clone(), test_clock())
                 .oneshot(
                     Request::builder()
@@ -1677,4 +1679,556 @@ async fn weekly_content_script_safety() {
     let page = page_json(&body);
     assert_eq!(page["document"]["week"]["prepIntro"], evil);
     assert_eq!(page["document"]["days"][2]["reminder"]["icon"], evil);
+}
+
+// ---- Feature 5: read API ----
+
+const THU: &str = "00000002-0000-4000-8000-0000000000f1";
+const THU_MEAL: &str = "00000003-0000-4000-8000-0000000000f2";
+
+type Reply = (StatusCode, axum::http::HeaderMap, String);
+
+/// Send `method uri` through the full router (optionally with an `Origin` header).
+async fn send(pool: &SqlitePool, method: &str, uri: &str, origin: Option<&str>) -> Reply {
+    let mut req = Request::builder().method(method).uri(uri);
+    if let Some(origin) = origin {
+        req = req.header(header::ORIGIN, origin);
+    }
+    let res = sous::app(pool.clone(), test_clock())
+        .oneshot(req.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let body = res.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, String::from_utf8(body.to_vec()).unwrap())
+}
+
+fn api_error(code: &str, message: &str) -> Value {
+    json!({"error": {"code": code, "message": message}})
+}
+
+fn week_not_found() -> Value {
+    api_error("week_not_found", "No meal plan for this week yet.")
+}
+
+fn invalid_week() -> Value {
+    api_error("invalid_week", "Invalid week.")
+}
+
+fn api_not_found() -> Value {
+    api_error("not_found", "Not found.")
+}
+
+fn unavailable_error() -> Value {
+    api_error(
+        "service_unavailable",
+        "Meal plans are temporarily unavailable.",
+    )
+}
+
+/// Assert a JSON response: status, exact content type, no-store, exact body.
+fn assert_json_response(res: &Reply, status: StatusCode, body: &Value, what: &str) {
+    let (s, h, text) = res;
+    assert_eq!(*s, status, "{what}");
+    assert_eq!(h[header::CONTENT_TYPE], "application/json", "{what}");
+    assert_eq!(h[header::CACHE_CONTROL], "no-store", "{what}");
+    assert!(
+        h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none(),
+        "{what}"
+    );
+    assert_eq!(
+        &serde_json::from_str::<Value>(text).unwrap(),
+        body,
+        "{what}"
+    );
+}
+
+fn meal_names(doc: &Value) -> Vec<String> {
+    doc["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|d| d["meals"].as_array().unwrap())
+        .map(|m| m["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
+async fn api_json(pool: &SqlitePool, uri: &str) -> Value {
+    let (s, _, body) = get(pool, uri).await;
+    assert_eq!(s, StatusCode::OK, "{uri}");
+    serde_json::from_str(&body).unwrap()
+}
+
+#[tokio::test]
+async fn api_matches_page_bootstrap() {
+    for t in [
+        TestDb::with_fixture().await,
+        TestDb::with_base_fixture().await,
+    ] {
+        let pool = t.reader().await;
+        let (s, h, body) = get(&pool, "/api/weeks/2026/44").await;
+        assert_eq!(s, StatusCode::OK);
+        assert_eq!(h[header::CONTENT_TYPE], "application/json");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store");
+        let api: Value = serde_json::from_str(&body).unwrap();
+        let (_, _, html) = get(&pool, "/2026/44").await;
+        assert_eq!(api, page_json(&html)["document"]);
+    }
+
+    // Null and empty values are explicit keys.
+    let t = TestDb::with_fixture().await;
+    let doc = api_json(&t.reader().await, "/api/weeks/2026/44").await;
+    assert_eq!(doc["schemaVersion"], 1);
+    let thursday = doc["days"][3].as_object().unwrap();
+    assert_eq!(thursday["id"], Value::Null);
+    assert_eq!(thursday["reminder"], Value::Null);
+    assert_eq!(thursday["meals"], json!([]));
+    assert_eq!(thursday["shoppingListIds"], json!([]));
+
+    assert!(doc["week"]["id"].is_string());
+    assert_eq!(doc["week"]["startDate"], doc["days"][0]["date"]);
+    assert_eq!(doc["week"]["endDate"], doc["days"][6]["date"]);
+    let days = doc["days"].as_array().unwrap();
+    assert_eq!(days.len(), 7);
+    let monday = chrono::NaiveDate::from_ymd_opt(2026, 10, 26).unwrap();
+    for (i, d) in days.iter().enumerate() {
+        assert_eq!(d["weekday"], i as u64 + 1);
+        let date = d["date"].as_str().unwrap();
+        assert_eq!(date.len(), 10);
+        assert_eq!(
+            chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").unwrap(),
+            monday + chrono::Days::new(i as u64)
+        );
+        assert!(d["id"].is_null() || d["id"].is_string());
+    }
+    for key in ["shoppingLists", "prepSessions", "strategyCards"] {
+        for item in doc[key].as_array().unwrap() {
+            assert!(item["id"].is_string(), "{key}");
+        }
+    }
+
+    // A week without weekly content.
+    let t = TestDb::with_base_fixture().await;
+    let doc = api_json(&t.reader().await, "/api/weeks/2026/44").await;
+    assert_eq!(doc["prepSessions"], json!([]));
+    assert_eq!(doc["strategyCards"], json!([]));
+    assert_eq!(doc["week"]["prepIntro"], Value::Null);
+}
+
+#[tokio::test]
+async fn api_error_contract() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let nf = StatusCode::NOT_FOUND;
+
+    let res = get(&pool, "/api/weeks/2026/45").await;
+    assert_json_response(&res, nf, &week_not_found(), "missing week");
+
+    for uri in [
+        "/api/weeks/2025/53",
+        "/api/weeks/abc/1",
+        "/api/weeks/2026/abc",
+        "/api/weeks/0000/1",
+        "/api/weeks/10000/1",
+        "/api/weeks/2026/0",
+        "/api/weeks/2026/54",
+        "/api/weeks/%FF/1",
+        "/api/weeks/2026/%FF",
+    ] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &invalid_week(), uri);
+    }
+
+    for uri in [
+        "/api",
+        "/api/",
+        "/api/nothing",
+        "/api/weeks",
+        "/api/weeks/",
+        "/api/weeks/2026",
+        "/api/weeks/2026/44/extra",
+        "/api/weeks/2026/44/",
+    ] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &api_not_found(), uri);
+    }
+
+    let (_dir, tableless) = tableless_pool().await;
+    let closed = t.reader().await;
+    closed.close().await;
+    for (name, pool) in [("tableless", &tableless), ("closed", &closed)] {
+        for uri in ["/api/weeks/2026/44", "/api/weeks/2026/45"] {
+            let res = get(pool, uri).await;
+            assert_json_response(
+                &res,
+                StatusCode::SERVICE_UNAVAILABLE,
+                &unavailable_error(),
+                &format!("{name} {uri}"),
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn api_zero_padded_redirects() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    for (from, to) in [
+        ("/api/weeks/2026/04", "/api/weeks/2026/4"),
+        ("/api/weeks/2026/004", "/api/weeks/2026/4"),
+        ("/api/weeks/2026/044", "/api/weeks/2026/44"),
+        ("/api/weeks/2026/053", "/api/weeks/2026/53"),
+        ("/api/weeks/9999/051", "/api/weeks/9999/51"),
+        ("/api/weeks/0001/01", "/api/weeks/0001/1"),
+    ] {
+        let (s, h, _) = get(&pool, from).await;
+        assert_eq!(s, StatusCode::PERMANENT_REDIRECT, "{from}");
+        assert_eq!(h[header::LOCATION], to, "{from}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{from}");
+    }
+    // The redirect does not touch the database.
+    let (_dir, tableless) = tableless_pool().await;
+    let (s, _, _) = get(&tableless, "/api/weeks/2026/044").await;
+    assert_eq!(s, StatusCode::PERMANENT_REDIRECT);
+}
+
+#[tokio::test]
+async fn api_snapshot_is_atomic_under_concurrent_commit() {
+    use tokio::sync::oneshot;
+
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let before = week_value(&pool, 2026, 44).await;
+
+    let (paused_tx, paused_rx) = oneshot::channel::<()>();
+    let (committed_tx, committed_rx) = oneshot::channel::<()>();
+    let mut writer = t.writer().await;
+    let writer_task = tokio::spawn(async move {
+        paused_rx.await.unwrap();
+        let mut tx = writer.begin().await.unwrap();
+        for sql in [
+            "UPDATE weeks SET subtitle = 'Changed subtitle'".to_string(),
+            "UPDATE meals SET name = 'Renamed walnuts' WHERE name = 'Walnuts'".to_string(),
+            "DELETE FROM meal_steps WHERE id = '00000004-0000-4000-8000-000000000007'".to_string(),
+            day_sql(THU, FIXTURE_WEEK, 4),
+            meal_sql(THU_MEAL, THU, 0, "Dinner", "100"),
+            "UPDATE shopping_items SET position = 20 WHERE text = '2L oat milk'".to_string(),
+            "UPDATE strategy_cards SET theme = 'green' WHERE title = 'This Week''s Notes'"
+                .to_string(),
+        ] {
+            exec(&mut tx, &sql).await.unwrap();
+        }
+        tx.commit().await.unwrap();
+        committed_tx.send(()).unwrap();
+    });
+
+    // The week row is read and the snapshot is open; the writer commits before any related row is read.
+    let pause = async move {
+        paused_tx.send(()).unwrap();
+        committed_rx.await.unwrap();
+    };
+    let paused = queries::load_week_with_pause(&pool, 2026, 44, pause)
+        .await
+        .unwrap()
+        .unwrap();
+    writer_task.await.unwrap();
+    assert_eq!(serde_json::to_value(&paused).unwrap(), before);
+
+    let after = week_value(&pool, 2026, 44).await;
+    assert_ne!(after, before);
+    assert_eq!(after["week"]["subtitle"], "Changed subtitle");
+    assert!(meal_names(&before).contains(&"Walnuts".to_string()));
+    let names = meal_names(&after);
+    assert!(
+        names.contains(&"Renamed walnuts".to_string()) && !names.contains(&"Walnuts".to_string())
+    );
+    let walnuts = after["days"][0]["meals"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["name"] == "Renamed walnuts")
+        .unwrap();
+    assert_eq!(walnuts["steps"], json!([]));
+    assert_eq!(after["days"][3]["meals"][0]["id"], THU_MEAL);
+    let texts = |doc: &Value| -> Vec<String> {
+        let category = doc["shoppingLists"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|l| l["categories"].as_array().unwrap())
+            .find(|c| c["name"] == "Dairy / Chilled")
+            .unwrap();
+        category["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|i| i["text"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_ne!(texts(&before), texts(&after));
+    assert_eq!(texts(&after).last().unwrap(), "2L oat milk");
+    let theme = |doc: &Value| -> String {
+        doc["strategyCards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["title"] == "This Week's Notes")
+            .unwrap()["theme"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert_eq!(theme(&before), "yellow");
+    assert_eq!(theme(&after), "green");
+}
+
+#[tokio::test]
+async fn api_freshness_after_commit() {
+    let t = TestDb::with_fixture().await;
+    let app = sous::app(t.reader().await, test_clock());
+    let fetch = || async {
+        let res = app
+            .clone()
+            .oneshot(
+                Request::get("/api/weeks/2026/44")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.headers()[header::CACHE_CONTROL], "no-store");
+        let body = res.into_body().collect().await.unwrap().to_bytes();
+        serde_json::from_slice::<Value>(&body).unwrap()
+    };
+
+    let mut c = t.writer().await;
+    let mut tx = c.begin().await.unwrap();
+    exec(
+        &mut tx,
+        "UPDATE meals SET name = 'Renamed meal' WHERE name = 'Walnuts'",
+    )
+    .await
+    .unwrap();
+    assert!(meal_names(&fetch().await).contains(&"Walnuts".to_string()));
+    tx.commit().await.unwrap();
+    let names = meal_names(&fetch().await);
+    assert!(names.contains(&"Renamed meal".to_string()) && !names.contains(&"Walnuts".to_string()));
+}
+
+#[tokio::test]
+async fn api_mutations_405_and_no_leaks() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    for uri in [
+        "/api/weeks/2026/44",
+        "/api/weeks/2026/45",
+        "/api/weeks/abc/1",
+    ] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let (s, h, _) = send(&pool, method, uri, None).await;
+            assert_eq!(s, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{method} {uri}");
+        }
+    }
+
+    // No cross-origin access.
+    let origin = Some("https://example.com");
+    for uri in [
+        "/api/weeks/2026/44",
+        "/api/weeks/2026/45",
+        "/api/nothing",
+        "/2026/44",
+    ] {
+        let (_, h, _) = send(&pool, "GET", uri, origin).await;
+        assert!(
+            h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none(),
+            "{uri}"
+        );
+    }
+    let (_, h, _) = send(&pool, "OPTIONS", "/api/weeks/2026/44", origin).await;
+    assert!(h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
+
+    // Database errors leak nothing.
+    let (dir, tableless) = tableless_pool().await;
+    let tableless_dir = dir.path().to_str().unwrap().to_string();
+    let closed = t.reader().await;
+    closed.close().await;
+    let fixture_dir = t._dir.path().to_str().unwrap().to_string();
+    for pool in [&tableless, &closed] {
+        for uri in ["/api/weeks/2026/44", "/2026/44", "/weeks", "/"] {
+            let (s, _, body) = get(pool, uri).await;
+            assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+            for needle in [
+                "sqlite",
+                "SQL",
+                "no such table",
+                "pool",
+                ".db",
+                "migration",
+                tableless_dir.as_str(),
+                fixture_dir.as_str(),
+            ] {
+                assert!(!body.contains(needle), "{uri} leaks {needle}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn missing_assets_are_plain_404() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    for uri in ["/assets/nope.js", "/assets/app.js", "/assets/"] {
+        let (s, _, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+        assert!(!body.contains("sous-page"), "{uri}");
+    }
+}
+
+const OPENAPI: &str = include_str!("../docs/openapi.json");
+
+/// Validate `value` against an OpenAPI schema (a small subset checker: refs, type, enum, const,
+/// properties/required/additionalProperties, items).
+fn check_schema(root: &Value, schema: &Value, value: &Value, at: &str) {
+    if let Some(r) = schema.get("$ref") {
+        let name = r
+            .as_str()
+            .unwrap()
+            .strip_prefix("#/components/schemas/")
+            .expect("local schema ref");
+        return check_schema(root, &root["components"]["schemas"][name], value, at);
+    }
+    if let Some(branches) = schema.get("oneOf") {
+        // Only used for a nullable `$ref`: null selects the `null` branch, anything else the other.
+        let branch = branches
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|b| (b["type"] == "null") == value.is_null())
+            .unwrap_or_else(|| panic!("{at}: no oneOf branch"));
+        return check_schema(root, branch, value, at);
+    }
+    if let Some(c) = schema.get("const") {
+        assert_eq!(value, c, "{at}: const");
+    }
+    if let Some(e) = schema.get("enum") {
+        assert!(e.as_array().unwrap().contains(value), "{at}: enum {value}");
+    }
+    let kind = match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::String(_) => "string",
+        Value::Number(n) if n.is_i64() || n.is_u64() => "integer",
+        Value::Number(_) => "number",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    };
+    let types: Vec<&str> = match &schema["type"] {
+        Value::String(s) => vec![s.as_str()],
+        Value::Array(a) => a.iter().map(|t| t.as_str().unwrap()).collect(),
+        other => panic!("{at}: schema without type: {other}"),
+    };
+    assert!(
+        types.contains(&kind) || (kind == "integer" && types.contains(&"number")),
+        "{at}: {kind} is not one of {types:?}"
+    );
+    match value {
+        Value::Object(map) => {
+            let props = schema["properties"].as_object().expect("properties");
+            assert_eq!(schema["additionalProperties"], false, "{at}");
+            let mut declared: Vec<&str> = props.keys().map(String::as_str).collect();
+            let mut required: Vec<&str> = schema["required"]
+                .as_array()
+                .expect("required")
+                .iter()
+                .map(|r| r.as_str().unwrap())
+                .collect();
+            let mut actual: Vec<&str> = map.keys().map(String::as_str).collect();
+            declared.sort();
+            required.sort();
+            actual.sort();
+            assert_eq!(declared, required, "{at}: properties vs required");
+            assert_eq!(actual, declared, "{at}: keys vs properties");
+            for (k, v) in map {
+                check_schema(root, &props[k], v, &format!("{at}.{k}"));
+            }
+        }
+        Value::Array(items) => {
+            for (i, v) in items.iter().enumerate() {
+                check_schema(root, &schema["items"], v, &format!("{at}[{i}]"));
+            }
+        }
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn openapi_matches_api() {
+    let spec: Value = serde_json::from_str(OPENAPI).unwrap();
+    assert_eq!(spec["openapi"], "3.1.0");
+    let responses = &spec["paths"]["/api/weeks/{year}/{week}"]["get"]["responses"];
+
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let live = api_json(&pool, "/api/weeks/2026/44").await;
+
+    // (a) The documented example is the live output.
+    let content = &responses["200"]["content"]["application/json"];
+    assert_eq!(content["example"], live);
+    // (b) The live output satisfies the schema, with and without weekly content.
+    check_schema(&spec, &content["schema"], &live, "$");
+    let bare = TestDb::with_base_fixture().await;
+    let live_bare = api_json(&bare.reader().await, "/api/weeks/2026/44").await;
+    check_schema(&spec, &content["schema"], &live_bare, "$bare");
+    let schemas = spec["components"]["schemas"].as_object().unwrap();
+    for name in [
+        "WeekDocument",
+        "Week",
+        "Day",
+        "Reminder",
+        "Meal",
+        "Step",
+        "ShoppingList",
+        "ShoppingCategory",
+        "ShoppingItem",
+        "PrepSession",
+        "PrepTask",
+        "StrategyCard",
+        "StrategyItem",
+        "Error",
+    ] {
+        assert!(schemas.contains_key(name), "{name}");
+    }
+
+    // (c) Every error example is what the server returns, and there are no others.
+    let (_dir, tableless) = tableless_pool().await;
+    let cases = [
+        ("week_not_found", &pool, "/api/weeks/2026/45"),
+        ("invalid_week", &pool, "/api/weeks/2025/53"),
+        ("not_found", &pool, "/api/nothing"),
+        ("service_unavailable", &tableless, "/api/weeks/2026/44"),
+    ];
+    for (code, pool, uri) in cases {
+        let (s, _, body) = get(pool, uri).await;
+        let body: Value = serde_json::from_str(&body).unwrap();
+        let media = &responses[s.as_u16().to_string()]["content"]["application/json"];
+        let example = media["examples"]
+            .as_object()
+            .and_then(|e| e.values().find(|e| e["value"]["error"]["code"] == code))
+            .unwrap_or_else(|| panic!("no example for {code}"));
+        assert_eq!(example["value"], body, "{code}");
+        check_schema(&spec, &media["schema"], &body, code);
+    }
+    let documented: usize = ["404", "503"]
+        .iter()
+        .map(|s| {
+            responses[*s]["content"]["application/json"]["examples"]
+                .as_object()
+                .unwrap()
+                .len()
+        })
+        .sum();
+    assert_eq!(documented, cases.len());
 }

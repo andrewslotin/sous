@@ -1,9 +1,11 @@
+pub mod api;
 pub mod assets;
 pub mod calendar;
 pub mod db;
 pub mod model;
 pub mod queries;
 
+use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
@@ -27,8 +29,9 @@ pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
         .route("/", get(root_handler))
         .route("/weeks", get(weeks_handler))
         .route("/{year}/{week}", get(week_handler))
+        .merge(api::routes())
         .fallback(not_found)
-        .layer(middleware::map_response(no_store_for_html))
+        .layer(middleware::map_response(no_store))
         .with_state(AppState {
             pool: read_pool,
             clock,
@@ -36,8 +39,8 @@ pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
         .merge(assets::routes())
 }
 
-/// Dynamic HTML is never cached; assets keep their own headers.
-async fn no_store_for_html(mut res: Response) -> Response {
+/// Dynamic HTML and JSON are never cached; assets keep their own headers.
+async fn no_store(mut res: Response) -> Response {
     res.headers_mut()
         .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     res
@@ -133,8 +136,12 @@ async fn root_handler(State(state): State<AppState>) -> Response {
 
 async fn week_handler(
     State(state): State<AppState>,
-    Path((year, week)): Path<(String, String)>,
+    path: Result<Path<(String, String)>, PathRejection>,
 ) -> Response {
+    // Malformed percent-encoding is an invalid week, not a plain-text 400.
+    let Ok(Path((year, week))) = path else {
+        return invalid();
+    };
     match calendar::classify_week_path(&year, &week) {
         WeekPath::Canonical(iso_year, iso_week) => {
             let today = state.clock.today();

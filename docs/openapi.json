@@ -1,0 +1,1231 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Sous read API",
+    "version": "1",
+    "description": "Read-only JSON API for weekly meal plans. The document format version is the `schemaVersion` field. Every response carries `Cache-Control: no-store`. No cross-origin access is enabled."
+  },
+  "paths": {
+    "/api/weeks/{year}/{week}": {
+      "get": {
+        "operationId": "getWeek",
+        "summary": "Get the complete meal plan of one ISO week.",
+        "description": "Uses the same query and document as the HTML page `/{year}/{week}`, read from one database snapshot. Every other path under `/api` returns the `not_found` error with status 404.",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "description": "ISO week-year: exactly four decimal digits, 0001 to 9999 (years below 1000 are zero-padded, e.g. `0001`), and all seven days of the requested week must be representable. Anything else is `invalid_week`.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}$",
+              "examples": [
+                "2026"
+              ]
+            }
+          },
+          {
+            "name": "week",
+            "in": "path",
+            "required": true,
+            "description": "ISO week number, 1 to the number of weeks in that ISO year (52 or 53). Zero-padded but otherwise valid values (for example `044`) redirect permanently to the canonical path. Anything else is `invalid_week`.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]+$",
+              "examples": [
+                "44"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The week document.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeekDocument"
+                },
+                "example": {
+                  "schemaVersion": 1,
+                  "week": {
+                    "id": "00000001-0000-4000-8000-000000000001",
+                    "isoYear": 2026,
+                    "isoWeek": 44,
+                    "startDate": "2026-10-26",
+                    "endDate": "2026-11-01",
+                    "subtitle": "Salmon, oats and a little gravlax",
+                    "prepIntro": "Monday covers Mon–Wed. Wednesday is a smaller session for Thu–Sun."
+                  },
+                  "days": [
+                    {
+                      "id": "00000002-0000-4000-8000-000000000002",
+                      "date": "2026-10-26",
+                      "weekday": 1,
+                      "meals": [
+                        {
+                          "id": "00000003-0000-4000-8000-000000000011",
+                          "type": "Breakfast",
+                          "name": "Overnight Oats — Apple & Walnut",
+                          "description": "60g oats, 200ml oat milk, 30g walnuts, grated apple, chia, cinnamon",
+                          "kcal": 430.0,
+                          "proteinG": 14.0,
+                          "fatG": 18.0,
+                          "carbsG": 52.0,
+                          "fiberG": 10.0,
+                          "forTwo": false,
+                          "assemblyTime": "2 min",
+                          "cookTime": null,
+                          "tip": "Make it the night before.",
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-000000000014",
+                              "text": "Stir oats, milk and chia in a jar."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-000000000013",
+                              "text": "Refrigerate overnight."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-000000000012",
+                              "text": "Top with grated apple and walnuts."
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000003-0000-4000-8000-00000000000e",
+                          "type": "Lunch",
+                          "name": "Okroshka (option A) / Spinach & Chickpea Salad (option B)",
+                          "description": "Cold kefir soup with cucumber, radish and dill; a chickpea salad for two",
+                          "kcal": 380.5,
+                          "proteinG": 16.25,
+                          "fatG": 16.0,
+                          "carbsG": 42.0,
+                          "fiberG": 10.0,
+                          "forTwo": true,
+                          "assemblyTime": "10 min",
+                          "cookTime": null,
+                          "tip": null,
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-000000000010",
+                              "text": "Chop cucumber, radish and dill."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000000f",
+                              "text": "Combine with kefir and season."
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000003-0000-4000-8000-000000000008",
+                          "type": "Dinner",
+                          "name": "Miso-Glazed Salmon with Sesame Greens & Rice",
+                          "description": "Per person: 150g salmon, miso glaze, greens, rice",
+                          "kcal": 560.0,
+                          "proteinG": 38.0,
+                          "fatG": 22.4,
+                          "carbsG": 52.0,
+                          "fiberG": 6.5,
+                          "forTwo": true,
+                          "assemblyTime": null,
+                          "cookTime": "25 min",
+                          "tip": "Broil the glaze briefly so it does not burn.",
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-00000000000d",
+                              "text": "Mix miso, mirin and ginger."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000000c",
+                              "text": "Brush on salmon."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000000b",
+                              "text": "Bake at 200°C for 10 min."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000000a",
+                              "text": "Wilt the greens with sesame oil."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-000000000009",
+                              "text": "Serve over rice."
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000003-0000-4000-8000-000000000006",
+                          "type": "Snack",
+                          "name": "Walnuts",
+                          "description": "A small handful",
+                          "kcal": 200.0,
+                          "proteinG": 5.0,
+                          "fatG": 18.0,
+                          "carbsG": 3.0,
+                          "fiberG": 2.0,
+                          "forTwo": false,
+                          "assemblyTime": "1 min",
+                          "cookTime": null,
+                          "tip": "A crunchy snack.",
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-000000000007",
+                              "text": "Portion 30g."
+                            }
+                          ]
+                        }
+                      ],
+                      "shoppingListIds": [
+                        "00000005-0000-4000-8000-000000000020",
+                        "00000005-0000-4000-8000-00000000001f"
+                      ],
+                      "reminder": null
+                    },
+                    {
+                      "id": "00000002-0000-4000-8000-000000000003",
+                      "date": "2026-10-27",
+                      "weekday": 2,
+                      "meals": [
+                        {
+                          "id": "00000003-0000-4000-8000-000000000018",
+                          "type": "Breakfast",
+                          "name": "Skyr Bowl with Berries & Almonds",
+                          "description": "Skyr, mixed berries, almonds",
+                          "kcal": 320.0,
+                          "proteinG": 26.0,
+                          "fatG": 10.0,
+                          "carbsG": 30.0,
+                          "fiberG": 4.0,
+                          "forTwo": false,
+                          "assemblyTime": "3 min",
+                          "cookTime": null,
+                          "tip": null,
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-00000000001a",
+                              "text": "Spoon skyr into a bowl."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-000000000019",
+                              "text": "Top with berries and almonds."
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000003-0000-4000-8000-000000000015",
+                          "type": "Dinner",
+                          "name": "Salmon en Papillote with Lemon, Dill & Courgette",
+                          "description": "Salmon parcels with lemon slices and dill",
+                          "kcal": 460.0,
+                          "proteinG": 38.0,
+                          "fatG": 22.0,
+                          "carbsG": 14.0,
+                          "fiberG": 4.0,
+                          "forTwo": true,
+                          "assemblyTime": null,
+                          "cookTime": "30 min (mostly oven)",
+                          "tip": "Open the parcel at the table.",
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-000000000017",
+                              "text": "Fold baking paper into parcels."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-000000000016",
+                              "text": "Bake 15 min at 190°C."
+                            }
+                          ]
+                        }
+                      ],
+                      "shoppingListIds": [],
+                      "reminder": null
+                    },
+                    {
+                      "id": "00000002-0000-4000-8000-000000000004",
+                      "date": "2026-10-28",
+                      "weekday": 3,
+                      "meals": [],
+                      "shoppingListIds": [
+                        "00000005-0000-4000-8000-00000000001f"
+                      ],
+                      "reminder": {
+                        "title": "Shop day",
+                        "body": "Pick up the Thursday top-up list after work.",
+                        "icon": "🧾"
+                      }
+                    },
+                    {
+                      "id": null,
+                      "date": "2026-10-29",
+                      "weekday": 4,
+                      "meals": [],
+                      "shoppingListIds": [],
+                      "reminder": null
+                    },
+                    {
+                      "id": null,
+                      "date": "2026-10-30",
+                      "weekday": 5,
+                      "meals": [],
+                      "shoppingListIds": [],
+                      "reminder": null
+                    },
+                    {
+                      "id": null,
+                      "date": "2026-10-31",
+                      "weekday": 6,
+                      "meals": [],
+                      "shoppingListIds": [],
+                      "reminder": null
+                    },
+                    {
+                      "id": "00000002-0000-4000-8000-000000000005",
+                      "date": "2026-11-01",
+                      "weekday": 7,
+                      "meals": [
+                        {
+                          "id": "00000003-0000-4000-8000-00000000001b",
+                          "type": "Lunch",
+                          "name": "Manchego, Apple & Walnut Salad",
+                          "description": "Per person: mixed leaves, ~30g shaved Manchego, ½ apple, 20g walnuts, lemon-olive oil",
+                          "kcal": 380.0,
+                          "proteinG": 14.0,
+                          "fatG": 24.0,
+                          "carbsG": 24.0,
+                          "fiberG": 6.0,
+                          "forTwo": true,
+                          "assemblyTime": "8 min",
+                          "cookTime": null,
+                          "tip": "Manchego as an accent — ~30g each.",
+                          "steps": [
+                            {
+                              "id": "00000004-0000-4000-8000-00000000001e",
+                              "text": "Bed of mixed leaves. Sliced apple, toasted walnuts."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000001d",
+                              "text": "Shave Manchego over each plate."
+                            },
+                            {
+                              "id": "00000004-0000-4000-8000-00000000001c",
+                              "text": "Dress with olive oil, lemon and Dijon."
+                            }
+                          ]
+                        }
+                      ],
+                      "shoppingListIds": [],
+                      "reminder": {
+                        "title": "Plan next week",
+                        "body": null,
+                        "icon": null
+                      }
+                    }
+                  ],
+                  "shoppingLists": [
+                    {
+                      "id": "00000005-0000-4000-8000-000000000021",
+                      "label": "🛒 Thursday Top-Up → covers Thu–Sun",
+                      "note": "Small trip.",
+                      "categories": [
+                        {
+                          "id": "00000006-0000-4000-8000-000000000027",
+                          "name": "Meat",
+                          "items": [
+                            {
+                              "id": "00000007-0000-4000-8000-000000000031",
+                              "text": "4 skinless chicken thighs (~400g)"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "00000005-0000-4000-8000-00000000001f",
+                      "label": "🛒 Monday Shop → covers Mon–Wed",
+                      "note": "You have: salmon, oats, walnuts, almonds, chia, miso, spices.",
+                      "categories": [
+                        {
+                          "id": "00000006-0000-4000-8000-000000000023",
+                          "name": "Produce",
+                          "items": [
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002b",
+                              "text": "1 cucumber"
+                            },
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002e",
+                              "text": "1 courgette"
+                            },
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002d",
+                              "text": "1 bag baby spinach (200g)"
+                            },
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002a",
+                              "text": "200g mixed berries"
+                            },
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002c",
+                              "text": "Fresh ginger"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000006-0000-4000-8000-000000000022",
+                          "name": "Dairy / Chilled",
+                          "items": [
+                            {
+                              "id": "00000007-0000-4000-8000-000000000029",
+                              "text": "2L oat milk"
+                            },
+                            {
+                              "id": "00000007-0000-4000-8000-000000000028",
+                              "text": "Skyr (400g)"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000006-0000-4000-8000-000000000024",
+                          "name": "Bakery",
+                          "items": [
+                            {
+                              "id": "00000007-0000-4000-8000-00000000002f",
+                              "text": "1 loaf dark rye bread"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "00000005-0000-4000-8000-000000000020",
+                      "label": "🧴 Household",
+                      "note": null,
+                      "categories": [
+                        {
+                          "id": "00000006-0000-4000-8000-000000000025",
+                          "name": "Cleaning",
+                          "items": [
+                            {
+                              "id": "00000007-0000-4000-8000-000000000030",
+                              "text": "Dish soap"
+                            }
+                          ]
+                        },
+                        {
+                          "id": "00000006-0000-4000-8000-000000000026",
+                          "name": "Spices",
+                          "items": []
+                        }
+                      ]
+                    }
+                  ],
+                  "prepSessions": [
+                    {
+                      "id": "00000008-0000-4000-8000-000000000035",
+                      "title": "Monday Prep Session (~1.5 hours)",
+                      "covers": "Covers Monday through Wednesday",
+                      "tasks": [
+                        {
+                          "id": "00000009-0000-4000-8000-000000000037",
+                          "name": "Start the Gravlax",
+                          "time": "15 min",
+                          "instructions": "Pack the cure over the salmon, wrap tightly and weight it. Flip once a day."
+                        },
+                        {
+                          "id": "00000009-0000-4000-8000-000000000038",
+                          "name": "Air-Fryer Roasted Chickpeas",
+                          "time": "20 min",
+                          "instructions": "Toss chickpeas with oil and paprika; air-fry at 200°C for 12–15 min."
+                        },
+                        {
+                          "id": "00000009-0000-4000-8000-000000000036",
+                          "name": "Cook Brown Rice",
+                          "time": "25 min",
+                          "instructions": "Cook 200g dry brown rice; store."
+                        }
+                      ]
+                    },
+                    {
+                      "id": "00000008-0000-4000-8000-000000000032",
+                      "title": "Wednesday Evening Prep (~45 min)",
+                      "covers": null,
+                      "tasks": [
+                        {
+                          "id": "00000009-0000-4000-8000-000000000034",
+                          "name": "Overnight Oats × 1 jar",
+                          "time": "3 min",
+                          "instructions": "One jar: 60g oats + 200ml oat milk + 1 tbsp chia."
+                        },
+                        {
+                          "id": "00000009-0000-4000-8000-000000000033",
+                          "name": "Lentil & Roasted Veg Salad (3 portions)",
+                          "time": "35 min (mostly air fryer + simmer)",
+                          "instructions": "Cook 150g lentils ~20 min; air-fry the veg at 200°C for 15 min; combine and dress."
+                        }
+                      ]
+                    }
+                  ],
+                  "strategyCards": [
+                    {
+                      "id": "0000000a-0000-4000-8000-00000000003b",
+                      "title": "Weekly Variety",
+                      "icon": "🐟",
+                      "theme": "green",
+                      "items": [
+                        {
+                          "id": "0000000b-0000-4000-8000-00000000003d",
+                          "text": "Oily fish 3×"
+                        },
+                        {
+                          "id": "0000000b-0000-4000-8000-00000000003c",
+                          "text": "Legumes daily"
+                        },
+                        {
+                          "id": "0000000b-0000-4000-8000-00000000003e",
+                          "text": "Nuts daily — walnuts & almonds"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "0000000a-0000-4000-8000-000000000041",
+                      "title": "Air Fryer Features",
+                      "icon": "🍳",
+                      "theme": "blue",
+                      "items": [
+                        {
+                          "id": "0000000b-0000-4000-8000-000000000042",
+                          "text": "Mon: crispy chickpeas"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "0000000a-0000-4000-8000-00000000003f",
+                      "title": "The Salmon Plan",
+                      "icon": null,
+                      "theme": "purple",
+                      "items": [
+                        {
+                          "id": "0000000b-0000-4000-8000-000000000040",
+                          "text": "~300g → gravlax"
+                        }
+                      ]
+                    },
+                    {
+                      "id": "0000000a-0000-4000-8000-000000000039",
+                      "title": "This Week's Notes",
+                      "icon": "📝",
+                      "theme": "yellow",
+                      "items": [
+                        {
+                          "id": "0000000b-0000-4000-8000-00000000003a",
+                          "text": "Monday + Thursday shop split"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "308": {
+            "description": "A valid week with zero-padded path segments; permanent redirect to the canonical API path, e.g. `/api/weeks/2026/044` to `/api/weeks/2026/44`.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              },
+              "Location": {
+                "description": "Canonical API path.",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No plan for this valid week, an invalid year or week, or any other path under `/api`.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "week_not_found": {
+                    "summary": "Valid week without a plan",
+                    "value": {
+                      "error": {
+                        "code": "week_not_found",
+                        "message": "No meal plan for this week yet."
+                      }
+                    }
+                  },
+                  "invalid_week": {
+                    "summary": "Invalid year or week",
+                    "value": {
+                      "error": {
+                        "code": "invalid_week",
+                        "message": "Invalid week."
+                      }
+                    }
+                  },
+                  "not_found": {
+                    "summary": "Any other path under /api",
+                    "value": {
+                      "error": {
+                        "code": "not_found",
+                        "message": "Not found."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only GET is supported. No JSON body is guaranteed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable. The body never contains database details.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "service_unavailable": {
+                    "summary": "Database error",
+                    "value": {
+                      "error": {
+                        "code": "service_unavailable",
+                        "message": "Meal plans are temporarily unavailable."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "WeekDocument": {
+        "type": "object",
+        "description": "The complete meal plan of one ISO week. Identical to the document embedded in the HTML page.",
+        "properties": {
+          "schemaVersion": {
+            "const": 1,
+            "type": "integer",
+            "description": "API format version; independent of SQL migration versions."
+          },
+          "week": {
+            "$ref": "#/components/schemas/Week"
+          },
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Day"
+            },
+            "description": "Always seven entries, Monday (weekday 1) to Sunday (weekday 7), including days without a stored record."
+          },
+          "shoppingLists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShoppingList"
+            },
+            "description": "Every shopping list of the week in stored order, including lists not assigned to any day. Days refer to them by ID."
+          },
+          "prepSessions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrepSession"
+            },
+            "description": "Prep sessions in stored order; empty when the week has none."
+          },
+          "strategyCards": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrategyCard"
+            },
+            "description": "Strategy cards in stored order; empty when the week has none."
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "week",
+          "days",
+          "shoppingLists",
+          "prepSessions",
+          "strategyCards"
+        ],
+        "additionalProperties": false
+      },
+      "Week": {
+        "type": "object",
+        "description": "Identity and dates of the ISO week.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable week ID."
+          },
+          "isoYear": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9999,
+            "description": "ISO week-year."
+          },
+          "isoWeek": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 53,
+            "description": "ISO week number."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Monday of the week."
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Sunday of the week."
+          },
+          "subtitle": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional one-line description of the week."
+          },
+          "prepIntro": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional introduction shown above the prep sessions."
+          }
+        },
+        "required": [
+          "id",
+          "isoYear",
+          "isoWeek",
+          "startDate",
+          "endDate",
+          "subtitle",
+          "prepIntro"
+        ],
+        "additionalProperties": false
+      },
+      "Day": {
+        "type": "object",
+        "description": "One day of the week.",
+        "properties": {
+          "id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "Stable day ID; null when the day has no stored record (then meals and shoppingListIds are empty and reminder is null)."
+          },
+          "date": {
+            "type": "string",
+            "format": "date",
+            "description": "Calendar date of this day."
+          },
+          "weekday": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 7,
+            "description": "ISO weekday, 1 = Monday."
+          },
+          "meals": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Meal"
+            },
+            "description": "Meals in stored order."
+          },
+          "shoppingListIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid",
+              "description": "ID of an entry of the top-level shoppingLists."
+            },
+            "description": "Lists shown on this day, in stored order."
+          },
+          "reminder": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Reminder"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Day reminder; null unless the day has a reminder title."
+          }
+        },
+        "required": [
+          "id",
+          "date",
+          "weekday",
+          "meals",
+          "shoppingListIds",
+          "reminder"
+        ],
+        "additionalProperties": false
+      },
+      "Reminder": {
+        "type": "object",
+        "description": "A short reminder attached to a day.",
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "Reminder title."
+          },
+          "body": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional reminder text."
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional icon, display text."
+          }
+        },
+        "required": [
+          "title",
+          "body",
+          "icon"
+        ],
+        "additionalProperties": false
+      },
+      "Meal": {
+        "type": "object",
+        "description": "One meal of a day.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable meal ID."
+          },
+          "type": {
+            "type": "string",
+            "description": "Meal kind.",
+            "enum": [
+              "Breakfast",
+              "Lunch",
+              "Dinner",
+              "Snack"
+            ]
+          },
+          "name": {
+            "type": "string",
+            "description": "Meal name."
+          },
+          "description": {
+            "type": "string",
+            "description": "Free-text description; may mention several people."
+          },
+          "kcal": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Energy in kcal for the displayed individual's intake."
+          },
+          "proteinG": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Protein in grams for the displayed individual's intake."
+          },
+          "fatG": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Fat in grams for the displayed individual's intake."
+          },
+          "carbsG": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Carbohydrates in grams for the displayed individual's intake."
+          },
+          "fiberG": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Fibre in grams for the displayed individual's intake."
+          },
+          "forTwo": {
+            "type": "boolean",
+            "description": "Only controls the FOR TWO badge; nutrition is never multiplied for FOR TWO."
+          },
+          "assemblyTime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Assembly time, display text, never parsed."
+          },
+          "cookTime": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Cooking time, display text, never parsed."
+          },
+          "tip": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional tip."
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Step"
+            },
+            "description": "Preparation steps in stored order."
+          }
+        },
+        "required": [
+          "id",
+          "type",
+          "name",
+          "description",
+          "kcal",
+          "proteinG",
+          "fatG",
+          "carbsG",
+          "fiberG",
+          "forTwo",
+          "assemblyTime",
+          "cookTime",
+          "tip",
+          "steps"
+        ],
+        "additionalProperties": false
+      },
+      "Step": {
+        "type": "object",
+        "description": "One preparation step.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable step ID."
+          },
+          "text": {
+            "type": "string",
+            "description": "Step text."
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "ShoppingList": {
+        "type": "object",
+        "description": "A shopping list, possibly shown on several days.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable list ID."
+          },
+          "label": {
+            "type": "string",
+            "description": "List label."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional note."
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShoppingCategory"
+            },
+            "description": "Categories in stored order."
+          }
+        },
+        "required": [
+          "id",
+          "label",
+          "note",
+          "categories"
+        ],
+        "additionalProperties": false
+      },
+      "ShoppingCategory": {
+        "type": "object",
+        "description": "A category of a shopping list.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable category ID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Category name."
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShoppingItem"
+            },
+            "description": "Items in stored order."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "ShoppingItem": {
+        "type": "object",
+        "description": "One shopping item.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable item ID."
+          },
+          "text": {
+            "type": "string",
+            "description": "Display text including any quantity; never parsed or consolidated."
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "PrepSession": {
+        "type": "object",
+        "description": "A batch-prep session.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable session ID."
+          },
+          "title": {
+            "type": "string",
+            "description": "Session title."
+          },
+          "covers": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional note on which days the session covers."
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PrepTask"
+            },
+            "description": "Tasks in stored order."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "covers",
+          "tasks"
+        ],
+        "additionalProperties": false
+      },
+      "PrepTask": {
+        "type": "object",
+        "description": "One task of a prep session.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable task ID."
+          },
+          "name": {
+            "type": "string",
+            "description": "Task name."
+          },
+          "time": {
+            "type": "string",
+            "description": "Duration, display text, never parsed."
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Task instructions."
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "time",
+          "instructions"
+        ],
+        "additionalProperties": false
+      },
+      "StrategyCard": {
+        "type": "object",
+        "description": "A strategy card.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable card ID."
+          },
+          "title": {
+            "type": "string",
+            "description": "Card title."
+          },
+          "icon": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional icon, display text."
+          },
+          "theme": {
+            "type": "string",
+            "description": "Colour theme.",
+            "enum": [
+              "green",
+              "blue",
+              "purple",
+              "yellow"
+            ]
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/StrategyItem"
+            },
+            "description": "Items in stored order."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "icon",
+          "theme",
+          "items"
+        ],
+        "additionalProperties": false
+      },
+      "StrategyItem": {
+        "type": "object",
+        "description": "One strategy item.",
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Stable item ID."
+          },
+          "text": {
+            "type": "string",
+            "description": "Item text."
+          }
+        },
+        "required": [
+          "id",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "Error": {
+        "type": "object",
+        "description": "JSON error body.",
+        "properties": {
+          "error": {
+            "type": "object",
+            "description": "Error details.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "description": "Stable machine-readable code.",
+                "enum": [
+                  "week_not_found",
+                  "invalid_week",
+                  "not_found",
+                  "service_unavailable"
+                ]
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable message."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "additionalProperties": false
+      }
+    }
+  }
+}
