@@ -5,7 +5,9 @@
   not by writing a file that I poll. The Codex-specific steps are in the implement-feature skill, step 5.
 - When a tool call fails, or a hook stops or blocks one, tell the user at once in one line: what fired and what I'll
   do next. Never end a turn silently. Keep exploratory command chains short, and post a one-line status after
-  loading context, before writing a brief.
+  loading context (before writing a brief) and before a multi-call handoff such as typing a review request.
+- Change files with Edit/Write, never shell heredocs or inline scripts. Run a multi-line script from a scratchpad
+  file: multi-line inline Bash (`python3 -c`, heredocs) can trip the commit-message hook.
 - Before reading something outside the task (e.g. the next feature's spec), say why in one line.
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the baseline before planning. Raise a missing tool once, with a recommendation.

@@ -43,7 +43,8 @@ stand on its own:
   one. Feature 2's "available-week links" grew into a full week list that the user then had removed.
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
   integration tests and `tests/browser.rs` for anything the user sees: rendering, keyboard/pointer, layout widths,
-  text safety.
+  text safety. For migration-preservation tests, keep earlier features' fixture files frozen and put new content in
+  a separate fixture, so the upgrade test loads real earlier-iteration data into the old schema.
 
 If the agents will run in parallel, first land any stubs the contract needs yourself, so the crate compiles on its
 own. Before you start, tell the user in one line that this stub step is the skill's own and that the workers write
@@ -79,8 +80,9 @@ and the reference, and catch scope creep or gaps before asking Codex to review.
 
 ## 5. Ask Codex to review
 
-Find Codex's pane. It is usually the split pane of this session (`splitForeground` contains `codex`).
-Check it is idle before typing:
+Find Codex's pane. It is usually the split pane of this session (`splitForeground` contains `codex`). If the user
+names a pane UUID, address it with `--pane-id <uuid>` (`--pane` takes only left/right/scratch), and give Codex your
+own pane UUID for its reply (`agtermctl tree --json | grep -o '"paneID":"[^"]*"'`). Check it is idle before typing:
 
 ```bash
 agtermctl tree --json --socket "$AGTERM_SOCKET"     # find the session or pane running codex
