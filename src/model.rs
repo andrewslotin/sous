@@ -9,6 +9,10 @@ pub struct WeekDocument {
     pub days: Vec<Day>,
     /// Every list of the week, by `shopping_lists.position`, including unassigned ones.
     pub shopping_lists: Vec<ShoppingList>,
+    /// By `prep_sessions.position`.
+    pub prep_sessions: Vec<PrepSession>,
+    /// By `strategy_cards.position`.
+    pub strategy_cards: Vec<StrategyCard>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,6 +24,7 @@ pub struct Week {
     pub start_date: String,
     pub end_date: String,
     pub subtitle: Option<String>,
+    pub prep_intro: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -31,6 +36,15 @@ pub struct Day {
     pub meals: Vec<Meal>,
     /// Lists shown on this day, by `day_shopping_lists.position`.
     pub shopping_list_ids: Vec<String>,
+    /// Present only when `days.reminder_title` is non-null.
+    pub reminder: Option<Reminder>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Reminder {
+    pub title: String,
+    pub body: Option<String>,
+    pub icon: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +90,41 @@ pub struct ShoppingCategory {
 
 #[derive(Debug, Serialize)]
 pub struct ShoppingItem {
+    pub id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrepSession {
+    pub id: String,
+    pub title: String,
+    pub covers: Option<String>,
+    /// By `prep_tasks.position`.
+    pub tasks: Vec<PrepTask>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PrepTask {
+    pub id: String,
+    pub name: String,
+    /// Display text, never parsed.
+    pub time: String,
+    pub instructions: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StrategyCard {
+    pub id: String,
+    pub title: String,
+    pub icon: Option<String>,
+    /// One of `green`, `blue`, `purple`, `yellow` (enforced by the database).
+    pub theme: String,
+    /// By `strategy_items.position`.
+    pub items: Vec<StrategyItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StrategyItem {
     pub id: String,
     pub text: String,
 }

@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 use tempfile::TempDir;
 
 const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
+const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
 const CHROME: &str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const IGNORE: &str = "requires Google Chrome; run: cargo test --test browser -- --ignored";
 const XSS_NAME: &str = "</script><script>window.pwned=1</script> <b>x</b>";
@@ -153,6 +154,7 @@ impl Opts {
                     .unwrap();
                 if mode != Db::Empty {
                     sqlx::raw_sql(FIXTURE).execute(&mut c).await.unwrap();
+                    sqlx::raw_sql(WEEKLY_FIXTURE).execute(&mut c).await.unwrap();
                 }
                 sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
                     .execute(&mut c)
@@ -1150,4 +1152,737 @@ fn shopping_layout_at_375px() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn shopping_layout_at_1280px() {
     assert_shop_layout(1280);
+}
+
+// ---- Feature 4: prep, strategy, reminders --------------------------------------------------
+
+/// Content for a crafted week (ISO 2026-W`week`) whose Monday carries a reminder.
+struct Content<'a> {
+    subtitle: Option<&'a str>,
+    intro: Option<&'a str>,
+    /// (title, body, icon)
+    reminder: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
+    /// (title, covers, [(name, time, instructions)])
+    session: Option<(&'a str, Option<&'a str>, [&'a str; 3])>,
+    /// (title, icon, theme, item)
+    card: Option<(&'a str, Option<&'a str>, &'a str, &'a str)>,
+}
+
+fn content_week(week: u32, c: &Content) -> String {
+    let lit = |s: Option<&str>| {
+        s.map_or("NULL".to_string(), |s| {
+            format!("'{}'", s.replace('\'', "''"))
+        })
+    };
+    let base = 1000 * week;
+    let (rt, rb, ri) = c
+        .reminder
+        .map_or((None, None, None), |(t, b, i)| (Some(t), b, i));
+    let mut sql = format!(
+        "INSERT INTO weeks (id, iso_year, iso_week, subtitle, prep_intro) VALUES ('{}', 2026, {week}, {}, {});\n\
+         INSERT INTO days (id, week_id, weekday, reminder_title, reminder_body, reminder_icon) \
+         VALUES ('{}', '{}', 1, {}, {}, {});\n",
+        id(0xa1, base),
+        lit(c.subtitle),
+        lit(c.intro),
+        id(0xa2, base),
+        id(0xa1, base),
+        lit(rt),
+        lit(rb),
+        lit(ri),
+    );
+    if let Some((title, covers, [name, time, instructions])) = c.session {
+        sql += &format!(
+            "INSERT INTO prep_sessions (id, week_id, position, title, covers) VALUES ('{}', '{}', 0, {}, {});\n\
+             INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) \
+             VALUES ('{}', '{}', 0, {}, {}, {});\n",
+            id(0xd1, base),
+            id(0xa1, base),
+            lit(Some(title)),
+            lit(covers),
+            id(0xd2, base),
+            id(0xd1, base),
+            lit(Some(name)),
+            lit(Some(time)),
+            lit(Some(instructions)),
+        );
+    }
+    if let Some((title, icon, theme, item)) = c.card {
+        sql += &format!(
+            "INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('{}', '{}', 0, {}, {}, '{theme}');\n\
+             INSERT INTO strategy_items (id, card_id, position, text) VALUES ('{}', '{}', 0, {});\n",
+            id(0xd3, base),
+            id(0xa1, base),
+            lit(Some(title)),
+            lit(icon),
+            id(0xd4, base),
+            id(0xd3, base),
+            lit(Some(item)),
+        );
+    }
+    sql
+}
+
+impl Harness {
+    /// Activate a tab (0 = Daily Plan, 1 = Prep Sessions, 2 = Strategy) by clicking its button.
+    fn select_tab(&self, index: usize) {
+        self.click(&format!(".tab-button:nth-child({})", index + 1));
+        self.wait_for(&format!(
+            "document.querySelectorAll('.tab-button')[{index}].getAttribute('aria-pressed') === 'true'"
+        ));
+    }
+
+    fn pressed_tabs(&self) -> Vec<bool> {
+        let v = self.js(
+            "[...document.querySelectorAll('.tab-button')].map(b => b.getAttribute('aria-pressed') === 'true')",
+        );
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// Computed styles of the first element matching `selector`, as `[property, ...]` values.
+    fn styles(&self, selector: &str, props: &[&str]) -> Vec<String> {
+        let v = self.js(&format!(
+            "(() => {{ const s = getComputedStyle(document.querySelector('{selector}')); \
+             return {props:?}.map(p => s[p]); }})()"
+        ));
+        serde_json::from_value(v).unwrap()
+    }
+}
+
+#[test]
+fn app_jsx_has_no_sample_content() {
+    let src = include_str!("../web/app.jsx");
+    for sample in [
+        "Salmon week",
+        "Sunday covers",
+        "Weekly Variety",
+        "Air Fryer Features",
+        "Salmon Plan",
+        "This Week",
+        "Time for next week",
+        "Ask Claude",
+        "Saturday",
+        "Oily fish",
+    ] {
+        assert!(!src.contains(sample), "app.jsx hardcodes {sample:?}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn tabs_switch_and_keep_selected_day() {
+    let h = Harness::start("", 1280);
+    assert_eq!(
+        h.texts(".tab-button"),
+        ["Daily Plan", "Prep Sessions", "Strategy"]
+    );
+    assert_eq!(h.pressed_tabs(), [true, false, false]);
+    let props = [
+        "backgroundImage",
+        "backgroundColor",
+        "color",
+        "fontSize",
+        "fontWeight",
+        "padding",
+        "borderRadius",
+    ];
+    let on = h.js(&format!(
+        "(() => {{ const s = getComputedStyle(document.querySelectorAll('.tab-button')[0]); return {props:?}.map(p => s[p]); }})()"
+    ));
+    assert_eq!(
+        on[0],
+        "linear-gradient(135deg, rgb(26, 26, 46), rgb(22, 33, 62))"
+    );
+    assert_eq!(on[2], "rgb(248, 250, 252)");
+    assert_eq!(on[3], "12px");
+    assert_eq!(on[4], "600");
+    assert_eq!(on[5], "8px 16px");
+    assert_eq!(on[6], "8px");
+    let off = h.js(&format!(
+        "(() => {{ const s = getComputedStyle(document.querySelectorAll('.tab-button')[1]); return {props:?}.map(p => s[p]); }})()"
+    ));
+    assert_eq!(off[0], "none");
+    assert_eq!(off[1], "rgb(255, 255, 255)");
+    assert_eq!(off[2], "rgb(100, 116, 139)");
+    assert_eq!(off[3], "12px");
+    assert_eq!(off[4], "600");
+    assert_eq!(off[5], "8px 16px");
+
+    h.select_day(2);
+    h.select_tab(1);
+    assert_eq!(h.pressed_tabs(), [false, true, false]);
+    assert_eq!(h.count(".days"), 0);
+    assert_eq!(h.count(".day-button"), 0);
+    assert_eq!(h.count(".prep"), 2);
+    assert_eq!(
+        h.text(".prep-intro"),
+        "Monday covers Mon–Wed. Wednesday is a smaller session for Thu–Sun."
+    );
+
+    h.select_tab(2);
+    assert_eq!(h.pressed_tabs(), [false, false, true]);
+    assert_eq!(h.count(".prep"), 0);
+    assert_eq!(h.count(".strategy"), 4);
+
+    h.select_tab(0);
+    assert_eq!(h.pressed_tabs(), [true, false, false]);
+    assert_eq!(h.count(".strategy"), 0);
+    assert_eq!(
+        h.pressed(),
+        vec![false, false, true, false, false, false, false]
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn prep_sessions_render_and_toggle() {
+    let h = Harness::start("", 1280);
+    h.select_tab(1);
+    assert_eq!(
+        h.texts(".prep-title"),
+        [
+            "🔪 Monday Prep Session (~1.5 hours)",
+            "🔪 Wednesday Evening Prep (~45 min)"
+        ]
+    );
+    // Covers: present for Monday, no element at all for Wednesday.
+    assert_eq!(h.texts(".prep-covers"), ["Covers Monday through Wednesday"]);
+    assert_eq!(
+        h.js("document.querySelectorAll('.prep')[1].querySelector('.prep-covers')"),
+        serde_json::Value::Null
+    );
+    assert_eq!(h.count(".prep-body"), 0);
+
+    let toggle = ".prep-toggle";
+    let expanded = "document.querySelector('.prep-toggle').getAttribute('aria-expanded')";
+    assert_eq!(h.js(expanded), "false");
+    h.click(toggle);
+    h.wait_for(&format!("{expanded} === 'true'"));
+    assert_eq!(
+        h.texts(".prep-task-name"),
+        [
+            "Start the Gravlax",
+            "Air-Fryer Roasted Chickpeas",
+            "Cook Brown Rice"
+        ]
+    );
+    assert_eq!(h.texts(".prep-task-time"), ["15 min", "20 min", "25 min"]);
+    assert_eq!(
+        h.texts(".prep-task-instructions")[1],
+        "Toss chickpeas with oil and paprika; air-fry at 200°C for 12–15 min."
+    );
+    assert_eq!(
+        h.js("document.querySelector('.prep-toggle').getAttribute('aria-controls') === document.querySelector('.prep-body').id"),
+        true
+    );
+
+    assert_eq!(
+        h.styles(
+            ".prep",
+            &[
+                "backgroundColor",
+                "borderTopColor",
+                "borderRadius",
+                "padding",
+                "marginBottom"
+            ]
+        ),
+        [
+            "rgb(255, 251, 235)",
+            "rgb(253, 230, 138)",
+            "10px",
+            "16px",
+            "12px"
+        ]
+    );
+    let title = h.styles(
+        ".prep-title",
+        &["fontSize", "fontWeight", "color", "fontFamily"],
+    );
+    assert_eq!(title[..3], ["16px", "700", "rgb(146, 64, 14)"]);
+    assert!(title[3].contains("Source Serif 4"));
+    assert_eq!(
+        h.styles(".prep-covers", &["fontSize", "color"]),
+        ["12px", "rgb(180, 83, 9)"]
+    );
+    let badge = h.styles(
+        ".prep-task-time",
+        &[
+            "fontSize",
+            "fontWeight",
+            "color",
+            "backgroundColor",
+            "padding",
+            "borderRadius",
+            "fontFamily",
+        ],
+    );
+    assert_eq!(
+        badge[..6],
+        [
+            "10px",
+            "600",
+            "rgb(146, 64, 14)",
+            "rgb(254, 243, 199)",
+            "2px 6px",
+            "4px"
+        ]
+    );
+    assert!(badge[6].contains("JetBrains Mono"));
+    assert_eq!(
+        h.styles(
+            ".prep-task",
+            &["backgroundColor", "borderTopColor", "borderRadius"]
+        ),
+        ["rgb(255, 255, 255)", "rgb(254, 243, 199)", "8px"]
+    );
+    assert_eq!(
+        h.styles(".prep-task-name", &["fontSize", "fontWeight", "color"]),
+        ["13px", "600", "rgb(30, 41, 59)"]
+    );
+    assert_eq!(
+        h.styles(
+            ".prep-task-instructions",
+            &["fontSize", "color", "lineHeight"]
+        ),
+        ["12px", "rgb(71, 85, 105)", "19.2px"]
+    );
+
+    h.click(toggle);
+    h.wait_for(&format!("{expanded} === 'false'"));
+    assert_eq!(h.count(".prep-body"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn prep_card_keyboard_toggle() {
+    let h = Harness::start("", 1280);
+    h.select_tab(1);
+    let expanded = "document.querySelector('.prep-toggle').getAttribute('aria-expanded')";
+    h.js("document.querySelector('.prep-toggle').focus()");
+    h.press("Enter");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    h.press("Enter");
+    h.wait_for(&format!("{expanded} === 'false'"));
+    h.press(" ");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    h.press(" ");
+    h.wait_for(&format!("{expanded} === 'false'"));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn strategy_cards_use_theme_colors_in_order() {
+    let h = Harness::start("", 1280);
+    h.select_tab(2);
+    assert_eq!(
+        h.texts(".strategy-title"),
+        [
+            "🐟 Weekly Variety",
+            "🍳 Air Fryer Features",
+            "The Salmon Plan",
+            "📝 This Week's Notes"
+        ]
+    );
+    assert_eq!(
+        h.texts(".strategy:nth-child(1) li"),
+        [
+            "Oily fish 3×",
+            "Legumes daily",
+            "Nuts daily — walnuts & almonds"
+        ]
+    );
+    let expected = [
+        (
+            "green",
+            "rgb(187, 247, 208)",
+            "rgb(22, 101, 52)",
+            "rgb(21, 128, 61)",
+        ),
+        (
+            "blue",
+            "rgb(191, 219, 254)",
+            "rgb(30, 64, 175)",
+            "rgb(30, 64, 175)",
+        ),
+        (
+            "purple",
+            "rgb(233, 213, 255)",
+            "rgb(126, 34, 206)",
+            "rgb(126, 34, 206)",
+        ),
+        (
+            "yellow",
+            "rgb(253, 230, 138)",
+            "rgb(146, 64, 14)",
+            "rgb(146, 64, 14)",
+        ),
+    ];
+    for (i, (theme, border, title, list)) in expected.iter().enumerate() {
+        let n = i + 1;
+        assert!(
+            h.js(&format!(
+                "document.querySelector('.strategy:nth-child({n})').className"
+            ))
+            .as_str()
+            .unwrap()
+            .contains(&format!("strategy-{theme}"))
+        );
+        let card = h.styles(
+            &format!(".strategy:nth-child({n})"),
+            &[
+                "backgroundColor",
+                "backgroundImage",
+                "borderTopColor",
+                "borderRadius",
+                "padding",
+            ],
+        );
+        match *theme {
+            "green" => assert_eq!(
+                card[1],
+                "linear-gradient(135deg, rgb(236, 253, 245), rgb(240, 253, 244))"
+            ),
+            "blue" => assert_eq!(card[0], "rgb(239, 246, 255)"),
+            "purple" => assert_eq!(card[0], "rgb(253, 244, 255)"),
+            _ => assert_eq!(card[0], "rgb(254, 252, 232)"),
+        }
+        assert_eq!(card[2], *border);
+        assert_eq!(card[3], "10px");
+        assert_eq!(card[4], "14px 16px");
+        assert_eq!(
+            h.styles(
+                &format!(".strategy:nth-child({n}) .strategy-title"),
+                &["color", "fontSize", "fontWeight"]
+            ),
+            [title, "13px", "600"]
+        );
+        assert_eq!(
+            h.styles(
+                &format!(".strategy:nth-child({n}) .strategy-items"),
+                &["color", "fontSize", "paddingLeft"]
+            ),
+            [list, "12px", "16px"]
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn reminders_show_only_on_days_with_a_title() {
+    let h = Harness::start("", 1280);
+    // Monday has a body but no title: no reminder.
+    assert_eq!(h.count(".reminder"), 0);
+
+    // Wednesday: no meals, so the empty message comes first, then the reminder.
+    h.select_day(2);
+    assert_eq!(h.text(".empty"), "No meals planned for this day.");
+    assert_eq!(h.text(".reminder-icon"), "🧾");
+    assert_eq!(h.text(".reminder-title"), "Shop day");
+    assert_eq!(
+        h.text(".reminder-body"),
+        "Pick up the Thursday top-up list after work."
+    );
+    assert_eq!(
+        h.js("!!(document.querySelector('.empty').compareDocumentPosition(document.querySelector('.reminder')) & Node.DOCUMENT_POSITION_FOLLOWING)"),
+        true
+    );
+    let r = h.styles(
+        ".reminder",
+        &[
+            "backgroundImage",
+            "borderTopColor",
+            "borderRadius",
+            "padding",
+            "marginTop",
+            "display",
+        ],
+    );
+    assert_eq!(
+        r[0],
+        "linear-gradient(135deg, rgb(239, 246, 255), rgb(219, 234, 254))"
+    );
+    assert_eq!(r[1], "rgb(147, 197, 253)");
+    assert_eq!(r[2], "10px");
+    assert_eq!(r[3], "14px 16px");
+    assert_eq!(r[4], "8px");
+    assert_eq!(r[5], "flex");
+    assert_eq!(h.styles(".reminder-icon", &["fontSize"]), ["20px"]);
+    assert_eq!(
+        h.styles(".reminder-title", &["fontSize", "fontWeight", "color"]),
+        ["13px", "600", "rgb(30, 64, 175)"]
+    );
+    assert_eq!(
+        h.styles(".reminder-body", &["fontSize", "color", "marginTop"]),
+        ["12px", "rgb(59, 130, 246)", "2px"]
+    );
+
+    // Sunday: title only, no icon or body elements.
+    h.select_day(6);
+    assert_eq!(h.text(".reminder-title"), "Plan next week");
+    assert_eq!(h.count(".reminder-icon"), 0);
+    assert_eq!(h.count(".reminder-body"), 0);
+
+    // Tuesday (no reminder columns), Saturday (no day row).
+    for day in [1, 5] {
+        h.select_day(day);
+        assert_eq!(h.count(".reminder"), 0, "day {day}");
+    }
+    // Tuesday has meals: nothing reminder-like after them either.
+    h.select_day(0);
+    assert_eq!(h.count(".reminder"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn optional_text_is_omitted_when_null() {
+    let sql = content_week(
+        48,
+        &Content {
+            subtitle: None,
+            intro: None,
+            reminder: Some(("Only a title", None, None)),
+            session: Some(("Bare session", None, ["Task", "5 min", "Do it."])),
+            card: Some(("Bare card", None, "blue", "Item")),
+        },
+    );
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/48");
+    assert_eq!(h.text(".reminder-title"), "Only a title");
+    assert_eq!(h.count(".reminder-body"), 0);
+    assert_eq!(h.count(".reminder-icon"), 0);
+    h.select_tab(1);
+    assert_eq!(h.count(".prep-intro"), 0);
+    assert_eq!(h.count(".prep-covers"), 0);
+    assert_eq!(h.text(".prep-title"), "🔪 Bare session");
+    h.select_tab(2);
+    // No icon: no leading space or placeholder.
+    assert_eq!(h.text(".strategy-title"), "Bare card");
+}
+
+/// SQL adding prep sessions (title, has_task) at positions 0.. to the week made by `crafted_week(week, ..)`.
+fn prep_sessions_sql(week: u32, sessions: &[(&str, bool)]) -> String {
+    let base = 1000 * week;
+    let mut sql = String::new();
+    for (i, (title, has_task)) in sessions.iter().enumerate() {
+        let sid = id(0xe1, base + i as u32);
+        sql += &format!(
+            "INSERT INTO prep_sessions (id, week_id, position, title) VALUES ('{sid}', '{}', {i}, '{title}');\n",
+            id(0xa1, base)
+        );
+        if *has_task {
+            sql += &format!(
+                "INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) \
+                 VALUES ('{}', '{sid}', 0, 'Task {i}', '5 min', 'Do it.');\n",
+                id(0xe2, base + i as u32)
+            );
+        }
+    }
+    sql
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn prep_sessions_without_tasks_are_hidden() {
+    let sql = crafted_week(52, &[])
+        + &prep_sessions_sql(
+            52,
+            &[
+                ("Session A", true),
+                ("Session B", false),
+                ("Session C", true),
+            ],
+        );
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/52");
+    h.select_tab(1);
+    assert_eq!(h.texts(".prep-title"), ["🔪 Session A", "🔪 Session C"]);
+    assert_eq!(
+        h.js("document.getElementById('root').textContent.includes('Session B')"),
+        false
+    );
+
+    let sql = crafted_week(53, &[])
+        + &prep_sessions_sql(53, &[("Taskless one", false), ("Taskless two", false)]);
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/53");
+    h.select_tab(1);
+    assert_eq!(h.text(".empty"), "No prep sessions planned.");
+    assert_eq!(h.count(".prep"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn empty_prep_and_strategy_show_messages() {
+    let h = Harness::start(&crafted_week(49, &[]), 1280);
+    h.goto("/2026/49");
+    assert_eq!(h.texts(".tab-button").len(), 3);
+    h.select_tab(1);
+    assert_eq!(h.text(".empty"), "No prep sessions planned.");
+    assert_eq!(h.count(".prep-intro"), 0);
+    assert_eq!(h.count(".prep"), 0);
+    h.select_tab(2);
+    assert_eq!(h.text(".empty"), "No strategy notes for this week.");
+    assert_eq!(h.count(".strategy"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn crafted_week_content_is_what_renders() {
+    let sql = content_week(
+        50,
+        &Content {
+            subtitle: Some("Crafted subtitle"),
+            intro: Some("Crafted intro"),
+            reminder: Some(("Crafted reminder", Some("Crafted body"), Some("🔔"))),
+            session: Some((
+                "Crafted session",
+                Some("Crafted covers"),
+                ["Crafted task", "9 min", "Crafted steps."],
+            )),
+            card: Some(("Crafted card", Some("🌱"), "purple", "Crafted item")),
+        },
+    );
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/50");
+    assert_eq!(h.text(".subtitle"), "Crafted subtitle");
+    assert_eq!(h.text(".reminder-title"), "Crafted reminder");
+    assert_eq!(h.text(".reminder-body"), "Crafted body");
+    assert_eq!(h.text(".reminder-icon"), "🔔");
+    h.select_tab(1);
+    assert_eq!(h.text(".prep-intro"), "Crafted intro");
+    assert_eq!(h.text(".prep-title"), "🔪 Crafted session");
+    assert_eq!(h.text(".prep-covers"), "Crafted covers");
+    h.click(".prep-toggle");
+    h.wait_for("document.querySelector('.prep-body') !== null");
+    assert_eq!(h.text(".prep-task-name"), "Crafted task");
+    assert_eq!(h.text(".prep-task-time"), "9 min");
+    assert_eq!(h.text(".prep-task-instructions"), "Crafted steps.");
+    h.select_tab(2);
+    assert_eq!(h.text(".strategy-title"), "🌱 Crafted card");
+    assert_eq!(h.text(".strategy li"), "Crafted item");
+    let body = h.text(".app");
+    for sample in ["Sunday covers", "Weekly Variety", "Salmon"] {
+        assert!(!body.contains(sample), "{sample}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn weekly_content_reloads_committed_changes() {
+    let h = Harness::start("", 1280);
+    h.exec(
+        "UPDATE weeks SET prep_intro = 'Changed intro' WHERE iso_week = 44;\n\
+         UPDATE prep_tasks SET name = 'Start the Gravlax today' WHERE name = 'Start the Gravlax';\n\
+         UPDATE strategy_items SET text = 'Oily fish 4×' WHERE text = 'Oily fish 3×';\n\
+         UPDATE days SET reminder_title = 'Changed reminder' WHERE reminder_title = 'Shop day';",
+    );
+    h.goto("/2026/44");
+    h.select_day(2);
+    assert_eq!(h.text(".reminder-title"), "Changed reminder");
+    h.select_tab(1);
+    assert_eq!(h.text(".prep-intro"), "Changed intro");
+    h.click(".prep-toggle");
+    h.wait_for("document.querySelector('.prep-body') !== null");
+    assert_eq!(h.texts(".prep-task-name")[0], "Start the Gravlax today");
+    h.select_tab(2);
+    assert_eq!(h.texts(".strategy li")[0], "Oily fish 4×");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn weekly_text_renders_literally() {
+    let x = XSS_NAME;
+    let sql = content_week(
+        51,
+        &Content {
+            subtitle: Some(x),
+            intro: Some(x),
+            reminder: Some((x, Some(x), Some(x))),
+            session: Some((x, Some(x), [x, x, x])),
+            card: Some((x, Some(x), "green", x)),
+        },
+    );
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/51");
+    assert_eq!(h.text(".reminder-title"), x);
+    assert_eq!(h.text(".reminder-body"), x);
+    assert_eq!(h.text(".reminder-icon"), x);
+    h.select_tab(1);
+    assert_eq!(h.text(".prep-intro"), x);
+    assert_eq!(h.text(".prep-title"), format!("🔪 {x}"));
+    assert_eq!(h.text(".prep-covers"), x);
+    h.click(".prep-toggle");
+    h.wait_for("document.querySelector('.prep-body') !== null");
+    assert_eq!(h.text(".prep-task-name"), x);
+    assert_eq!(h.text(".prep-task-time"), x);
+    assert_eq!(h.text(".prep-task-instructions"), x);
+    h.select_tab(2);
+    assert_eq!(h.text(".strategy-title"), format!("{x} {x}"));
+    assert_eq!(h.text(".strategy li"), x);
+    assert_eq!(h.js("typeof window.pwned"), "undefined");
+    assert_eq!(h.count(".app b"), 0);
+    h.select_tab(0);
+    assert_eq!(h.count(".app b"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn tabs_work_by_keyboard() {
+    let h = Harness::start("", 1280);
+    h.js("document.querySelector('.all-weeks').focus()");
+    h.press("Tab");
+    assert_eq!(
+        h.js("document.activeElement === document.querySelectorAll('.tab-button')[0]"),
+        true
+    );
+    h.press("Tab");
+    h.press("Enter");
+    h.wait_for(
+        "document.querySelectorAll('.tab-button')[1].getAttribute('aria-pressed') === 'true'",
+    );
+    assert_eq!(h.count(".prep"), 2);
+    h.press("Tab");
+    h.press(" ");
+    h.wait_for(
+        "document.querySelectorAll('.tab-button')[2].getAttribute('aria-pressed') === 'true'",
+    );
+    assert_eq!(h.count(".strategy"), 4);
+}
+
+fn assert_weekly_layout(width: u32) {
+    let h = Harness::start("", width);
+    let long = "x".repeat(120);
+    h.exec(&format!(
+        "UPDATE prep_tasks SET time = '{long}', name = '{long}', instructions = '{long}';\n\
+         UPDATE strategy_items SET text = '{long}';"
+    ));
+    h.goto("/2026/44");
+    let fits = "document.documentElement.scrollWidth <= window.innerWidth";
+    h.select_day(2);
+    assert_eq!(h.js(fits), true, "plan tab");
+    let one_row = h.js(
+        "(() => { const b = [...document.querySelectorAll('.tab-button')]; \
+          const app = document.querySelector('.app').getBoundingClientRect(); \
+          return b.every(x => x.offsetTop === b[0].offsetTop) && b[2].getBoundingClientRect().right <= app.right; })()",
+    );
+    assert_eq!(one_row, true, "tab bar on one row");
+    h.select_tab(1);
+    h.js("document.querySelectorAll('.prep-toggle').forEach(b => b.click())");
+    h.wait_for("document.querySelectorAll('.prep-body').length === 2");
+    assert_eq!(h.js(fits), true, "prep tab");
+    h.select_tab(2);
+    assert_eq!(h.js(fits), true, "strategy tab");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn weekly_layout_at_375px() {
+    assert_weekly_layout(375);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn weekly_layout_at_1280px() {
+    assert_weekly_layout(1280);
 }

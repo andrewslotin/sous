@@ -20,7 +20,7 @@ Depends on: [3. Shopping lists](003-shopping-lists.md).
 
 Store preparation times as display text. Do not interpret durations or turn instructions into executable markup. Strategy themes are a constrained enum, not arbitrary CSS.
 
-A reminder exists when its title is non-null; its body and icon are optional. Without a title, omit the reminder. For empty prep/strategy collections, retain the tabs and show “No prep sessions planned.” or “No strategy notes for this week.” respectively.
+A reminder exists when its title is non-null; its body and icon are optional. Without a title, omit the reminder. For empty prep/strategy collections, retain the tabs and show “No prep sessions planned.” or “No strategy notes for this week.” respectively. A prep session without tasks is not displayed; when no session has tasks, the Prep Sessions tab shows “No prep sessions planned.”
 
 The title's date range derives from the selected week. Subtitle, prep introduction, strategy text, and reminders come from the database. UI labels remain application text.
 

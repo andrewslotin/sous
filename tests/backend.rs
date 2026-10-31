@@ -11,6 +11,7 @@ use tempfile::TempDir;
 use tower::ServiceExt;
 
 const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
+const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
 const U1: &str = "11111111-1111-4111-8111-111111111111";
 const U2: &str = "22222222-2222-4222-8222-222222222222";
 const U3: &str = "33333333-3333-4333-8333-333333333333";
@@ -29,7 +30,16 @@ impl TestDb {
         TestDb { _dir: dir, path }
     }
 
+    /// Fully migrated, with the frozen fixture and the weekly-content fixture.
     async fn with_fixture() -> Self {
+        let t = Self::with_base_fixture().await;
+        let mut c = t.writer().await;
+        sqlx::raw_sql(WEEKLY_FIXTURE).execute(&mut c).await.unwrap();
+        t
+    }
+
+    /// Fully migrated, with only the frozen `2026-w44.sql` fixture.
+    async fn with_base_fixture() -> Self {
         let t = Self::migrated().await;
         let mut c = t.writer().await;
         sqlx::raw_sql(FIXTURE).execute(&mut c).await.unwrap();
@@ -1117,4 +1127,554 @@ async fn shopping_deletes_cascade() {
     ] {
         assert_eq!(count(&mut c, table).await, 0, "{table}");
     }
+}
+
+// ---- Feature 4: prep, strategy, reminders ----
+
+const SESSION_MON: &str = "00000008-0000-4000-8000-000000000035";
+const SESSION_WED: &str = "00000008-0000-4000-8000-000000000032";
+const CARD_GREEN: &str = "0000000a-0000-4000-8000-00000000003b";
+const WED: &str = "00000002-0000-4000-8000-000000000004";
+
+type Group = Vec<(String, Vec<String>)>;
+
+/// Prep and strategy content as `(title, [child text])` pairs in document order.
+fn weekly_order(doc: &Value) -> (Group, Group) {
+    let pick = |key: &str, children: &str, text: &str| -> Group {
+        doc[key]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["title"].as_str().unwrap().to_string(),
+                    p[children]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|c| c[text].as_str().unwrap().to_string())
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    (
+        pick("prepSessions", "tasks", "name"),
+        pick("strategyCards", "items", "text"),
+    )
+}
+
+fn strs(v: &Group) -> Vec<(&str, Vec<&str>)> {
+    v.iter()
+        .map(|(t, c)| (t.as_str(), c.iter().map(String::as_str).collect()))
+        .collect()
+}
+
+async fn week_value(pool: &SqlitePool, y: i32, w: u32) -> Value {
+    serde_json::to_value(queries::load_week(pool, y, w).await.unwrap().unwrap()).unwrap()
+}
+
+fn sorted_ids(doc: &Value, key: &str) -> Vec<String> {
+    let mut v: Vec<String> = doc[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|x| x["id"].as_str().unwrap().to_string())
+        .collect();
+    v.sort();
+    v
+}
+
+#[tokio::test]
+async fn upgrade_from_version_2_keeps_data() {
+    // A database migrated only through version 2, holding the frozen fixture.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let mut old = sqlx::migrate!();
+    old.migrations = old
+        .migrations
+        .iter()
+        .filter(|m| m.version <= 2)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    assert_eq!(old.migrations.len(), 2);
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+    {
+        let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+        old.run(&mut c).await.unwrap();
+        sqlx::raw_sql(FIXTURE).execute(&mut c).await.unwrap();
+    }
+    db::migrate(&path).await.unwrap();
+    let pool = db::open_read_pool(&path).await.unwrap();
+    let upgraded = week_value(&pool, 2026, 44).await;
+
+    let fresh = TestDb::with_base_fixture().await;
+    assert_eq!(upgraded, week_value(&fresh.reader().await, 2026, 44).await);
+
+    assert_eq!(upgraded["week"]["prepIntro"], Value::Null);
+    assert_eq!(upgraded["prepSessions"], json!([]));
+    assert_eq!(upgraded["strategyCards"], json!([]));
+    for d in upgraded["days"].as_array().unwrap() {
+        assert_eq!(d["reminder"], Value::Null);
+    }
+    assert_eq!(upgraded["days"][0]["meals"].as_array().unwrap().len(), 4);
+    assert_eq!(upgraded["shoppingLists"].as_array().unwrap().len(), 3);
+    assert_eq!(upgraded["days"][0]["shoppingListIds"], json!([L2, L1]));
+
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    sqlx::raw_sql(WEEKLY_FIXTURE).execute(&mut c).await.unwrap();
+    assert_eq!(count(&mut c, "prep_tasks").await, 5);
+    let doc = week_value(&pool, 2026, 44).await;
+    assert_eq!(doc["prepSessions"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn weekly_content_order_and_reorder() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let doc = week_value(&pool, 2026, 44).await;
+    let (prep, strategy) = weekly_order(&doc);
+    assert_eq!(
+        strs(&prep),
+        [
+            (
+                "Monday Prep Session (~1.5 hours)",
+                vec![
+                    "Start the Gravlax",
+                    "Air-Fryer Roasted Chickpeas",
+                    "Cook Brown Rice"
+                ]
+            ),
+            (
+                "Wednesday Evening Prep (~45 min)",
+                vec![
+                    "Overnight Oats × 1 jar",
+                    "Lentil & Roasted Veg Salad (3 portions)"
+                ]
+            ),
+        ]
+    );
+    assert_eq!(
+        strs(&strategy),
+        [
+            (
+                "Weekly Variety",
+                vec![
+                    "Oily fish 3×",
+                    "Legumes daily",
+                    "Nuts daily — walnuts & almonds"
+                ]
+            ),
+            ("Air Fryer Features", vec!["Mon: crispy chickpeas"]),
+            ("The Salmon Plan", vec!["~300g → gravlax"]),
+            ("This Week's Notes", vec!["Monday + Thursday shop split"]),
+        ]
+    );
+    let themes: Vec<_> = doc["strategyCards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["theme"].as_str().unwrap())
+        .collect();
+    assert_eq!(themes, ["green", "blue", "purple", "yellow"]);
+    assert_eq!(doc["strategyCards"][2]["icon"], Value::Null);
+    assert_eq!(doc["strategyCards"][0]["icon"], "🐟");
+    assert_eq!(doc["prepSessions"][1]["covers"], Value::Null);
+    assert_eq!(
+        doc["prepSessions"][0]["covers"],
+        "Covers Monday through Wednesday"
+    );
+    assert_eq!(doc["prepSessions"][0]["id"], SESSION_MON);
+    let session_ids = sorted_ids(&doc, "prepSessions");
+    let card_ids = sorted_ids(&doc, "strategyCards");
+
+    // Reorder through a separate writer: shift every position out of the way, then set.
+    let mut c = t.writer().await;
+    let mut tx = c.begin().await.unwrap();
+    for table in [
+        "prep_sessions",
+        "prep_tasks",
+        "strategy_cards",
+        "strategy_items",
+    ] {
+        exec(
+            &mut tx,
+            &format!("UPDATE {table} SET position = position + 100"),
+        )
+        .await
+        .unwrap();
+    }
+    for (table, id, pos) in [
+        ("prep_sessions", SESSION_WED, 0),
+        ("prep_sessions", SESSION_MON, 1),
+        ("prep_tasks", "00000009-0000-4000-8000-000000000036", 0),
+        ("prep_tasks", "00000009-0000-4000-8000-000000000038", 1),
+        ("prep_tasks", "00000009-0000-4000-8000-000000000037", 2),
+        ("prep_tasks", "00000009-0000-4000-8000-000000000033", 0),
+        ("prep_tasks", "00000009-0000-4000-8000-000000000034", 1),
+        ("strategy_cards", "0000000a-0000-4000-8000-000000000039", 0),
+        ("strategy_cards", "0000000a-0000-4000-8000-00000000003f", 1),
+        ("strategy_cards", "0000000a-0000-4000-8000-000000000041", 2),
+        ("strategy_cards", CARD_GREEN, 3),
+        ("strategy_items", "0000000b-0000-4000-8000-00000000003e", 0),
+        ("strategy_items", "0000000b-0000-4000-8000-00000000003c", 1),
+        ("strategy_items", "0000000b-0000-4000-8000-00000000003d", 2),
+    ] {
+        exec(
+            &mut tx,
+            &format!("UPDATE {table} SET position = {pos} WHERE id = '{id}'"),
+        )
+        .await
+        .unwrap();
+    }
+    tx.commit().await.unwrap();
+
+    let (s, _, body) = get(&pool, "/2026/44").await;
+    assert_eq!(s, StatusCode::OK);
+    let doc = page_json(&body)["document"].clone();
+    let (prep, strategy) = weekly_order(&doc);
+    assert_eq!(
+        strs(&prep),
+        [
+            (
+                "Wednesday Evening Prep (~45 min)",
+                vec![
+                    "Lentil & Roasted Veg Salad (3 portions)",
+                    "Overnight Oats × 1 jar"
+                ]
+            ),
+            (
+                "Monday Prep Session (~1.5 hours)",
+                vec![
+                    "Cook Brown Rice",
+                    "Air-Fryer Roasted Chickpeas",
+                    "Start the Gravlax"
+                ]
+            ),
+        ]
+    );
+    let card_titles: Vec<_> = strategy.iter().map(|(t, _)| t.as_str()).collect();
+    assert_eq!(
+        card_titles,
+        [
+            "This Week's Notes",
+            "The Salmon Plan",
+            "Air Fryer Features",
+            "Weekly Variety"
+        ]
+    );
+    assert_eq!(
+        strategy[3].1,
+        [
+            "Nuts daily — walnuts & almonds",
+            "Legumes daily",
+            "Oily fish 3×"
+        ]
+    );
+    assert_eq!(sorted_ids(&doc, "prepSessions"), session_ids);
+    assert_eq!(sorted_ids(&doc, "strategyCards"), card_ids);
+    assert_eq!(doc["strategyCards"][3]["id"], CARD_GREEN);
+}
+
+#[tokio::test]
+async fn weekly_constraints_reject_bad_data() {
+    let t = TestDb::migrated().await;
+    let mut c = t.writer().await;
+    let (wa, wb) = (sid(1, 1), sid(1, 2));
+    let (s1, s2, s3) = (sid(8, 1), sid(8, 2), sid(8, 3));
+    let (k1, k2) = (sid(10, 1), sid(10, 2));
+    let (t1, i1) = (sid(9, 1), sid(11, 1));
+    let missing = "99999999-9999-4999-8999-999999999999";
+    exec(&mut c, &week_sql(&wa, 2026, 44)).await.unwrap();
+    exec(&mut c, &week_sql(&wb, 2026, 45)).await.unwrap();
+
+    let session = |id: &str, week: &str, pos: i32, title: &str| {
+        format!(
+            "INSERT INTO prep_sessions (id, week_id, position, title) VALUES ('{id}', '{week}', {pos}, {title})"
+        )
+    };
+    let task = |id: &str, s: &str, pos: i32, name: &str, time: &str, ins: &str| {
+        format!(
+            "INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALUES ('{id}', '{s}', {pos}, {name}, {time}, {ins})"
+        )
+    };
+    let card = |id: &str, week: &str, pos: i32, title: &str, theme: &str| {
+        format!(
+            "INSERT INTO strategy_cards (id, week_id, position, title, theme) VALUES ('{id}', '{week}', {pos}, {title}, {theme})"
+        )
+    };
+    let item = |id: &str, card: &str, pos: i32, text: &str| {
+        format!(
+            "INSERT INTO strategy_items (id, card_id, position, text) VALUES ('{id}', '{card}', {pos}, {text})"
+        )
+    };
+
+    exec(&mut c, &session(&s1, &wa, 0, "'s'")).await.unwrap();
+    exec(&mut c, &task(&t1, &s1, 0, "'n'", "'t'", "'i'"))
+        .await
+        .unwrap();
+    exec(&mut c, &card(&k1, &wa, 0, "'c'", "'green'"))
+        .await
+        .unwrap();
+    exec(&mut c, &item(&i1, &k1, 0, "'x'")).await.unwrap();
+
+    let (n, nt, nk, ni) = (sid(8, 9), sid(9, 9), sid(10, 9), sid(11, 9));
+    let upper = "AAAAAAAA-0000-4000-8000-000000000000";
+    let mut bad: Vec<(String, String)> = Vec::new();
+    for theme in ["'red'", "'Green'", "''", "'#00ff00'", "NULL"] {
+        bad.push((format!("theme {theme}"), card(&nk, &wa, 5, "'c'", theme)));
+    }
+    bad.extend([
+        ("session dup position".into(), session(&n, &wa, 0, "'x'")),
+        (
+            "card dup position".into(),
+            card(&nk, &wa, 0, "'x'", "'blue'"),
+        ),
+        (
+            "task dup position".into(),
+            task(&nt, &s1, 0, "'n'", "'t'", "'i'"),
+        ),
+        ("item dup position".into(), item(&ni, &k1, 0, "'x'")),
+        ("session negative".into(), session(&n, &wa, -1, "'x'")),
+        (
+            "task negative".into(),
+            task(&nt, &s1, -1, "'n'", "'t'", "'i'"),
+        ),
+        ("card negative".into(), card(&nk, &wa, -1, "'x'", "'blue'")),
+        ("item negative".into(), item(&ni, &k1, -1, "'x'")),
+        ("session null title".into(), session(&n, &wa, 5, "NULL")),
+        (
+            "task null name".into(),
+            task(&nt, &s1, 5, "NULL", "'t'", "'i'"),
+        ),
+        (
+            "task null time".into(),
+            task(&nt, &s1, 5, "'n'", "NULL", "'i'"),
+        ),
+        (
+            "task null instructions".into(),
+            task(&nt, &s1, 5, "'n'", "'t'", "NULL"),
+        ),
+        (
+            "card null title".into(),
+            card(&nk, &wa, 5, "NULL", "'blue'"),
+        ),
+        ("item null text".into(), item(&ni, &k1, 5, "NULL")),
+        (
+            "session bad id".into(),
+            session("not-a-uuid", &wa, 5, "'x'"),
+        ),
+        ("session upper id".into(), session(upper, &wa, 5, "'x'")),
+        (
+            "task bad id".into(),
+            task("nope", &s1, 5, "'n'", "'t'", "'i'"),
+        ),
+        ("card bad id".into(), card("nope", &wa, 5, "'x'", "'blue'")),
+        ("item bad id".into(), item("nope", &k1, 5, "'x'")),
+        ("session fk".into(), session(&n, missing, 5, "'x'")),
+        ("task fk".into(), task(&nt, missing, 5, "'n'", "'t'", "'i'")),
+        ("card fk".into(), card(&nk, missing, 5, "'x'", "'blue'")),
+        ("item fk".into(), item(&ni, missing, 5, "'x'")),
+    ]);
+    for (what, sql) in &bad {
+        assert!(
+            exec(&mut c, sql).await.is_err(),
+            "{what} should be rejected"
+        );
+    }
+    // Rejected rows left nothing behind.
+    assert_eq!(count(&mut c, "prep_sessions").await, 1);
+    assert_eq!(count(&mut c, "prep_tasks").await, 1);
+    assert_eq!(count(&mut c, "strategy_cards").await, 1);
+    assert_eq!(count(&mut c, "strategy_items").await, 1);
+
+    for (i, theme) in ["green", "blue", "purple", "yellow"].iter().enumerate() {
+        let sql = card(
+            &sid(10, 20 + i as u32),
+            &wb,
+            i as i32,
+            "'c'",
+            &format!("'{theme}'"),
+        );
+        exec(&mut c, &sql).await.unwrap();
+    }
+    // The same position under a different parent is fine.
+    exec(&mut c, &session(&s2, &wb, 0, "'s'")).await.unwrap();
+    exec(&mut c, &task(&sid(9, 2), &s2, 0, "'n'", "'t'", "'i'"))
+        .await
+        .unwrap();
+    exec(&mut c, &item(&sid(11, 2), &sid(10, 20), 0, "'x'"))
+        .await
+        .unwrap();
+
+    // Cascades: session -> tasks, card -> items, week -> everything.
+    exec(&mut c, &session(&s3, &wa, 1, "'s3'")).await.unwrap();
+    exec(&mut c, &task(&sid(9, 3), &s3, 0, "'n'", "'t'", "'i'"))
+        .await
+        .unwrap();
+    exec(
+        &mut c,
+        &format!("DELETE FROM prep_sessions WHERE id = '{s3}'"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(count(&mut c, "prep_tasks").await, 2);
+    exec(&mut c, &card(&k2, &wa, 1, "'k2'", "'blue'"))
+        .await
+        .unwrap();
+    exec(&mut c, &item(&sid(11, 3), &k2, 0, "'x'"))
+        .await
+        .unwrap();
+    exec(
+        &mut c,
+        &format!("DELETE FROM strategy_cards WHERE id = '{k2}'"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(count(&mut c, "strategy_items").await, 2);
+    exec(&mut c, &format!("DELETE FROM weeks WHERE id = '{wa}'"))
+        .await
+        .unwrap();
+    assert_eq!(count(&mut c, "prep_sessions").await, 1);
+    assert_eq!(count(&mut c, "prep_tasks").await, 1);
+    assert_eq!(count(&mut c, "strategy_cards").await, 4);
+    assert_eq!(count(&mut c, "strategy_items").await, 1);
+    exec(&mut c, &format!("DELETE FROM weeks WHERE id = '{wb}'"))
+        .await
+        .unwrap();
+    for table in [
+        "prep_sessions",
+        "prep_tasks",
+        "strategy_cards",
+        "strategy_items",
+    ] {
+        assert_eq!(count(&mut c, table).await, 0, "{table}");
+    }
+}
+
+#[tokio::test]
+async fn reminders_follow_title() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let doc = week_value(&pool, 2026, 44).await;
+    let rem: Vec<&Value> = doc["days"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|d| &d["reminder"])
+        .collect();
+    assert_eq!(
+        rem[2],
+        &json!({"title": "Shop day", "body": "Pick up the Thursday top-up list after work.", "icon": "🧾"})
+    );
+    assert_eq!(
+        rem[6],
+        &json!({"title": "Plan next week", "body": null, "icon": null})
+    );
+    // Mon has a body and icon but no title.
+    for i in [0, 1, 3, 4, 5] {
+        assert_eq!(rem[i], &Value::Null, "weekday {}", i + 1);
+    }
+    assert_eq!(
+        doc["week"]["prepIntro"],
+        "Monday covers Mon–Wed. Wednesday is a smaller session for Thu–Sun."
+    );
+
+    let mut c = t.writer().await;
+    exec(
+        &mut c,
+        &format!("UPDATE days SET reminder_title = 'Tue note' WHERE id = '{TUE}'"),
+    )
+    .await
+    .unwrap();
+    let doc = week_value(&pool, 2026, 44).await;
+    assert_eq!(
+        doc["days"][1]["reminder"],
+        json!({"title": "Tue note", "body": null, "icon": null})
+    );
+}
+
+#[tokio::test]
+async fn week_without_weekly_content_has_empty_collections() {
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(2026, 44)]).await;
+    let doc = week_value(&t.reader().await, 2026, 44).await;
+    assert_eq!(doc["week"]["prepIntro"], Value::Null);
+    assert_eq!(doc["prepSessions"], json!([]));
+    assert_eq!(doc["strategyCards"], json!([]));
+    assert_eq!(doc["schemaVersion"], 1);
+    for d in doc["days"].as_array().unwrap() {
+        assert_eq!(d["reminder"], Value::Null);
+    }
+}
+
+#[tokio::test]
+async fn weekly_content_freshness() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let mut c = t.writer().await;
+    let edits = [
+        "UPDATE weeks SET prep_intro = 'Fresh intro'",
+        "UPDATE prep_tasks SET name = 'Fresh task' WHERE name = 'Cook Brown Rice'",
+        "UPDATE strategy_items SET text = 'Fresh item' WHERE text = 'Legumes daily'",
+        "UPDATE days SET reminder_title = 'Fresh reminder' WHERE reminder_title = 'Shop day'",
+    ];
+    let fresh = ["Fresh intro", "Fresh task", "Fresh item", "Fresh reminder"];
+
+    let mut tx = c.begin().await.unwrap();
+    for sql in edits {
+        exec(&mut tx, sql).await.unwrap();
+    }
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    for f in fresh {
+        assert!(!body.contains(f), "{f} visible before commit");
+    }
+    tx.commit().await.unwrap();
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    for f in fresh {
+        assert!(body.contains(f), "{f} missing after commit");
+    }
+}
+
+#[tokio::test]
+async fn weekly_content_script_safety() {
+    let t = TestDb::with_fixture().await;
+    let mut c = t.writer().await;
+    let evil = "</script><script>alert(7)</script>";
+    for sql in [
+        format!("UPDATE weeks SET prep_intro = '{evil}'"),
+        format!(
+            "UPDATE prep_sessions SET title = '{evil}', covers = '{evil}' WHERE id = '{SESSION_MON}'"
+        ),
+        format!(
+            "UPDATE prep_tasks SET name = '{evil}', time = '{evil}', instructions = '{evil}' WHERE name = 'Cook Brown Rice'"
+        ),
+        format!(
+            "UPDATE strategy_cards SET title = '{evil}', icon = '{evil}' WHERE id = '{CARD_GREEN}'"
+        ),
+        format!("UPDATE strategy_items SET text = '{evil}' WHERE text = 'Legumes daily'"),
+        format!(
+            "UPDATE days SET reminder_title = '{evil}', reminder_body = '{evil}', reminder_icon = '{evil}' WHERE id = '{WED}'"
+        ),
+    ] {
+        exec(&mut c, &sql).await.unwrap();
+    }
+    let (s, _, body) = get(&t.reader().await, "/2026/44").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(!body.contains("alert(7)</script>"));
+    assert!(!body.contains("<script>alert(7)"));
+    // Intro, session x2, task x3, card x2, item, reminder x3.
+    assert_eq!(
+        body.matches("\\u003c/script\\u003e\\u003cscript\\u003ealert(7)")
+            .count(),
+        12
+    );
+    let page = page_json(&body);
+    assert_eq!(page["document"]["week"]["prepIntro"], evil);
+    assert_eq!(page["document"]["days"][2]["reminder"]["icon"], evil);
 }

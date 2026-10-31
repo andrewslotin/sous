@@ -1,7 +1,8 @@
 //! Application queries.
 use crate::calendar::{week_dates, week_path};
 use crate::model::{
-    Day, Meal, ShoppingCategory, ShoppingItem, ShoppingList, Step, Week, WeekDocument, WeekSummary,
+    Day, Meal, PrepSession, PrepTask, Reminder, ShoppingCategory, ShoppingItem, ShoppingList, Step,
+    StrategyCard, StrategyItem, Week, WeekDocument, WeekSummary,
 };
 use sqlx::{Row, SqlitePool};
 
@@ -16,12 +17,13 @@ pub async fn load_week(
     };
     let mut tx = pool.begin().await?;
 
-    let Some(week_row) =
-        sqlx::query("SELECT id, subtitle FROM weeks WHERE iso_year = ? AND iso_week = ?")
-            .bind(iso_year)
-            .bind(iso_week)
-            .fetch_optional(&mut *tx)
-            .await?
+    let Some(week_row) = sqlx::query(
+        "SELECT id, subtitle, prep_intro FROM weeks WHERE iso_year = ? AND iso_week = ?",
+    )
+    .bind(iso_year)
+    .bind(iso_week)
+    .fetch_optional(&mut *tx)
+    .await?
     else {
         return Ok(None);
     };
@@ -36,16 +38,28 @@ pub async fn load_week(
             weekday: i as u32 + 1,
             meals: Vec::new(),
             shopping_list_ids: Vec::new(),
+            reminder: None,
         })
         .collect();
 
-    for row in sqlx::query("SELECT id, weekday FROM days WHERE week_id = ? ORDER BY weekday")
-        .bind(&week_id)
-        .fetch_all(&mut *tx)
-        .await?
+    for row in sqlx::query(
+        "SELECT id, weekday, reminder_title, reminder_body, reminder_icon \
+         FROM days WHERE week_id = ? ORDER BY weekday",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?
     {
         let weekday: i64 = row.get("weekday");
-        days[(weekday - 1) as usize].id = Some(row.get("id"));
+        let day = &mut days[(weekday - 1) as usize];
+        day.id = Some(row.get("id"));
+        day.reminder = row
+            .get::<Option<String>, _>("reminder_title")
+            .map(|title| Reminder {
+                title,
+                body: row.get("reminder_body"),
+                icon: row.get("reminder_icon"),
+            });
     }
 
     let meal_rows = sqlx::query(
@@ -101,7 +115,88 @@ pub async fn load_week(
     .bind(&week_id)
     .fetch_all(&mut *tx)
     .await?;
+
+    let session_rows = sqlx::query(
+        "SELECT id, title, covers FROM prep_sessions WHERE week_id = ? ORDER BY position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let task_rows = sqlx::query(
+        "SELECT t.id, t.session_id, t.name, t.time, t.instructions FROM prep_tasks t \
+         JOIN prep_sessions s ON s.id = t.session_id \
+         WHERE s.week_id = ? ORDER BY t.session_id, t.position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let card_rows = sqlx::query(
+        "SELECT id, title, icon, theme FROM strategy_cards WHERE week_id = ? ORDER BY position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let card_item_rows = sqlx::query(
+        "SELECT i.id, i.card_id, i.text FROM strategy_items i \
+         JOIN strategy_cards c ON c.id = i.card_id \
+         WHERE c.week_id = ? ORDER BY i.card_id, i.position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
+
+    let mut tasks: std::collections::HashMap<String, Vec<PrepTask>> = Default::default();
+    for row in task_rows {
+        tasks
+            .entry(row.get("session_id"))
+            .or_default()
+            .push(PrepTask {
+                id: row.get("id"),
+                name: row.get("name"),
+                time: row.get("time"),
+                instructions: row.get("instructions"),
+            });
+    }
+    let prep_sessions: Vec<PrepSession> = session_rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            PrepSession {
+                tasks: tasks.remove(&id).unwrap_or_default(),
+                id,
+                title: row.get("title"),
+                covers: row.get("covers"),
+            }
+        })
+        .collect();
+
+    let mut card_items: std::collections::HashMap<String, Vec<StrategyItem>> = Default::default();
+    for row in card_item_rows {
+        card_items
+            .entry(row.get("card_id"))
+            .or_default()
+            .push(StrategyItem {
+                id: row.get("id"),
+                text: row.get("text"),
+            });
+    }
+    let strategy_cards: Vec<StrategyCard> = card_rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            StrategyCard {
+                items: card_items.remove(&id).unwrap_or_default(),
+                id,
+                title: row.get("title"),
+                icon: row.get("icon"),
+                theme: row.get("theme"),
+            }
+        })
+        .collect();
 
     let mut items: std::collections::HashMap<String, Vec<ShoppingItem>> = Default::default();
     for row in item_rows {
@@ -184,9 +279,12 @@ pub async fn load_week(
             start_date: days[0].date.clone(),
             end_date: days[6].date.clone(),
             subtitle: week_row.get("subtitle"),
+            prep_intro: week_row.get("prep_intro"),
         },
         days,
         shopping_lists,
+        prep_sessions,
+        strategy_cards,
     }))
 }
 

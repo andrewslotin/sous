@@ -3,6 +3,20 @@ const { useState } = React;
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
+const TABS = [
+  { id: "plan", label: "Daily Plan" },
+  { id: "prep", label: "Prep Sessions" },
+  { id: "strategy", label: "Strategy" },
+];
+
+// Fixed whitelist: the database theme is mapped to a class here, never used as one directly.
+const STRATEGY_THEMES = {
+  green: "strategy-green",
+  blue: "strategy-blue",
+  purple: "strategy-purple",
+  yellow: "strategy-yellow",
+};
+
 const MEAL_ICONS = { Breakfast: "☀️", Lunch: "🥗", Dinner: "🍽️", Snack: "🥜" };
 
 // Display a number with at most one decimal place, dropping a trailing ".0".
@@ -163,10 +177,80 @@ function ShoppingListCard({ list }) {
   );
 }
 
+function PrepCard({ session }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = `prep-${session.id}`;
+  return (
+    <div className={`prep${expanded ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="prep-toggle"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="prep-head">
+          <span className="prep-main">
+            <span className="prep-title">🔪 {session.title}</span>
+            {session.covers !== null && <span className="prep-covers">{session.covers}</span>}
+          </span>
+          <span className="prep-indicator" aria-hidden="true">
+            {expanded ? "−" : "+"}
+          </span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="prep-body" id={bodyId}>
+          {session.tasks.map((task) => (
+            <div key={task.id} className="prep-task">
+              <div className="prep-task-head">
+                <span className="prep-task-name">{task.name}</span>
+                <span className="prep-task-time">{task.time}</span>
+              </div>
+              <p className="prep-task-instructions">{task.instructions}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StrategyCard({ card }) {
+  const theme = STRATEGY_THEMES[card.theme];
+  return (
+    <div className={theme ? `strategy ${theme}` : "strategy"}>
+      <div className="strategy-title">{card.icon !== null ? `${card.icon} ${card.title}` : card.title}</div>
+      {card.items.length > 0 && (
+        <ul className="strategy-items">
+          {card.items.map((item) => (
+            <li key={item.id}>{item.text}</li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function Reminder({ reminder }) {
+  return (
+    <div className="reminder">
+      {reminder.icon !== null && <span className="reminder-icon">{reminder.icon}</span>}
+      <div>
+        <div className="reminder-title">{reminder.title}</div>
+        {reminder.body !== null && <div className="reminder-body">{reminder.body}</div>}
+      </div>
+    </div>
+  );
+}
+
 function MealPlan({ data, selectedWeekday }) {
+  const [activeTab, setActiveTab] = useState("plan");
   const [selectedDay, setSelectedDay] = useState(selectedWeekday - 1);
   const day = data.days[selectedDay];
-  const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
+  // A session without tasks has nothing to show, so it is not displayed.
+  const prepSessions = data.prepSessions.filter((s) => s.tasks.length > 0);
+  const listsById =new Map(data.shoppingLists.map((l) => [l.id, l]));
   return (
     <div className="app">
       <div className="header">
@@ -178,32 +262,70 @@ function MealPlan({ data, selectedWeekday }) {
           </a>
         </div>
       </div>
-      <div className="days">
-        {data.days.map((d, i) => (
+      <div className="tabs">
+        {TABS.map((tab) => (
           <button
-            key={d.date}
+            key={tab.id}
             type="button"
-            className="day-button"
-            aria-pressed={selectedDay === i}
-            onClick={() => setSelectedDay(i)}
+            className="tab-button"
+            aria-pressed={activeTab === tab.id}
+            onClick={() => setActiveTab(tab.id)}
           >
-            {WEEKDAYS[d.weekday - 1]}
+            {tab.label}
           </button>
         ))}
       </div>
-      {day.shoppingListIds.map((listId) => (
-        <ShoppingListCard key={`${day.date}-${listId}`} list={listsById.get(listId)} />
-      ))}
-      {day.meals.length === 0 ? (
-        <p className="empty">No meals planned for this day.</p>
-      ) : (
+      {activeTab === "plan" && (
         <>
-          <DaySummary meals={day.meals} />
-          {day.meals.map((meal) => (
-            <MealCard key={meal.id} meal={meal} />
+          <div className="days">
+            {data.days.map((d, i) => (
+              <button
+                key={d.date}
+                type="button"
+                className="day-button"
+                aria-pressed={selectedDay === i}
+                onClick={() => setSelectedDay(i)}
+              >
+                {WEEKDAYS[d.weekday - 1]}
+              </button>
+            ))}
+          </div>
+          {day.shoppingListIds.map((listId) => (
+            <ShoppingListCard key={`${day.date}-${listId}`} list={listsById.get(listId)} />
           ))}
+          {day.meals.length === 0 ? (
+            <p className="empty">No meals planned for this day.</p>
+          ) : (
+            <>
+              <DaySummary meals={day.meals} />
+              {day.meals.map((meal) => (
+                <MealCard key={meal.id} meal={meal} />
+              ))}
+            </>
+          )}
+          {day.reminder !== null && <Reminder reminder={day.reminder} />}
         </>
       )}
+      {activeTab === "prep" && (
+        <>
+          {data.week.prepIntro !== null && <p className="prep-intro">{data.week.prepIntro}</p>}
+          {prepSessions.length === 0 ? (
+            <p className="empty">No prep sessions planned.</p>
+          ) : (
+            prepSessions.map((s) => <PrepCard key={s.id} session={s} />)
+          )}
+        </>
+      )}
+      {activeTab === "strategy" &&
+        (data.strategyCards.length === 0 ? (
+          <p className="empty">No strategy notes for this week.</p>
+        ) : (
+          <div className="strategy-list">
+            {data.strategyCards.map((c) => (
+              <StrategyCard key={c.id} card={c} />
+            ))}
+          </div>
+        ))}
     </div>
   );
 }

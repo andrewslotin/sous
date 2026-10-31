@@ -9,7 +9,7 @@ Implement features in the order below. Each iteration includes its own verificat
 | 1 | [Database-backed daily plan](features/001-database-backed-daily-plan.md) | Done | — |
 | 2 | [Calendar navigation and archive](features/002-calendar-navigation.md) | Done | 1 |
 | 3 | [Shopping lists](features/003-shopping-lists.md) | Done | 2 |
-| 4 | [Prep, strategy, and reminders](features/004-weekly-content.md) | Planned | 3 |
+| 4 | [Prep, strategy, and reminders](features/004-weekly-content.md) | Done | 3 |
 | 5 | [Read API and service verification](features/005-read-api.md) | Planned | 4 |
 
 ## Implementation baseline
