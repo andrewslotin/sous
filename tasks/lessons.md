@@ -8,13 +8,18 @@
   do next. Never end a turn silently. Keep exploratory command chains short (at most three calls before a status
   line), and post a one-line status after loading context (before writing a brief) and before a multi-call handoff
   such as typing a review request.
-- Change files with Edit/Write, never shell heredocs or inline scripts. Run a multi-line script from a scratchpad
-  file: multi-line inline Bash (`python3 -c`, heredocs) can trip the commit-message hook.
+- Change files with Edit/Write, never shell heredocs or inline scripts, and that includes `cat >>` appends. Run a
+  multi-line script from a scratchpad file: multi-line inline Bash (`python3 -c`, heredocs) can trip the
+  commit-message hook.
 - Before reading something outside the task (e.g. the next feature's spec), say why in one line.
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the baseline before planning. Raise a missing tool once, with a recommendation.
 - Verify facts before putting them in an agent brief; agents copy mistakes. Check worker-written docs (OpenAPI
-  ranges, formats, descriptions) against the code too, before review.
+  ranges, formats, descriptions) against the code too, before review. Validate documented example payloads against
+  the advertised schema in a test: `expectedRevision: null` was required but the schema said string only.
+- An optimistic-concurrency revision must hash every persisted row and column of the aggregate, not the rendered
+  document, or hidden and order-only external edits are lost on save.
+- "Case-insensitive" in a spec means Unicode case folding (`caseless`), not `to_lowercase`, which misses `σ`/`ς`.
 - Axum extractors reject bad input before the handler runs. Where the spec defines the error for a bad path or
   query, take the extractor as `Result<_, Rejection>` and test malformed input such as `%FF`.
 - When the user remarks on behaviour, first quote the spec line it implements and ask whether to keep it. Don't
@@ -27,6 +32,8 @@
 - The project is open source: public docs (README) must not mention machine-specific paths such as
   `/Applications/...`. Write them for any platform. Don't show repo file paths as text either: use descriptive
   links ("the [OpenAPI document](docs/openapi.json)"). After a correction, fix every instance, not just the one named.
+- When asking the user for a manual check, say where each piece of evidence comes from (command, UI, shortcut such
+  as Ctrl+O) and exactly what to paste back. The user had to ask "where can I find…?" twice.
 - When the spec is silent on how an empty child collection displays (e.g. a prep session with no tasks), ask the
   user before building it. Don't settle it myself and list it as a scope decision.
 - MCP tool descriptions must say when to use the tool, not only what it returns. When a narrow tool overlaps a broad
