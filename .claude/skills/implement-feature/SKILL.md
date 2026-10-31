@@ -43,7 +43,9 @@ stand on its own:
   one. Feature 2's "available-week links" grew into a full week list that the user then had removed.
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
   integration tests and `tests/browser.rs` for anything the user sees: rendering, keyboard/pointer, layout widths,
-  text safety. For migration-preservation tests, keep earlier features' fixture files frozen and put new content in
+  text safety. When the feature has visual criteria, also have a browser test write full-page screenshots at 375
+  and 1280 px to `target/visual/`, and look at them in step 4. Brief workers to write files only with Write/Edit,
+  never `cat`/heredoc appends. For migration-preservation tests, keep earlier features' fixture files frozen and put new content in
   a separate fixture, so the upgrade test loads real earlier-iteration data into the old schema.
 
 If the agents will run in parallel, first land any stubs the contract needs yourself, so the crate compiles on its
@@ -113,7 +115,8 @@ agtermctl session text --target "$AGTERM_SESSION_ID" --pane right --lines 20 --s
 
 The request went through when the input box is empty and Codex shows `Working`. Enter gets lost in three cases: a
 `\r` inside the same `type` call as the text, an Enter sent before the paste registers, and a turn that ends before
-Enter is sent. Then end your turn: Codex's verdict arrives as the next message in this conversation.
+Enter is sent. `Working` can take a few seconds to show: read the pane once more before concluding Enter was lost.
+Then end your turn: Codex's verdict arrives as the next message in this conversation.
 
 ## 6. Iterate until both agree
 
@@ -130,7 +133,8 @@ That evidence is a test, or a check Codex did in a browser.
 
 ## 7. Finish
 
-- Set the feature's status to `Done` in the `docs/README.md` tracker.
+- Set the feature's status to `Done` in the `docs/README.md` tracker. If the spec requires a manual check (e.g. the
+  user's visual check) before Done, set `In progress` and mark Done only after the user reports the result.
 - Add every correction the user made this session to `tasks/lessons.md`, as a rule that prevents a repeat.
 - Report to the user:
   - what was built;
