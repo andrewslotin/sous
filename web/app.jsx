@@ -20,6 +20,21 @@ function formatDateRange(week) {
   return `${formatDay(week.startDate)} – ${formatDay(week.endDate)}`;
 }
 
+// "2026-10-26" -> "Oct 26, 2026".
+function formatDayWithYear(iso) {
+  return `${formatDay(iso)}, ${Number(iso.split("-")[0])}`;
+}
+
+// "Oct 26 – Nov 1, 2026" within one year, "Dec 28, 2026 – Jan 3, 2027" across years.
+function formatRangeWithYear(start, end) {
+  const startYear = start.split("-")[0];
+  const endYear = end.split("-")[0];
+  if (startYear === endYear) {
+    return `${formatDay(start)} – ${formatDayWithYear(end)}`;
+  }
+  return `${formatDayWithYear(start)} – ${formatDayWithYear(end)}`;
+}
+
 function DaySummary({ meals }) {
   const sum = (key) => meals.reduce((acc, m) => acc + m[key], 0);
   const items = [
@@ -105,14 +120,19 @@ function MealCard({ meal }) {
   );
 }
 
-function MealPlan({ data }) {
-  const [selectedDay, setSelectedDay] = useState(0);
+function MealPlan({ data, selectedWeekday }) {
+  const [selectedDay, setSelectedDay] = useState(selectedWeekday - 1);
   const day = data.days[selectedDay];
   return (
     <div className="app">
       <div className="header">
         <h1 className="title">Meal Plan: {formatDateRange(data.week)}</h1>
-        {data.week.subtitle && <p className="subtitle">{data.week.subtitle}</p>}
+        <div className="header-meta">
+          {data.week.subtitle && <p className="subtitle">{data.week.subtitle}</p>}
+          <a className="all-weeks" href="/weeks">
+            All weeks
+          </a>
+        </div>
       </div>
       <div className="days">
         {data.days.map((d, i) => (
@@ -141,5 +161,116 @@ function MealPlan({ data }) {
   );
 }
 
-const data = JSON.parse(document.getElementById("sous-week").textContent);
-ReactDOM.createRoot(document.getElementById("root")).render(<MealPlan data={data} />);
+function Shell({ title, children }) {
+  return (
+    <div className="app">
+      <div className="header">{title}</div>
+      {children}
+    </div>
+  );
+}
+
+function PageTitle({ children, link }) {
+  return (
+    <>
+      <h1 className="title">{children}</h1>
+      {link && (
+        <div className="header-meta">
+          <a className="all-weeks" href={link.href}>
+            {link.label}
+          </a>
+        </div>
+      )}
+    </>
+  );
+}
+
+function Nav({ links }) {
+  return (
+    <nav className="nav">
+      {links.map((l) => (
+        <a key={l.href} className="nav-link" href={l.href}>
+          {l.label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+const THIS_WEEK = { href: "/", label: "This week" };
+const ALL_WEEKS = { href: "/weeks", label: "All weeks" };
+
+function WeekList({ weeks }) {
+  return (
+    <ul className="week-list">
+      {weeks.map((w) => (
+        <li key={w.path}>
+          <a className="week-link" href={w.path}>
+            <span className="week-link-title">
+              Week {w.isoWeek} · {w.isoYear}
+            </span>
+            <span className="week-link-range">{formatRangeWithYear(w.startDate, w.endDate)}</span>
+          </a>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function MissingWeek({ page }) {
+  return (
+    <Shell
+      title={<PageTitle link={ALL_WEEKS}>Meal Plan: {formatRangeWithYear(page.week.startDate, page.week.endDate)}</PageTitle>}
+    >
+      <p className="empty">No meal plan for this week yet.</p>
+    </Shell>
+  );
+}
+
+function Archive({ page }) {
+  return (
+    <Shell title={<PageTitle link={THIS_WEEK}>All weeks</PageTitle>}>
+      {page.weeks.length === 0 ? (
+        <p className="empty">No meal plans available yet.</p>
+      ) : (
+        <WeekList weeks={page.weeks} />
+      )}
+    </Shell>
+  );
+}
+
+function InvalidWeek() {
+  return (
+    <Shell title={<PageTitle>Meal Plan</PageTitle>}>
+      <p className="empty">Invalid week.</p>
+      <Nav links={[THIS_WEEK, ALL_WEEKS]} />
+    </Shell>
+  );
+}
+
+function Unavailable() {
+  return (
+    <Shell title={<PageTitle>Meal Plan</PageTitle>}>
+      <p className="empty">Meal plans are temporarily unavailable.</p>
+      <Nav links={[{ href: "/", label: "Try again" }]} />
+    </Shell>
+  );
+}
+
+function App({ page }) {
+  switch (page.kind) {
+    case "week":
+      return <MealPlan data={page.document} selectedWeekday={page.selectedWeekday} />;
+    case "missing":
+      return <MissingWeek page={page} />;
+    case "archive":
+      return <Archive page={page} />;
+    case "invalid":
+      return <InvalidWeek />;
+    default:
+      return <Unavailable />;
+  }
+}
+
+const page = JSON.parse(document.getElementById("sous-page").textContent);
+ReactDOM.createRoot(document.getElementById("root")).render(<App page={page} />);

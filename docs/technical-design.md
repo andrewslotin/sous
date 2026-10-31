@@ -61,7 +61,7 @@ On the current week's page, initially select today. On any other week's page, se
 
 A plan exists when a `weeks` record exists. An empty database is a supported first-run state.
 
-- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and links to available weeks.
+- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and an “All weeks” link to the archive. Do not list available weeks.
 - Missing plan at a valid explicit week URL: HTTP 404 with the same useful content.
 - Invalid year/week route: HTTP 404 with “Invalid week.” and a link to the current week and archive.
 - No plans anywhere: show “No meal plans available yet.” instead of an empty archive list.

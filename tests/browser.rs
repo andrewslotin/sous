@@ -2,11 +2,14 @@
 //!
 //! Run with: `cargo test --test browser -- --ignored`
 
-use headless_chrome::protocol::cdp::Emulation::SetDeviceMetricsOverride;
+use chrono::TimeZone;
+use headless_chrome::protocol::cdp::Emulation::{SetDeviceMetricsOverride, SetTimezoneOverride};
 use headless_chrome::{Browser, LaunchOptions, Tab};
+use sous::calendar::Clock;
 use sous::db;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Connection, SqliteConnection};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tempfile::TempDir;
@@ -49,39 +52,124 @@ fn crafted_week(week: u32, meals: &[(&str, [f64; 5])]) -> String {
     sql
 }
 
-struct Harness {
-    _rt: tokio::runtime::Runtime,
-    _dir: TempDir,
-    _browser: Browser,
-    tab: Arc<Tab>,
-    base: String,
+/// Bare weeks (no days, no meals) for the given (ISO year, week) pairs.
+fn bare_weeks(weeks: &[(i32, u32)]) -> String {
+    weeks
+        .iter()
+        .map(|(y, w)| {
+            format!(
+                "INSERT INTO weeks (id, iso_year, iso_week) VALUES ('{}', {y}, {w});\n",
+                id(0xb1, (*y as u32) * 100 + w)
+            )
+        })
+        .collect()
 }
 
-impl Harness {
-    /// Fresh DB (migrated, fixture + `extra_sql`), in-process server, Chrome at `width` px.
-    fn start(extra_sql: &str, width: u32) -> Self {
+/// What the server's database looks like for a test.
+#[derive(Clone, Copy, PartialEq)]
+enum Db {
+    /// Migrated, with the 2026-W44 fixture.
+    Fixture,
+    /// Migrated, no rows.
+    Empty,
+    /// A valid SQLite file without the application tables (queries fail).
+    NoTables,
+    /// Fixture loaded, but the read pool is closed before serving (queries fail).
+    ClosedPool,
+}
+
+/// Harness configuration. Defaults: fixture DB, `test_clock()`, 1280 px wide, start at `/2026/44`.
+struct Opts {
+    sql: String,
+    width: u32,
+    clock: Clock,
+    db: Db,
+    path: &'static str,
+}
+
+impl Opts {
+    fn new() -> Self {
+        Opts {
+            sql: String::new(),
+            width: 1280,
+            clock: test_clock(),
+            db: Db::Fixture,
+            path: "/2026/44",
+        }
+    }
+
+    fn sql(mut self, sql: &str) -> Self {
+        self.sql = sql.to_string();
+        self
+    }
+
+    fn width(mut self, width: u32) -> Self {
+        self.width = width;
+        self
+    }
+
+    fn clock(mut self, clock: Clock) -> Self {
+        self.clock = clock;
+        self
+    }
+
+    fn db(mut self, db: Db) -> Self {
+        self.db = db;
+        self
+    }
+
+    fn path(mut self, path: &'static str) -> Self {
+        self.path = path;
+        self
+    }
+
+    /// Fresh DB, in-process server and Chrome, then load `path` and wait for any rendered page.
+    fn launch(self) -> Harness {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("test.db");
+        let db_path = dir.path().join("test.db");
+        let Opts {
+            sql,
+            width,
+            clock,
+            db: mode,
+            path,
+        } = self;
         let base = rt.block_on(async {
-            db::migrate(&path).await.unwrap();
-            let mut c = SqliteConnection::connect_with(
-                &SqliteConnectOptions::new()
-                    .filename(&path)
-                    .journal_mode(SqliteJournalMode::Wal)
-                    .foreign_keys(true),
-            )
-            .await
-            .unwrap();
-            sqlx::raw_sql(FIXTURE).execute(&mut c).await.unwrap();
-            sqlx::raw_sql(sqlx::AssertSqlSafe(extra_sql.to_string()))
-                .execute(&mut c)
-                .await
-                .unwrap();
-            let pool = db::open_read_pool(&path).await.unwrap();
+            let pool = if mode == Db::NoTables {
+                let mut c = SqliteConnection::connect_with(&writer_options(&db_path))
+                    .await
+                    .unwrap();
+                sqlx::raw_sql("CREATE TABLE unrelated (x INTEGER)")
+                    .execute(&mut c)
+                    .await
+                    .unwrap();
+                c.close().await.unwrap();
+                db::open_read_pool(&db_path).await.unwrap()
+            } else {
+                db::migrate(&db_path).await.unwrap();
+                let mut c = SqliteConnection::connect_with(&writer_options(&db_path))
+                    .await
+                    .unwrap();
+                if mode != Db::Empty {
+                    sqlx::raw_sql(FIXTURE).execute(&mut c).await.unwrap();
+                }
+                sqlx::raw_sql(sqlx::AssertSqlSafe(sql))
+                    .execute(&mut c)
+                    .await
+                    .unwrap();
+                c.close().await.unwrap();
+                let pool = db::open_read_pool(&db_path).await.unwrap();
+                if mode == Db::ClosedPool {
+                    pool.close().await;
+                }
+                pool
+            };
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
-            tokio::spawn(async move { axum::serve(listener, sous::app(pool)).await.unwrap() });
+            tokio::spawn(
+                async move { axum::serve(listener, sous::app(pool, clock)).await.unwrap() },
+            );
             format!("http://{addr}")
         });
         let browser = Browser::new(LaunchOptions {
@@ -110,23 +198,112 @@ impl Harness {
         })
         .unwrap();
         let h = Harness {
-            _rt: rt,
+            rt,
             _dir: dir,
+            db_path,
             _browser: browser,
             tab,
             base,
         };
-        h.goto("/2026/44");
+        h.goto_page(path);
         h
     }
+}
 
+fn writer_options(path: &std::path::Path) -> SqliteConnectOptions {
+    SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true)
+}
+
+struct Harness {
+    rt: tokio::runtime::Runtime,
+    _dir: TempDir,
+    db_path: PathBuf,
+    _browser: Browser,
+    tab: Arc<Tab>,
+    base: String,
+}
+
+impl Harness {
+    /// Fresh DB (migrated, fixture + `extra_sql`), in-process server, Chrome at `width` px.
+    fn start(extra_sql: &str, width: u32) -> Self {
+        Opts::new().sql(extra_sql).width(width).launch()
+    }
+
+    /// Run SQL through a separate writer connection (a change made by "another process").
+    fn exec(&self, sql: &str) {
+        self.rt.block_on(async {
+            let mut c = SqliteConnection::connect_with(&writer_options(&self.db_path))
+                .await
+                .unwrap();
+            sqlx::raw_sql(sqlx::AssertSqlSafe(sql.to_string()))
+                .execute(&mut c)
+                .await
+                .unwrap();
+            c.close().await.unwrap();
+        });
+    }
+
+    /// Override the browser's timezone (CDP `Emulation.setTimezoneOverride`).
+    fn set_browser_timezone(&self, tz: &str) {
+        self.tab
+            .call_method(SetTimezoneOverride {
+                timezone_id: tz.to_string(),
+            })
+            .unwrap();
+        assert_eq!(
+            self.js("Intl.DateTimeFormat().resolvedOptions().timeZone"),
+            tz
+        );
+    }
+
+    /// Navigate and wait for the plan page (day buttons).
     fn goto(&self, path: &str) {
+        self.navigate(path);
+        self.wait_for("document.querySelector('.day-button') !== null");
+    }
+
+    /// Navigate and wait for any rendered page.
+    fn goto_page(&self, path: &str) {
+        self.navigate(path);
+        self.wait_for("document.querySelector('#root > *') !== null");
+    }
+
+    fn navigate(&self, path: &str) {
         self.tab
             .navigate_to(&format!("{}{path}", self.base))
             .unwrap()
             .wait_until_navigated()
             .unwrap();
-        self.wait_for("document.querySelector('.day-button') !== null");
+    }
+
+    /// Wait until the browser is on `path` and a page has rendered (after a click or key press).
+    fn wait_page(&self, path: &str) {
+        self.wait_for(&format!(
+            "location.pathname === '{path}' && document.querySelector('#root > *') !== null"
+        ));
+    }
+
+    fn pathname(&self) -> String {
+        self.js("location.pathname").as_str().unwrap().to_string()
+    }
+
+    /// HTTP status of the current document's response.
+    fn status(&self) -> u64 {
+        self.js("performance.getEntriesByType('navigation')[0].responseStatus")
+            .as_u64()
+            .unwrap()
+    }
+
+    /// Text content of every element matching `selector`, in DOM order.
+    fn texts(&self, selector: &str) -> Vec<String> {
+        let v = self.js(&format!(
+            "[...document.querySelectorAll('{selector}')].map(e => e.textContent)"
+        ));
+        serde_json::from_value(v).unwrap()
     }
 
     /// Evaluate a JS expression and return its JSON-serialised result.
@@ -367,4 +544,281 @@ fn summary_layout_at_1280px() {
     let h = Harness::start("", 1280);
     assert_eq!(h.js("window.innerWidth"), 1280);
     assert_summary_layout(&h);
+}
+
+fn clock_at(y: i32, mo: u32, d: u32, h: u32, mi: u32, sec: u32) -> Clock {
+    Clock::fixed(
+        sous::calendar::DEFAULT_TIMEZONE,
+        chrono::Utc.with_ymd_and_hms(y, mo, d, h, mi, sec).unwrap(),
+    )
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn plan_header_range_and_all_weeks_link_by_keyboard() {
+    let h = Harness::start("", 1280);
+    assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
+    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 1);
+    assert_eq!(
+        h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
+        "/weeks"
+    );
+    assert_eq!(h.text("a.all-weeks"), "All weeks");
+
+    // The first tab stop is the link; it shows a focus ring; Enter follows it.
+    h.press("Tab");
+    assert_eq!(h.js("document.activeElement.className"), "all-weeks");
+    assert_eq!(
+        h.js("getComputedStyle(document.activeElement).outlineStyle"),
+        "solid"
+    );
+    h.press("Enter");
+    h.wait_page("/weeks");
+    assert_eq!(h.text(".title"), "All weeks");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn archive_orders_weeks_and_links_navigate() {
+    let sql = bare_weeks(&[(2026, 1), (2027, 1), (2025, 52), (2026, 53)]);
+    let h = Harness::start(&sql, 1280);
+    h.goto_page("/weeks");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.text(".title"), "All weeks");
+    assert_eq!(
+        h.texts(".week-list > li > a.week-link .week-link-title"),
+        [
+            "Week 1 · 2027",
+            "Week 53 · 2026",
+            "Week 44 · 2026",
+            "Week 1 · 2026",
+            "Week 52 · 2025"
+        ]
+    );
+    assert_eq!(
+        h.texts(".week-link-range"),
+        [
+            "Jan 4 – Jan 10, 2027",
+            "Dec 28, 2026 – Jan 3, 2027",
+            "Oct 26 – Nov 1, 2026",
+            "Dec 29, 2025 – Jan 4, 2026",
+            "Dec 22 – Dec 28, 2025"
+        ]
+    );
+    assert_eq!(
+        h.js("[...document.querySelectorAll('.week-link')].map(a => a.getAttribute('href'))"),
+        serde_json::json!(["/2027/1", "/2026/53", "/2026/44", "/2026/1", "/2025/52"])
+    );
+    assert_eq!(h.text("a.all-weeks"), "This week");
+
+    // A change made by another connection shows up on reload; a future week is allowed.
+    h.exec(&bare_weeks(&[(2027, 2)]));
+    h.goto_page("/weeks");
+    let titles = h.texts(".week-link-title");
+    assert_eq!(titles.len(), 6);
+    assert_eq!(titles[0], "Week 2 · 2027");
+
+    // Following an entry opens that week; a stored future week selects Monday and the URL stays put.
+    h.click(".week-link[href='/2027/2']");
+    h.wait_page("/2027/2");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.text(".title"), "Meal Plan: Jan 11 – Jan 17");
+    assert_eq!(
+        h.pressed(),
+        vec![true, false, false, false, false, false, false]
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn past_week_selects_monday_and_keeps_url() {
+    // The default clock is in W49, so W44 is in the past.
+    let h = Harness::start("", 1280);
+    assert_eq!(h.pathname(), "/2026/44");
+    assert_eq!(
+        h.pressed(),
+        vec![true, false, false, false, false, false, false]
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn missing_week_pages_link_to_archive_only() {
+    let h = Harness::start("", 1280);
+
+    // Explicit missing week, across an ISO year boundary: 404 with the full range and years.
+    h.goto_page("/2026/53");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.pathname(), "/2026/53");
+    assert_eq!(h.text(".title"), "Meal Plan: Dec 28, 2026 – Jan 3, 2027");
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    assert_eq!(
+        h.js("document.querySelectorAll('.week-list, .week-link').length"),
+        0
+    );
+    assert_eq!(h.js("document.querySelectorAll('a.nav-link').length"), 0);
+    assert_eq!(h.text("a.all-weeks"), "All weeks");
+    assert_eq!(
+        h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
+        "/weeks"
+    );
+    assert_eq!(
+        h.js("document.querySelector('.header a.all-weeks').getBoundingClientRect().top < document.querySelector('.empty').getBoundingClientRect().top"),
+        true
+    );
+
+    // `/` with the current week (W49: Nov 30 - Dec 6) not stored is a 200 and stays at `/`.
+    h.goto_page("/");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.pathname(), "/");
+    assert_eq!(h.text(".title"), "Meal Plan: Nov 30 – Dec 6, 2026");
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    assert_eq!(
+        h.js("document.querySelectorAll('.week-list, .week-link').length"),
+        0
+    );
+
+    // The "All weeks" link goes to the archive.
+    h.click("a.all-weeks");
+    h.wait_page("/weeks");
+    assert_eq!(h.text(".title"), "All weeks");
+    assert_eq!(h.texts(".week-link-title"), ["Week 44 · 2026"]);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn empty_database_pages() {
+    let h = Opts::new().db(Db::Empty).path("/weeks").launch();
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
+    assert_eq!(h.js("document.querySelectorAll('.week-link').length"), 0);
+    assert_eq!(h.text("a.all-weeks"), "This week");
+    h.click("a.all-weeks");
+    h.wait_page("/");
+    // Missing page without any stored weeks: just the message, no list.
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    assert_eq!(h.js("document.querySelectorAll('.week-list').length"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn invalid_week_page_and_zero_padded_redirect() {
+    let h = Harness::start("", 1280);
+    h.goto_page("/2025/53");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts(".empty"), ["Invalid week."]);
+    assert_eq!(h.texts("a.nav-link"), ["This week", "All weeks"]);
+    h.click("a.nav-link[href='/weeks']");
+    h.wait_page("/weeks");
+    assert_eq!(h.text(".title"), "All weeks");
+
+    h.goto_page("/2025/53");
+    h.click("a.nav-link[href='/']");
+    h.wait_page("/");
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+
+    // Zero-padded paths redirect to the canonical path.
+    h.goto_page("/2026/044");
+    assert_eq!(h.pathname(), "/2026/44");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn database_failure_shows_unavailable_not_missing() {
+    for mode in [Db::NoTables, Db::ClosedPool] {
+        let h = Opts::new().db(mode).path("/").launch();
+        for path in ["/", "/2026/44", "/weeks"] {
+            h.goto_page(path);
+            assert_eq!(h.status(), 503, "{path}");
+            assert_eq!(h.pathname(), path);
+            assert_eq!(
+                h.texts(".empty"),
+                ["Meal plans are temporarily unavailable."],
+                "{path}"
+            );
+            assert_eq!(h.text(".title"), "Meal Plan");
+            assert_eq!(h.js("document.querySelectorAll('.week-link').length"), 0);
+        }
+        // The retry link goes to `/`, which is still unavailable.
+        h.click("a.nav-link");
+        h.wait_page("/");
+        assert_eq!(h.status(), 503);
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn current_day_comes_from_server_clock_not_browser_timezone() {
+    // 2026-11-01T22:30Z is Sunday 23:30 in Berlin (W44). The browser zones below are on
+    // Monday (UTC+14) and Sunday (UTC-11) at that instant; neither may influence the selection.
+    let h = Opts::new()
+        .clock(clock_at(2026, 11, 1, 22, 30, 0))
+        .path("/")
+        .launch();
+    for tz in ["Pacific/Kiritimati", "Pacific/Pago_Pago"] {
+        h.set_browser_timezone(tz);
+        h.goto("/");
+        assert_eq!(h.pathname(), "/");
+        assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
+        assert_eq!(
+            h.pressed(),
+            vec![false, false, false, false, false, false, true],
+            "{tz}"
+        );
+        // The same week at its permanent URL selects today too.
+        h.goto("/2026/44");
+        assert!(h.pressed()[6], "{tz}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn year_boundary_week_selects_saturday() {
+    // 2027-01-02 is a Saturday in ISO 2026-W53.
+    let sql = bare_weeks(&[(2026, 53)]);
+    let h = Opts::new()
+        .sql(&sql)
+        .clock(clock_at(2027, 1, 2, 12, 0, 0))
+        .path("/")
+        .launch();
+    assert_eq!(h.pathname(), "/");
+    assert_eq!(h.text(".title"), "Meal Plan: Dec 28 – Jan 3");
+    assert_eq!(
+        h.pressed(),
+        vec![false, false, false, false, false, true, false]
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn list_pages_fit_375px() {
+    let sql = bare_weeks(&[(2026, 53), (2027, 1)]);
+    let h = Opts::new().sql(&sql).width(375).launch();
+    for path in ["/weeks", "/2026/52", "/2025/53", "/"] {
+        h.goto_page(path);
+        assert_eq!(h.js("window.innerWidth"), 375);
+        assert_eq!(
+            h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+            true,
+            "{path}"
+        );
+    }
+    // The plan page with the "All weeks" link also fits.
+    h.goto("/2026/44");
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
+}
+
+/// Feature 2 stub: fixed clock in ISO 2026-W49 (Wed), outside the fixture week.
+fn test_clock() -> sous::calendar::Clock {
+    use chrono::TimeZone;
+    sous::calendar::Clock::fixed(
+        sous::calendar::DEFAULT_TIMEZONE,
+        chrono::Utc.with_ymd_and_hms(2026, 12, 2, 12, 0, 0).unwrap(),
+    )
 }

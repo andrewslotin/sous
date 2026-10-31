@@ -1,6 +1,6 @@
 //! Application queries.
-use crate::calendar::week_dates;
-use crate::model::{Day, Meal, Step, Week, WeekDocument};
+use crate::calendar::{week_dates, week_path};
+use crate::model::{Day, Meal, Step, Week, WeekDocument, WeekSummary};
 use sqlx::{Row, SqlitePool};
 
 /// Load one week inside a single read transaction. `None` if the week row does not exist.
@@ -107,4 +107,38 @@ pub async fn load_week(
         },
         days,
     }))
+}
+
+/// Summary (dates and canonical path) of an ISO week, or `None` if it is not representable.
+pub fn week_summary(iso_year: i32, iso_week: u32) -> Option<WeekSummary> {
+    let dates = week_dates(iso_year, iso_week)?;
+    Some(WeekSummary {
+        iso_year,
+        iso_week,
+        start_date: dates[0].format("%Y-%m-%d").to_string(),
+        end_date: dates[6].format("%Y-%m-%d").to_string(),
+        path: week_path(iso_year, iso_week),
+    })
+}
+
+/// Stored weeks in descending ISO year/week order.
+pub async fn list_weeks(pool: &SqlitePool) -> Result<Vec<WeekSummary>, sqlx::Error> {
+    let rows =
+        sqlx::query("SELECT iso_year, iso_week FROM weeks ORDER BY iso_year DESC, iso_week DESC")
+            .fetch_all(pool)
+            .await?;
+    let mut weeks = Vec::with_capacity(rows.len());
+    for row in rows {
+        let iso_year: i32 = row.get("iso_year");
+        let iso_week: u32 = row.get("iso_week");
+        match week_summary(iso_year, iso_week) {
+            Some(summary) => weeks.push(summary),
+            None => tracing::warn!(
+                iso_year,
+                iso_week,
+                "skipping stored week with unrepresentable dates"
+            ),
+        }
+    }
+    Ok(weeks)
 }

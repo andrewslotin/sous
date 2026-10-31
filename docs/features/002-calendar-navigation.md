@@ -19,7 +19,7 @@ Depends on: [1. Database-backed daily plan](001-database-backed-daily-plan.md).
 
 | Situation | HTTP status | Presentation |
 | --- | --- | --- |
-| Current week has no plan at `/` | 200 | Date range, “No meal plan for this week yet.”, available-week links. |
+| Current week has no plan at `/` | 200 | Date range, “No meal plan for this week yet.”, and an “All weeks” link to the archive. Do not list available weeks. |
 | Valid explicit week has no plan | 404 | Same useful missing-plan page. |
 | Invalid week/year | 404 | “Invalid week.” and current-week/archive links. |
 | Archive has no entries | 200 | “No meal plans available yet.” |

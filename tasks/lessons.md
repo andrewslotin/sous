@@ -12,3 +12,17 @@
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the baseline before planning. Raise a missing tool once, with a recommendation.
 - Verify facts before putting them in an agent brief; agents copy mistakes.
+- implement-feature: keep orchestrator stubs to signatures + `todo!()` and say up front, in one line, that the stub
+  step is the skill's and Sonnet workers write all logic and tests. Write the brief and launch workers right after
+  `cargo check` passes; don't let stub work drift into implementation.
+- If a hook stops continuation or blocks a call, tell the user at once in one line (what fired, what I'll do next)
+  instead of ending the turn silently. The Bash hook here blocks commands whose text mentions version-control words:
+  type agterm messages from a scratchpad file with `agtermctl session type "$(cat file)"`, and edit docs with Edit.
+- Codex's TUI registers long pastes late: after typing, re-read the pane until it shows `[Pasted Content …]`, then
+  send Enter, then confirm `Working`. An Enter sent too early is lost.
+- When the user remarks on behaviour, first quote the spec line it implements and ask whether to keep it. Don't
+  propose redesigns or launch changes from an observation. The spec is the default answer.
+- When the user asks for a change, make that change and nothing more. Don't propose alternatives ("nearest weeks").
+  Ask only when the instruction conflicts with the spec, then update the spec when the user says so.
+- Keep a shared control in the same place on every page kind (e.g. the "All weeks" link in the header row), so
+  pages stay consistent with the plan page.

@@ -49,9 +49,9 @@ fn escape_html(text: &str) -> String {
     out
 }
 
-/// Full HTML document for a week page. `title` is plain text (escaped here).
-/// `week_json` is the week document, already made script-safe by the caller.
-pub fn week_page(title: &str, week_json: &str) -> String {
+/// Full HTML document for any page. `title` is plain text (escaped here).
+/// `page_json` is the [`crate::model::Page`] payload, already made script-safe by the caller.
+pub fn page(title: &str, page_json: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -63,7 +63,7 @@ pub fn week_page(title: &str, week_json: &str) -> String {
 </head>
 <body>
 <div id="root"></div>
-<script id="sous-week" type="application/json">{week_json}</script>
+<script id="sous-page" type="application/json">{page_json}</script>
 <script defer src="{REACT_PATH}"></script>
 <script defer src="{REACT_DOM_PATH}"></script>
 <script defer src="{APP_PATH}"></script>
@@ -127,10 +127,10 @@ mod tests {
 
     #[test]
     fn week_page_escapes_title_and_uses_only_local_assets() {
-        let page = week_page("<b>\"x\" & 'y'</b>", r#"{"a":1}"#);
+        let page = page("<b>\"x\" & 'y'</b>", r#"{"a":1}"#);
         assert!(page.contains("<title>&lt;b&gt;&quot;x&quot; &amp; &#39;y&#39;&lt;/b&gt;</title>"));
         assert!(
-            page.contains(r#"<script id="sous-week" type="application/json">{"a":1}</script>"#)
+            page.contains(r#"<script id="sous-page" type="application/json">{"a":1}</script>"#)
         );
         for attr in ["href=\"", "src=\""] {
             for part in page.split(attr).skip(1) {

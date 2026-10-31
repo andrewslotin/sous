@@ -55,10 +55,45 @@ pub struct Step {
     pub text: String,
 }
 
-impl WeekDocument {
+/// One archive entry / available-week link.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WeekSummary {
+    pub iso_year: i32,
+    pub iso_week: u32,
+    pub start_date: String,
+    pub end_date: String,
+    /// Canonical page path, e.g. `/2026/44`.
+    pub path: String,
+}
+
+/// Initial payload embedded in every HTML page; the frontend renders by `kind`.
+#[derive(Debug, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum Page {
+    /// A stored plan. `selected_weekday` is 1 (Monday) ..= 7, chosen by the server.
+    Week {
+        selected_weekday: u32,
+        document: WeekDocument,
+    },
+    /// A valid week with no stored plan.
+    Missing { week: WeekSummary },
+    /// `/weeks`: stored plans, newest first.
+    Archive { weeks: Vec<WeekSummary> },
+    /// Invalid year/week path.
+    Invalid,
+    /// Database failure.
+    Unavailable,
+}
+
+impl Page {
     /// JSON safe to embed inside a `<script>` element.
     pub fn to_script_json(&self) -> String {
-        let json = serde_json::to_string(self).expect("week document serializes");
+        let json = serde_json::to_string(self).expect("page serializes");
         let mut out = String::with_capacity(json.len());
         for c in json.chars() {
             match c {
