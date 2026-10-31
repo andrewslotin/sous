@@ -11,6 +11,11 @@
 - Change files with Edit/Write, never shell heredocs or inline scripts, and that includes `cat >>` appends. Run a
   multi-line script from a scratchpad file: multi-line inline Bash (`python3 -c`, heredocs) can trip the
   commit-message hook.
+- Every feature ends with a doc sweep, not just the files its spec names: grep README, `docs/` (design,
+  verification record, OpenAPI, MCP guide) for the routes, payloads and test names the feature changed, fix stale
+  current-contract references, and list the doc coverage in the review handoff.
+- Before typing into another agent's pane, read it: if it shows an approval prompt, don't type (keystrokes would
+  answer it). Ask the user to resolve the prompt first.
 - Before reading something outside the task (e.g. the next feature's spec), say why in one line.
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the technical design's architecture before planning. Raise a missing tool once, with a recommendation.

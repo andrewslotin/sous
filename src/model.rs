@@ -142,6 +142,17 @@ pub struct WeekSummary {
     pub path: String,
 }
 
+/// Stored plans of one ISO week-year plus whether the adjacent years have plans.
+#[derive(Debug)]
+pub struct YearListing {
+    /// Newest first.
+    pub weeks: Vec<WeekSummary>,
+    /// `iso_year - 1` when it has at least one stored plan.
+    pub previous_year: Option<i32>,
+    /// `iso_year + 1` when it has at least one stored plan.
+    pub next_year: Option<i32>,
+}
+
 /// Initial payload embedded in every HTML page; the frontend renders by `kind`.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -157,10 +168,15 @@ pub enum Page {
     },
     /// A valid week with no stored plan.
     Missing { week: WeekSummary },
-    /// `/weeks`: stored plans, newest first.
-    Archive { weeks: Vec<WeekSummary> },
-    /// Invalid year/week path.
-    Invalid,
+    /// `/<year>`: stored plans of one ISO week-year, newest first, and the adjacent years that have plans.
+    Year {
+        year: i32,
+        previous_year: Option<i32>,
+        next_year: Option<i32>,
+        weeks: Vec<WeekSummary>,
+    },
+    /// Invalid year/week path. `current_year` is the ISO week-year of today, for the "All weeks" link.
+    Invalid { current_year: i32 },
     /// Database failure.
     Unavailable,
 }

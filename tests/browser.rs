@@ -582,7 +582,7 @@ fn plan_header_range_and_all_weeks_link_by_keyboard() {
     assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 1);
     assert_eq!(
         h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
-        "/weeks"
+        "/2026"
     );
     assert_eq!(h.text("a.all-weeks"), "All weeks");
 
@@ -594,52 +594,48 @@ fn plan_header_range_and_all_weeks_link_by_keyboard() {
         "solid"
     );
     h.press("Enter");
-    h.wait_page("/weeks");
-    assert_eq!(h.text(".title"), "All weeks");
+    h.wait_page("/2026");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
 }
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn archive_orders_weeks_and_links_navigate() {
+fn year_page_orders_weeks_and_links_navigate() {
     let sql = bare_weeks(&[(2026, 1), (2027, 1), (2025, 52), (2026, 53)]);
     let h = Harness::start(&sql, 1280);
-    h.goto_page("/weeks");
+    h.goto_page("/2026");
     assert_eq!(h.status(), 200);
-    assert_eq!(h.text(".title"), "All weeks");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
+    assert_eq!(h.js("document.title"), "2026 — Meal Plan");
+    // Only 2026 weeks, newest first, with the week that starts in 2025 (W1) included.
     assert_eq!(
         h.texts(".week-list > li > a.week-link .week-link-title"),
-        [
-            "Week 1 · 2027",
-            "Week 53 · 2026",
-            "Week 44 · 2026",
-            "Week 1 · 2026",
-            "Week 52 · 2025"
-        ]
+        ["Week 53 · 2026", "Week 44 · 2026", "Week 1 · 2026"]
     );
     assert_eq!(
         h.texts(".week-link-range"),
         [
-            "Jan 4 – Jan 10, 2027",
             "Dec 28, 2026 – Jan 3, 2027",
             "Oct 26 – Nov 1, 2026",
             "Dec 29, 2025 – Jan 4, 2026",
-            "Dec 22 – Dec 28, 2025"
         ]
     );
     assert_eq!(
         h.js("[...document.querySelectorAll('.week-link')].map(a => a.getAttribute('href'))"),
-        serde_json::json!(["/2027/1", "/2026/53", "/2026/44", "/2026/1", "/2025/52"])
+        serde_json::json!(["/2026/53", "/2026/44", "/2026/1"])
     );
-    assert_eq!(h.text("a.all-weeks"), "This week");
 
     // A change made by another connection shows up on reload; a future week is allowed.
-    h.exec(&bare_weeks(&[(2027, 2)]));
-    h.goto_page("/weeks");
+    h.exec(&bare_weeks(&[(2026, 52)]));
+    h.goto_page("/2026");
     let titles = h.texts(".week-link-title");
-    assert_eq!(titles.len(), 6);
-    assert_eq!(titles[0], "Week 2 · 2027");
+    assert_eq!(titles.len(), 4);
+    assert_eq!(titles[0], "Week 53 · 2026");
+    assert_eq!(titles[1], "Week 52 · 2026");
 
     // Following an entry opens that week; a stored future week selects Monday and the URL stays put.
+    h.exec(&bare_weeks(&[(2027, 2)]));
+    h.goto_page("/2027");
     h.click(".week-link[href='/2027/2']");
     h.wait_page("/2027/2");
     assert_eq!(h.status(), 200);
@@ -648,6 +644,134 @@ fn archive_orders_weeks_and_links_navigate() {
         h.pressed(),
         vec![true, false, false, false, false, false, false]
     );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn year_header_links_in_order_same_style_one_row_right_aligned() {
+    let sql = bare_weeks(&[(2025, 52), (2027, 1)]);
+    let h = Harness::start(&sql, 1280);
+    h.goto_page("/2026");
+    assert_eq!(h.texts("a.all-weeks"), ["← 2025", "This week", "2027 →"]);
+    assert_eq!(
+        h.js("[...document.querySelectorAll('a.all-weeks')].map(a => a.getAttribute('href'))"),
+        serde_json::json!(["/2025", "/", "/2027"])
+    );
+    assert_eq!(
+        h.js("document.querySelectorAll('.header a.all-weeks').length"),
+        3
+    );
+    let style = |prop: &str| {
+        h.js(&format!(
+            "new Set([...document.querySelectorAll('a.all-weeks')].map(a => getComputedStyle(a).{prop})).size"
+        ))
+    };
+    assert_eq!(style("fontSize"), 1);
+    assert_eq!(style("color"), 1);
+    // One row: baseline alignment may shift boxes by a pixel or two when the arrow glyph
+    // comes from a fallback font, but never by a line.
+    assert_eq!(
+        h.js("(() => { const t = [...document.querySelectorAll('a.all-weeks')].map(a => a.getBoundingClientRect().top); return Math.max(...t) - Math.min(...t) < 4; })()"),
+        true
+    );
+    // Right-aligned: the last link ends at the right edge of the header, the first is not at the left edge.
+    assert_eq!(
+        h.js("Math.abs(document.querySelectorAll('a.all-weeks')[2].getBoundingClientRect().right - document.querySelector('.header').getBoundingClientRect().right) < 1"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelectorAll('a.all-weeks')[0].getBoundingClientRect().left > document.querySelector('.header').getBoundingClientRect().left + 100"),
+        true
+    );
+
+    h.click("a.all-weeks[href='/2025']");
+    h.wait_page("/2025");
+    assert_eq!(h.text(".title"), "Meal Plan: 2025");
+    assert_eq!(h.texts("a.all-weeks"), ["This week", "2026 →"]);
+    h.click("a.all-weeks[href='/']");
+    h.wait_page("/");
+    assert_eq!(h.text(".title"), "Meal Plan: Nov 30 – Dec 6, 2026");
+    h.goto_page("/2026");
+    h.click("a.all-weeks[href='/2027']");
+    h.wait_page("/2027");
+    assert_eq!(h.text(".title"), "Meal Plan: 2027");
+    assert_eq!(h.texts("a.all-weeks"), ["← 2026", "This week"]);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn year_links_skip_gap_years_and_empty_year_keeps_links() {
+    let sql = bare_weeks(&[(2024, 10)]);
+    let h = Opts::new().sql(&sql).launch();
+    // Plans exist in 2024 and 2026 only: neither is adjacent to the other.
+    h.goto_page("/2026");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.texts("a.all-weeks"), ["This week"]);
+    h.goto_page("/2024");
+    assert_eq!(h.texts("a.all-weeks"), ["This week"]);
+
+    // An empty year (404) still shows its adjacent links and the empty message.
+    let sql = bare_weeks(&[(2024, 10), (2026, 1)]);
+    let h = Opts::new().db(Db::Empty).sql(&sql).launch();
+    h.goto_page("/2025");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.text(".title"), "Meal Plan: 2025");
+    assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
+    assert_eq!(h.texts("a.all-weeks"), ["← 2024", "This week", "2026 →"]);
+    assert_eq!(h.js("document.querySelectorAll('.week-link').length"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn all_weeks_link_targets_the_displayed_year() {
+    let h = Harness::start("", 1280);
+    let target = "document.querySelector('a.all-weeks').getAttribute('href')";
+
+    // A stored plan and a missing plan of ISO 2025 both link to /2025 and the click works.
+    h.exec(&bare_weeks(&[(2025, 50)]));
+    for _ in 0..2 {
+        h.goto_page("/2025/50");
+        assert_eq!(h.js(target), "/2025");
+        h.click("a.all-weeks");
+        h.wait_page("/2025");
+        assert_eq!(h.text(".title"), "Meal Plan: 2025");
+        h.exec("DELETE FROM weeks WHERE iso_year = 2025 AND iso_week = 50;");
+    }
+    assert_eq!(h.status(), 404);
+
+    // `/` on 2025-12-29 (Berlin) is ISO 2026-W1, so the link goes to /2026.
+    let h = Opts::new()
+        .clock(clock_at(2025, 12, 29, 12, 0, 0))
+        .path("/")
+        .launch();
+    assert_eq!(h.js(target), "/2026");
+
+    // The invalid week page links to the current ISO year of the clock (2026 on the default clock).
+    let h = Harness::start("", 1280);
+    h.goto_page("/2025/53");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts("a.nav-link"), ["This week", "All weeks"]);
+    assert_eq!(
+        h.js("document.querySelectorAll('a.nav-link')[1].getAttribute('href')"),
+        "/2026"
+    );
+    h.click("a.nav-link[href='/2026']");
+    h.wait_page("/2026");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn year_link_appears_after_another_connection_commits_adjacent_plan() {
+    let h = Harness::start("", 1280);
+    h.goto_page("/2026");
+    assert_eq!(h.texts("a.all-weeks"), ["This week"]);
+    h.exec(&bare_weeks(&[(2027, 1)]));
+    h.goto_page("/2026");
+    assert_eq!(h.texts("a.all-weeks"), ["This week", "2027 →"]);
+    h.exec(&bare_weeks(&[(2025, 1)]));
+    h.goto_page("/2026");
+    assert_eq!(h.texts("a.all-weeks"), ["← 2025", "This week", "2027 →"]);
 }
 
 #[test]
@@ -681,7 +805,7 @@ fn missing_week_pages_link_to_archive_only() {
     assert_eq!(h.text("a.all-weeks"), "All weeks");
     assert_eq!(
         h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
-        "/weeks"
+        "/2026"
     );
     assert_eq!(
         h.js("document.querySelector('.header a.all-weeks').getBoundingClientRect().top < document.querySelector('.empty').getBoundingClientRect().top"),
@@ -699,21 +823,25 @@ fn missing_week_pages_link_to_archive_only() {
         0
     );
 
-    // The "All weeks" link goes to the archive.
+    // The "All weeks" link goes to the year page.
     h.click("a.all-weeks");
-    h.wait_page("/weeks");
-    assert_eq!(h.text(".title"), "All weeks");
+    h.wait_page("/2026");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
     assert_eq!(h.texts(".week-link-title"), ["Week 44 · 2026"]);
 }
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn empty_database_pages() {
-    let h = Opts::new().db(Db::Empty).path("/weeks").launch();
+    let h = Opts::new().db(Db::Empty).path("/").launch();
+    assert_eq!(h.status(), 200);
+    // "All weeks" from the empty current week lands on the (200) current year page.
+    h.click("a.all-weeks");
+    h.wait_page("/2026");
     assert_eq!(h.status(), 200);
     assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
     assert_eq!(h.js("document.querySelectorAll('.week-link').length"), 0);
-    assert_eq!(h.text("a.all-weeks"), "This week");
+    assert_eq!(h.texts("a.all-weeks"), ["This week"]);
     h.click("a.all-weeks");
     h.wait_page("/");
     // Missing page without any stored weeks: just the message, no list.
@@ -730,9 +858,9 @@ fn invalid_week_page_and_zero_padded_redirect() {
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["Invalid week."]);
     assert_eq!(h.texts("a.nav-link"), ["This week", "All weeks"]);
-    h.click("a.nav-link[href='/weeks']");
-    h.wait_page("/weeks");
-    assert_eq!(h.text(".title"), "All weeks");
+    h.click("a.nav-link[href='/2026']");
+    h.wait_page("/2026");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
 
     h.goto_page("/2025/53");
     h.click("a.nav-link[href='/']");
@@ -751,7 +879,7 @@ fn invalid_week_page_and_zero_padded_redirect() {
 fn database_failure_shows_unavailable_not_missing() {
     for mode in [Db::NoTables, Db::ClosedPool] {
         let h = Opts::new().db(mode).path("/").launch();
-        for path in ["/", "/2026/44", "/weeks"] {
+        for path in ["/", "/2026/44", "/2026"] {
             h.goto_page(path);
             assert_eq!(h.status(), 503, "{path}");
             assert_eq!(h.pathname(), path);
@@ -818,7 +946,7 @@ fn year_boundary_week_selects_saturday() {
 fn list_pages_fit_375px() {
     let sql = bare_weeks(&[(2026, 53), (2027, 1)]);
     let h = Opts::new().sql(&sql).width(375).launch();
-    for path in ["/weeks", "/2026/52", "/2025/53", "/"] {
+    for path in ["/2026", "/2026/52", "/2025/53", "/"] {
         h.goto_page(path);
         assert_eq!(h.js("window.innerWidth"), 375);
         assert_eq!(
@@ -827,6 +955,14 @@ fn list_pages_fit_375px() {
             "{path}"
         );
     }
+    // A year page with all three header links fits too.
+    h.exec(&bare_weeks(&[(2025, 1), (2027, 3)]));
+    h.goto_page("/2026");
+    assert_eq!(h.texts("a.all-weeks").len(), 3);
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
     // The plan page with the "All weeks" link also fits.
     h.goto("/2026/44");
     assert_eq!(
@@ -2029,7 +2165,7 @@ fn no_third_party_requests_on_any_page() {
     h.assert_same_origin_only("/2026/44");
 
     // Other pages of the same server.
-    for path in ["/weeks", "/2026/45", "/2025/53"] {
+    for path in ["/2026", "/2026/45", "/2025/53"] {
         h.goto_page(path);
         h.assert_same_origin_only(path);
     }
@@ -2105,9 +2241,12 @@ fn visual_capture(w: u32) {
     assert_eq!(h.text(".empty"), "No strategy notes for this week.");
     h.capture(w, "strategy-empty");
 
-    h.goto_page("/weeks");
-    assert_eq!(h.text(".title"), "All weeks");
-    h.capture(w, "archive");
+    // A year page with both adjacent-year links.
+    h.exec(&bare_weeks(&[(2025, 52), (2027, 1)]));
+    h.goto_page("/2026");
+    assert_eq!(h.text(".title"), "Meal Plan: 2026");
+    assert_eq!(h.texts("a.all-weeks"), ["← 2025", "This week", "2027 →"]);
+    h.capture(w, "year");
     h.goto_page("/2026/50");
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
@@ -2125,9 +2264,9 @@ fn visual_capture(w: u32) {
     );
     h.capture(w, "unavailable");
 
-    let h = Opts::new().width(w).db(Db::Empty).path("/weeks").launch();
+    let h = Opts::new().width(w).db(Db::Empty).path("/2026").launch();
     assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
-    h.capture(w, "empty-archive");
+    h.capture(w, "empty-year");
 }
 
 #[test]
@@ -2213,7 +2352,7 @@ fn week_saved_through_mcp_renders_in_the_browser() {
         }],
     });
 
-    let h = Opts::new().db(Db::Empty).mcp().path("/weeks").launch();
+    let h = Opts::new().db(Db::Empty).mcp().path("/").launch();
     mcp_save_week(
         &h,
         json!({"isoYear": 2026, "isoWeek": 45, "expectedRevision": null, "document": document}),

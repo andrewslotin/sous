@@ -118,6 +118,14 @@ pub fn classify_week_path(year: &str, week: &str) -> WeekPath {
     }
 }
 
+/// Parse a year path segment: exactly four ASCII digits, 0001–9999.
+pub fn parse_year_path(segment: &str) -> Option<i32> {
+    if segment.len() != 4 || !segment.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    segment.parse().ok().filter(|year| *year >= 1)
+}
+
 /// Canonical page path of a week, e.g. `/2026/44`. The year is zero-padded to four digits
 /// (`/0001/1`) so that every generated path is accepted by [`classify_week_path`].
 pub fn week_path(iso_year: i32, iso_week: u32) -> String {
@@ -217,6 +225,34 @@ mod tests {
             ("9999", "053"),
         ] {
             assert_eq!(classify_week_path(y, w), WeekPath::Invalid, "{y}/{w}");
+        }
+    }
+
+    #[test]
+    fn parses_year_paths() {
+        for (segment, expected) in [("0001", 1), ("0999", 999), ("2026", 2026), ("9999", 9999)] {
+            assert_eq!(parse_year_path(segment), Some(expected), "{segment}");
+        }
+        for bad in [
+            "",
+            "0000",
+            "26",
+            "026",
+            "02026",
+            "10000",
+            "+026",
+            "-026",
+            "２０２６",
+            "202 6",
+            " 2026",
+            "2026 ",
+            "%202026",
+            "weeks",
+            "nothing",
+            "abcd",
+            "2026\n",
+        ] {
+            assert_eq!(parse_year_path(bad), None, "{bad:?}");
         }
     }
 

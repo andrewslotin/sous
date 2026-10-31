@@ -343,7 +343,7 @@ async fn http_503_when_database_unavailable() {
     closed.close().await;
 
     for pool in [&tableless, &closed] {
-        for uri in ["/", "/2026/44", "/2026/45", "/weeks"] {
+        for uri in ["/", "/2026/44", "/2026/45", "/2026"] {
             let (s, h, body) = get(pool, uri).await;
             assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
             assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
@@ -579,7 +579,11 @@ async fn invalid_paths_are_404_invalid_and_never_500() {
         assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
         assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
         assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
-        assert_eq!(page_json(&body), json!({"kind": "invalid"}), "{uri}");
+        assert_eq!(
+            page_json(&body),
+            json!({"kind": "invalid", "currentYear": 2026}),
+            "{uri}"
+        );
         assert_eq!(title(&body), "Invalid week — Meal Plan", "{uri}");
     }
 }
@@ -640,80 +644,391 @@ async fn root_does_not_panic_when_current_week_is_unrepresentable() {
     let pool = t.reader().await;
     let (s, _, body) = get_at(&pool, berlin(9999, 12, 31, 12, 0, 0), "/").await;
     assert_eq!(s, StatusCode::NOT_FOUND);
-    assert_eq!(page_json(&body), json!({"kind": "invalid"}));
+    assert_eq!(
+        page_json(&body),
+        json!({"kind": "invalid", "currentYear": 9999})
+    );
 }
 
 #[tokio::test]
-async fn weeks_archive_is_ordered_and_fresh() {
+async fn year_page_lists_the_year_newest_first() {
+    // The fixture clock is in December 2026, so 2026 is the current year.
     let t = TestDb::with_fixture().await;
-    insert_weeks(&t, &[(2027, 1), (2025, 52), (2026, 53), (2026, 1)]).await;
+    insert_weeks(
+        &t,
+        &[
+            (2027, 1),
+            (2025, 52),
+            (2026, 53),
+            (2026, 1),
+            (2026, 49),
+            (2020, 53),
+        ],
+    )
+    .await;
     let pool = t.reader().await;
-    let expected = json!({"kind": "archive", "weeks": [
-        summary(2027, 1, "2027-01-04", "2027-01-10", "/2027/1"),
-        summary(2026, 53, "2026-12-28", "2027-01-03", "/2026/53"),
-        summary(2026, 44, "2026-10-26", "2026-11-01", "/2026/44"),
-        summary(2026, 1, "2025-12-29", "2026-01-04", "/2026/1"),
-        summary(2025, 52, "2025-12-22", "2025-12-28", "/2025/52"),
-    ]});
-    let (s, h, body) = get(&pool, "/weeks").await;
+
+    // Future weeks are listed; 2026/1 starts in 2025 but belongs to 2026; 2026/53 ends in 2027.
+    let (s, h, body) = get(&pool, "/2026").await;
     assert_eq!(s, StatusCode::OK);
     assert_eq!(h[header::CACHE_CONTROL], "no-store");
     assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8");
-    assert_eq!(title(&body), "All weeks — Meal Plan");
-    assert_eq!(page_json(&body), expected);
+    assert_eq!(title(&body), "2026 — Meal Plan");
+    assert_eq!(
+        page_json(&body),
+        json!({
+            "kind": "year",
+            "year": 2026,
+            "previousYear": 2025,
+            "nextYear": 2027,
+            "weeks": [
+                summary(2026, 53, "2026-12-28", "2027-01-03", "/2026/53"),
+                summary(2026, 49, "2026-11-30", "2026-12-06", "/2026/49"),
+                summary(2026, 44, "2026-10-26", "2026-11-01", "/2026/44"),
+                summary(2026, 1, "2025-12-29", "2026-01-04", "/2026/1"),
+            ],
+        })
+    );
+
+    for (uri, expected) in [
+        ("/2025", vec!["/2025/52"]),
+        ("/2027", vec!["/2027/1"]),
+        ("/2020", vec!["/2020/53"]),
+    ] {
+        let (s, _, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::OK, "{uri}");
+        let paths: Vec<_> = page_json(&body)["weeks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["path"].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(paths, expected, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn year_title_is_not_zero_padded() {
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(1, 1)]).await;
+    let pool = t.reader().await;
+    let (s, _, body) = get(&pool, "/0001").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(title(&body), "1 — Meal Plan");
+    assert_eq!(page_json(&body)["year"], 1);
+}
+
+#[tokio::test]
+async fn all_weeks_target_year_is_in_the_page_payload() {
+    let t = TestDb::with_fixture().await;
+    insert_weeks(&t, &[(2025, 50)]).await;
+    let pool = t.reader().await;
+
+    // Stored and missing weeks both carry their own ISO week-year.
+    let (_, _, body) = get(&pool, "/2025/50").await;
+    assert_eq!(page_json(&body)["document"]["week"]["isoYear"], 2025);
+    let (_, _, body) = get(&pool, "/2025/49").await;
+    assert_eq!(page_json(&body)["week"]["isoYear"], 2025);
+
+    // `/` at 2025-12-29 Berlin is ISO 2026 week 1, a calendar-2025 date.
+    let (_, _, body) = get_at(&pool, berlin(2025, 12, 29, 12, 0, 0), "/").await;
+    let page = page_json(&body);
+    assert_eq!(page["kind"], "missing");
+    assert_eq!(page["week"]["isoYear"], 2026);
+
+    // Invalid week pages carry the ISO week-year of the clock, on both sides of New Year.
+    for (clock, current_year) in [
+        (berlin(2025, 12, 28, 21, 59, 59), 2025),
+        (berlin(2025, 12, 28, 22, 59, 59), 2025),
+        (berlin(2025, 12, 28, 23, 0, 0), 2026),
+        (berlin(2027, 1, 3, 12, 0, 0), 2026),
+        (berlin(2027, 1, 4, 12, 0, 0), 2027),
+    ] {
+        let (s, _, body) = get_at(&pool, clock, "/2025/53").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+        assert_eq!(
+            page_json(&body),
+            json!({"kind": "invalid", "currentYear": current_year})
+        );
+    }
+}
+
+#[tokio::test]
+async fn year_links_skip_gap_years() {
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(2023, 5), (2024, 5), (2026, 5)]).await;
+    let pool = t.reader().await;
+
+    for (uri, status, previous, next) in [
+        ("/2024", StatusCode::OK, json!(2023), json!(null)),
+        ("/2023", StatusCode::OK, json!(null), json!(2024)),
+        // 2025 has no plans: not linked from 2026, even though 2024 has some.
+        ("/2026", StatusCode::OK, json!(null), json!(null)),
+        // Empty, not current: 404 with the adjacent years that do have plans.
+        ("/2025", StatusCode::NOT_FOUND, json!(2024), json!(2026)),
+    ] {
+        let (s, _, body) = get(&pool, uri).await;
+        let page = page_json(&body);
+        assert_eq!(s, status, "{uri}");
+        assert_eq!(page["kind"], "year", "{uri}");
+        assert_eq!(page["previousYear"], previous, "{uri}");
+        assert_eq!(page["nextYear"], next, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn year_status_empty_database_and_current_year() {
+    let empty = TestDb::migrated().await;
+    let pool = empty.reader().await;
+    let (s, _, body) = get(&pool, "/2026").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        page_json(&body),
+        json!({"kind": "year", "year": 2026, "previousYear": null, "nextYear": null, "weeks": []})
+    );
+    let (s, h, body) = get(&pool, "/2025").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8");
+    assert_eq!(
+        page_json(&body),
+        json!({"kind": "year", "year": 2025, "previousYear": null, "nextYear": null, "weeks": []})
+    );
+    assert_eq!(title(&body), "2025 — Meal Plan");
+
+    // The year that `/` shows is always a 200 page, whatever is stored.
+    for clock in [
+        berlin(2026, 12, 2, 12, 0, 0),
+        berlin(2025, 12, 29, 12, 0, 0),
+    ] {
+        let (_, _, body) = get_at(&pool, clock.clone(), "/").await;
+        let year = page_json(&body)["week"]["isoYear"].as_i64().unwrap();
+        let (s, _, _) = get_at(&pool, clock, &format!("/{year:04}")).await;
+        assert_eq!(s, StatusCode::OK, "/{year:04}");
+    }
+
+    // Non-empty database: the current year without plans is 200, another empty year is 404.
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(2024, 10)]).await;
+    let pool = t.reader().await;
+    let (s, _, body) = get(&pool, "/2026").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(page_json(&body)["weeks"], json!([]));
+    let (s, _, _) = get(&pool, "/2025").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    let (s, _, _) = get(&pool, "/2024").await;
+    assert_eq!(s, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn current_year_follows_the_iso_week_year_in_the_service_timezone() {
+    use chrono::TimeZone;
+    let t = TestDb::migrated().await;
+    let pool = t.reader().await;
+
+    for (clock, current) in [
+        // Sunday 2025-12-28 23:59:59 Berlin is ISO 2025; one second later it is Monday, ISO 2026.
+        (berlin(2025, 12, 28, 22, 59, 59), 2025),
+        (berlin(2025, 12, 28, 23, 0, 0), 2026),
+        // Sunday 2027-01-03 is still ISO 2026; Monday 2027-01-04 is ISO 2027.
+        (berlin(2027, 1, 3, 12, 0, 0), 2026),
+        (berlin(2027, 1, 4, 12, 0, 0), 2027),
+    ] {
+        for year in [2025, 2026, 2027] {
+            let (s, _, _) = get_at(&pool, clock.clone(), &format!("/{year}")).await;
+            let expected = if year == current {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            assert_eq!(s, expected, "/{year} with current year {current}");
+        }
+    }
+
+    // The same instant is Monday in Berlin (ISO 2026) and still Sunday in New York (ISO 2025).
+    let instant = chrono::Utc
+        .with_ymd_and_hms(2025, 12, 29, 0, 30, 0)
+        .unwrap();
+    for (tz, current) in [
+        (sous::calendar::DEFAULT_TIMEZONE, 2026),
+        (chrono_tz::America::New_York, 2025),
+    ] {
+        for year in [2025, 2026] {
+            let (s, _, _) = get_at(&pool, Clock::fixed(tz, instant), &format!("/{year}")).await;
+            let expected = if year == current {
+                StatusCode::OK
+            } else {
+                StatusCode::NOT_FOUND
+            };
+            assert_eq!(s, expected, "/{year} in {tz}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn first_and_last_supported_years() {
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(1, 1), (9999, 51), (9999, 1)]).await;
+    let pool = t.reader().await;
+
+    let (s, _, body) = get(&pool, "/0001").await;
+    assert_eq!(s, StatusCode::OK);
+    let page = page_json(&body);
+    assert_eq!(page["previousYear"], json!(null));
+    assert_eq!(page["nextYear"], json!(null));
+    assert_eq!(
+        page["weeks"],
+        json!([summary(1, 1, "0001-01-01", "0001-01-07", "/0001/1")])
+    );
+
+    let (s, _, body) = get(&pool, "/0002").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(page_json(&body)["previousYear"], 1);
+    assert_eq!(page_json(&body)["nextYear"], json!(null));
+
+    let (s, _, body) = get(&pool, "/9999").await;
+    assert_eq!(s, StatusCode::OK);
+    let page = page_json(&body);
+    assert_eq!(page["nextYear"], json!(null));
+    assert_eq!(page["weeks"].as_array().unwrap().len(), 2);
+    assert_eq!(page["weeks"][0]["path"], "/9999/51");
+
+    let (s, _, body) = get(&pool, "/9998").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(page_json(&body)["nextYear"], 9999);
+}
+
+#[tokio::test]
+async fn non_year_single_segments_are_plain_404() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let (_dir, tableless) = tableless_pool().await;
+    let closed = t.reader().await;
+    closed.close().await;
+
+    for uri in [
+        "/weeks",
+        "/weeks/",
+        "/nothing",
+        "/26",
+        "/0000",
+        "/02026",
+        "/10000",
+        "/+026",
+        "/%EF%BC%92%EF%BC%90%EF%BC%92%EF%BC%96",
+        "/%FF",
+        "/%202026",
+        "/2026%20",
+    ] {
+        // Rejected before any database access: an unavailable database changes nothing.
+        for pool in [&pool, &tableless, &closed] {
+            let (s, h, body) = get(pool, uri).await;
+            assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+            assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
+            assert!(!body.contains("sous-page"), "{uri}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn year_path_methods() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    for (uri, expected) in [
+        ("/2026", StatusCode::METHOD_NOT_ALLOWED),
+        ("/0001", StatusCode::METHOD_NOT_ALLOWED),
+        ("/weeks", StatusCode::NOT_FOUND),
+        ("/nothing", StatusCode::NOT_FOUND),
+        ("/02026", StatusCode::NOT_FOUND),
+    ] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let res = sous::app(pool.clone(), test_clock())
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(res.status(), expected, "{method} {uri}");
+            assert_eq!(res.headers()[header::CACHE_CONTROL], "no-store");
+        }
+    }
+}
+
+#[tokio::test]
+async fn year_page_503_when_database_unavailable() {
+    let (_dir, tableless) = tableless_pool().await;
+    let t = TestDb::with_fixture().await;
+    let closed = t.reader().await;
+    closed.close().await;
+
+    // Current year and another year alike.
+    for pool in [&tableless, &closed] {
+        for uri in ["/2026", "/2025"] {
+            let (s, h, body) = get(pool, uri).await;
+            assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+            assert_eq!(page_json(&body), json!({"kind": "unavailable"}), "{uri}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn year_page_is_fresh() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let paths = |body: &str| -> Vec<String> {
+        page_json(body)["weeks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(paths(&body), ["/2026/44"]);
 
     // An open transaction's insert is invisible; once it ends the week shows up.
     let mut c = t.writer().await;
     let mut tx = c.begin().await.unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(week_sql(&uuid(7), 2027, 5)))
+    sqlx::query(sqlx::AssertSqlSafe(week_sql(&uuid(7), 2026, 50)))
         .execute(&mut *tx)
         .await
         .unwrap();
-    let (_, _, body) = get(&pool, "/weeks").await;
-    assert_eq!(page_json(&body), expected);
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(paths(&body), ["/2026/44"]);
     tx.commit().await.unwrap();
-    let (_, _, body) = get(&pool, "/weeks").await;
-    let page = page_json(&body);
-    assert_eq!(page["weeks"].as_array().unwrap().len(), 6);
-    assert_eq!(page["weeks"][0]["path"], "/2027/5");
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(paths(&body), ["/2026/50", "/2026/44"]);
+
+    // The first plan of the next year makes the link appear; deleting it removes the link.
+    assert_eq!(page_json(&body)["nextYear"], json!(null));
+    exec(&mut c, &week_sql(&uuid(8), 2027, 1)).await.unwrap();
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(page_json(&body)["nextYear"], 2027);
+    exec(&mut c, "DELETE FROM weeks WHERE iso_year = 2027")
+        .await
+        .unwrap();
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(page_json(&body)["nextYear"], json!(null));
 
     // Deleted weeks disappear.
-    exec(
-        &mut c,
-        "DELETE FROM weeks WHERE iso_year = 2027 AND iso_week = 5",
-    )
-    .await
-    .unwrap();
-    exec(
-        &mut c,
-        "DELETE FROM weeks WHERE iso_year = 2026 AND iso_week = 53",
-    )
-    .await
-    .unwrap();
-    let (_, _, body) = get(&pool, "/weeks").await;
-    let paths: Vec<_> = page_json(&body)["weeks"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|w| w["path"].as_str().unwrap().to_string())
-        .collect();
-    assert_eq!(paths, ["/2027/1", "/2026/44", "/2026/1", "/2025/52"]);
-}
-
-#[tokio::test]
-async fn weeks_archive_empty_database() {
-    let t = TestDb::migrated().await;
-    let pool = t.reader().await;
-    let (s, _, body) = get(&pool, "/weeks").await;
-    assert_eq!(s, StatusCode::OK);
-    assert_eq!(page_json(&body), json!({"kind": "archive", "weeks": []}));
+    exec(&mut c, "DELETE FROM weeks WHERE iso_week = 50")
+        .await
+        .unwrap();
+    let (_, _, body) = get(&pool, "/2026").await;
+    assert_eq!(paths(&body), ["/2026/44"]);
 }
 
 #[tokio::test]
 async fn non_get_methods_are_405() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
-    for uri in ["/", "/weeks", "/2026/44"] {
+    for uri in ["/", "/2026", "/2026/44"] {
         for method in ["POST", "PUT", "PATCH", "DELETE"] {
             let res = sous::app(pool.clone(), test_clock())
                 .oneshot(
@@ -738,7 +1053,7 @@ async fn non_get_methods_are_405() {
 async fn unknown_paths_keep_plain_404() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
-    for uri in ["/nothing", "/weeks/", "/2026", "/2026/44/extra"] {
+    for uri in ["/nothing", "/weeks/", "/2026/", "/2026/44/extra"] {
         let (s, h, body) = get(&pool, uri).await;
         assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
         assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
@@ -2057,7 +2372,7 @@ async fn api_mutations_405_and_no_leaks() {
     closed.close().await;
     let fixture_dir = t._dir.path().to_str().unwrap().to_string();
     for pool in [&tableless, &closed] {
-        for uri in ["/api/weeks/2026/44", "/2026/44", "/weeks", "/"] {
+        for uri in ["/api/weeks/2026/44", "/2026/44", "/2026", "/"] {
             let (s, _, body) = get(pool, uri).await;
             assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
             for needle in [

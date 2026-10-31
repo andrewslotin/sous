@@ -14,7 +14,7 @@ Included:
 
 - Current-week and permanent week pages.
 - Daily meals and nutrition summaries, shopping lists, prep sessions, and strategy cards.
-- An archive listing available weeks and useful missing-plan pages.
+- Year archive pages listing available weeks, and useful missing-plan pages.
 - A documented SQLite schema and read-only HTTP contract.
 
 Excluded:
@@ -48,10 +48,12 @@ The [feature tracker](README.md) links the incremental implementation specs. Fea
 | --- | --- |
 | `/` | Render current ISO week using configured timezone. |
 | `/<year>/<week>` | Render the specified ISO week; canonical week number has no leading zero. |
-| `/weeks` | List stored plans in descending week order, with date ranges and links. |
+| `/<year>` | List the stored plans of one ISO week-year in descending week order, with date ranges and links, and link the adjacent years that have plans. |
 | `/api/weeks/<year>/<week>` | Return a complete, ordered week document as JSON. |
 
 For example, `/2026/44` represents October 26–November 1, 2026. Validate that the requested week exists in the ISO calendar; some years have no week 53. Accept four-digit years from 0001–9999 only when the entire seven-day date range is representable. Redirect zero-padded valid week paths to their canonical form.
+
+A year path is exactly four ASCII digits from 0001 to 9999, the same form as the year in week URLs; any other single-segment path, including `/weeks`, is a plain 404. A year page lists the weeks whose ISO week-year is in its URL, so `/2026/1` (December 29, 2025–January 4, 2026) is on `/2026`. It links to the previous and next year only when that adjacent year has at least one stored plan. The current year is the ISO week-year of today in the configured timezone, resolved on every request.
 
 The root route retains `/` in the address bar. On each navigation or reload it resolves the current week again. Explicit week URLs always retain their requested week, regardless of today's date.
 
@@ -61,10 +63,10 @@ On the current week's page, initially select today. On any other week's page, se
 
 A plan exists when a `weeks` record exists. An empty database is a supported first-run state.
 
-- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and an “All weeks” link to the archive. Do not list available weeks.
+- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and an “All weeks” link to the year page of the displayed week's ISO week-year. Do not list available weeks.
 - Missing plan at a valid explicit week URL: HTTP 404 with the same useful content.
-- Invalid year/week route: HTTP 404 with “Invalid week.” and a link to the current week and archive.
-- No plans anywhere: show “No meal plans available yet.” instead of an empty archive list.
+- Invalid year/week route: HTTP 404 with “Invalid week.” and links to the current week and the current year's page.
+- Year without plans: show “No meal plans available yet.” and the year links instead of an empty list. HTTP 200 for the current year, including an empty database; HTTP 404 for any other year.
 - Existing week with no meals for a day: show “No meals planned for this day.” and omit the nutrition summary. Do not invent zero-valued meals.
 - No prep sessions or strategy cards: show a short empty message in the respective existing tab.
 - Database failure: HTTP 503 and a generic availability message. Never present a database failure as a missing plan; log details on the server.

@@ -257,7 +257,7 @@ function MealPlan({ data, selectedWeekday }) {
         <h1 className="title">Meal Plan: {formatDateRange(data.week)}</h1>
         <div className="header-meta">
           {data.week.subtitle && <p className="subtitle">{data.week.subtitle}</p>}
-          <a className="all-weeks" href="/weeks">
+          <a className="all-weeks" href={yearPath(data.week.isoYear)}>
             All weeks
           </a>
         </div>
@@ -367,7 +367,15 @@ function Nav({ links }) {
 }
 
 const THIS_WEEK = { href: "/", label: "This week" };
-const ALL_WEEKS = { href: "/weeks", label: "All weeks" };
+
+// "/2026", zero-padded like week URLs ("/0001").
+function yearPath(year) {
+  return "/" + String(year).padStart(4, "0");
+}
+
+function allWeeks(year) {
+  return { href: yearPath(year), label: "All weeks" };
+}
 
 function WeekList({ weeks }) {
   return (
@@ -389,16 +397,37 @@ function WeekList({ weeks }) {
 function MissingWeek({ page }) {
   return (
     <Shell
-      title={<PageTitle link={ALL_WEEKS}>Meal Plan: {formatRangeWithYear(page.week.startDate, page.week.endDate)}</PageTitle>}
+      title={<PageTitle link={allWeeks(page.week.isoYear)}>Meal Plan: {formatRangeWithYear(page.week.startDate, page.week.endDate)}</PageTitle>}
     >
       <p className="empty">No meal plan for this week yet.</p>
     </Shell>
   );
 }
 
-function Archive({ page }) {
+function YearPage({ page }) {
   return (
-    <Shell title={<PageTitle link={THIS_WEEK}>All weeks</PageTitle>}>
+    <Shell
+      title={
+        <>
+          <h1 className="title">Meal Plan: {page.year}</h1>
+          <div className="header-meta">
+            {page.previousYear !== null && (
+              <a className="all-weeks" href={yearPath(page.previousYear)}>
+                ← {page.previousYear}
+              </a>
+            )}
+            <a className="all-weeks" href={THIS_WEEK.href}>
+              {THIS_WEEK.label}
+            </a>
+            {page.nextYear !== null && (
+              <a className="all-weeks" href={yearPath(page.nextYear)}>
+                {page.nextYear} →
+              </a>
+            )}
+          </div>
+        </>
+      }
+    >
       {page.weeks.length === 0 ? (
         <p className="empty">No meal plans available yet.</p>
       ) : (
@@ -408,11 +437,11 @@ function Archive({ page }) {
   );
 }
 
-function InvalidWeek() {
+function InvalidWeek({ page }) {
   return (
     <Shell title={<PageTitle>Meal Plan</PageTitle>}>
       <p className="empty">Invalid week.</p>
-      <Nav links={[THIS_WEEK, ALL_WEEKS]} />
+      <Nav links={[THIS_WEEK, allWeeks(page.currentYear)]} />
     </Shell>
   );
 }
@@ -432,10 +461,10 @@ function App({ page }) {
       return <MealPlan data={page.document} selectedWeekday={page.selectedWeekday} />;
     case "missing":
       return <MissingWeek page={page} />;
-    case "archive":
-      return <Archive page={page} />;
+    case "year":
+      return <YearPage page={page} />;
     case "invalid":
-      return <InvalidWeek />;
+      return <InvalidWeek page={page} />;
     default:
       return <Unavailable />;
   }

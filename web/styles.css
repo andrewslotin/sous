@@ -28,6 +28,7 @@ button:focus-visible, a:focus-visible {
 .header-meta { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
 .header-meta .subtitle { flex: 1; min-width: 0; }
 .all-weeks { margin-left: auto; font-size: 12px; color: #64748b; text-decoration: none; border-radius: 4px; }
+.all-weeks + .all-weeks { margin-left: 0; }
 .all-weeks:hover, .all-weeks:focus-visible { text-decoration: underline; }
 .nav { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 16px; }
 .nav-link { font-size: 13px; color: #64748b; text-decoration: none; border-radius: 4px; }

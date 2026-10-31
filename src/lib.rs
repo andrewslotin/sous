@@ -29,7 +29,7 @@ pub struct AppState {
 pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
     Router::new()
         .route("/", get(root_handler))
-        .route("/weeks", get(weeks_handler))
+        .route("/{year}", get(year_handler).fallback(year_method_fallback))
         .route("/{year}/{week}", get(week_handler))
         .merge(api::routes())
         .fallback(not_found)
@@ -107,11 +107,13 @@ fn unavailable(error: &sqlx::Error) -> Response {
     )
 }
 
-fn invalid() -> Response {
+fn invalid(today: NaiveDate) -> Response {
     page_response(
         StatusCode::NOT_FOUND,
         "Invalid week — Meal Plan",
-        &Page::Invalid,
+        &Page::Invalid {
+            current_year: calendar::iso_week_of(today).0,
+        },
     )
 }
 
@@ -147,7 +149,7 @@ async fn show_week(
     }
 
     let Some(week) = queries::week_summary(iso_year, iso_week) else {
-        return invalid();
+        return invalid(today);
     };
     page_response(missing_status, &title, &Page::Missing { week })
 }
@@ -163,28 +165,62 @@ async fn week_handler(
     path: Result<Path<(String, String)>, PathRejection>,
 ) -> Response {
     // Malformed percent-encoding is an invalid week, not a plain-text 400.
+    let today = state.clock.today();
     let Ok(Path((year, week))) = path else {
-        return invalid();
+        return invalid(today);
     };
     match calendar::classify_week_path(&year, &week) {
         WeekPath::Canonical(iso_year, iso_week) => {
-            let today = state.clock.today();
             show_week(&state, today, iso_year, iso_week, StatusCode::NOT_FOUND).await
         }
         WeekPath::Redirect(iso_year, iso_week) => {
             Redirect::permanent(&calendar::week_path(iso_year, iso_week)).into_response()
         }
-        WeekPath::Invalid => invalid(),
+        WeekPath::Invalid => invalid(today),
     }
 }
 
-async fn weeks_handler(State(state): State<AppState>) -> Response {
-    match queries::list_weeks(&state.pool).await {
-        Ok(weeks) => page_response(
-            StatusCode::OK,
-            "All weeks — Meal Plan",
-            &Page::Archive { weeks },
-        ),
-        Err(error) => unavailable(&error),
+async fn year_handler(
+    State(state): State<AppState>,
+    path: Result<Path<String>, PathRejection>,
+) -> Response {
+    let Some(year) = path
+        .ok()
+        .and_then(|Path(segment)| calendar::parse_year_path(&segment))
+    else {
+        return not_found().await;
+    };
+    let current_year = calendar::iso_week_of(state.clock.today()).0;
+    let listing = match queries::load_year(&state.pool, year).await {
+        Ok(listing) => listing,
+        Err(error) => return unavailable(&error),
+    };
+    // A year without plans is a 404, except the current one: it is what "All weeks" links to.
+    let status = if listing.weeks.is_empty() && year != current_year {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::OK
+    };
+    page_response(
+        status,
+        &format!("{year} — Meal Plan"),
+        &Page::Year {
+            year,
+            previous_year: listing.previous_year,
+            next_year: listing.next_year,
+            weeks: listing.weeks,
+        },
+    )
+}
+
+/// Non-GET methods: 405 on a year path, the plain not-found response on any other single segment.
+async fn year_method_fallback(path: Result<Path<String>, PathRejection>) -> Response {
+    match path {
+        Ok(Path(segment)) if calendar::parse_year_path(&segment).is_some() => (
+            StatusCode::METHOD_NOT_ALLOWED,
+            [(header::ALLOW, "GET,HEAD")],
+        )
+            .into_response(),
+        _ => not_found().await,
     }
 }

@@ -3,7 +3,7 @@ use crate::calendar::{iso_week_of, week_dates, week_path};
 use crate::model::{
     Day, Meal, MealHit, MealPage, MealRecord, PrepSession, PrepTask, Reminder, RevisedWeek,
     ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek, StrategyCard,
-    StrategyItem, Week, WeekDocument, WeekPage, WeekSummary,
+    StrategyItem, Week, WeekDocument, WeekPage, WeekSummary, YearListing,
 };
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -882,24 +882,37 @@ pub fn week_summary(iso_year: i32, iso_week: u32) -> Option<WeekSummary> {
     })
 }
 
-/// Stored weeks in descending ISO year/week order.
-pub async fn list_weeks(pool: &SqlitePool) -> Result<Vec<WeekSummary>, sqlx::Error> {
-    let rows =
-        sqlx::query("SELECT iso_year, iso_week FROM weeks ORDER BY iso_year DESC, iso_week DESC")
-            .fetch_all(pool)
-            .await?;
-    let mut weeks = Vec::with_capacity(rows.len());
+/// Stored weeks of `iso_year` (newest first) and its adjacent years with plans, from one statement.
+pub async fn load_year(pool: &SqlitePool, iso_year: i32) -> Result<YearListing, sqlx::Error> {
+    let rows = sqlx::query(
+        "SELECT iso_year, iso_week FROM weeks WHERE iso_year BETWEEN ?1 - 1 AND ?1 + 1 \
+         ORDER BY iso_year DESC, iso_week DESC",
+    )
+    .bind(iso_year)
+    .fetch_all(pool)
+    .await?;
+    let mut listing = YearListing {
+        weeks: Vec::new(),
+        previous_year: None,
+        next_year: None,
+    };
     for row in rows {
-        let iso_year: i32 = row.get("iso_year");
+        let year: i32 = row.get("iso_year");
         let iso_week: u32 = row.get("iso_week");
-        match week_summary(iso_year, iso_week) {
-            Some(summary) => weeks.push(summary),
-            None => tracing::warn!(
-                iso_year,
-                iso_week,
-                "skipping stored week with unrepresentable dates"
-            ),
+        if year == iso_year - 1 {
+            listing.previous_year = Some(year);
+        } else if year == iso_year + 1 {
+            listing.next_year = Some(year);
+        } else {
+            match week_summary(year, iso_week) {
+                Some(summary) => listing.weeks.push(summary),
+                None => tracing::warn!(
+                    iso_year = year,
+                    iso_week,
+                    "skipping stored week with unrepresentable dates"
+                ),
+            }
         }
     }
-    Ok(weeks)
+    Ok(listing)
 }

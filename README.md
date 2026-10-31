@@ -2,7 +2,7 @@
 
 Sous is a small, single-household web service that shows a weekly meal plan. It reads the plan from a SQLite
 database and serves it as a mobile-friendly page: daily meals with nutrition summaries, shopping lists, prep
-sessions and strategy cards. It also has a week archive, a JSON read API and an MCP endpoint for AI assistants.
+sessions and strategy cards. It also has a week archive by year, a JSON read API and an MCP endpoint for AI assistants.
 
 The web pages and the API are read-only. To add or change plans, connect an assistant over [MCP](#mcp), or edit the
 database with another tool, such as `sqlite3` or a script. Changes show up on the next page load. The app has no
@@ -49,7 +49,7 @@ Configure it with environment variables:
 | --- | --- |
 | `/` | The current ISO week |
 | `/<year>/<week>` | A specific ISO week, e.g. `/2026/44` |
-| `/weeks` | All stored weeks, newest first |
+| `/<year>` | The stored weeks of one ISO week-year, newest first, e.g. `/2026` |
 | `/api/weeks/<year>/<week>` | The full week as JSON |
 
 Weeks use ISO 8601 numbering (Monday to Sunday). The API is described in the [OpenAPI document](docs/openapi.json).
