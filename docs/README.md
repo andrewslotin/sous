@@ -11,6 +11,7 @@ Implement features in the order below. Each iteration includes its own verificat
 | 3 | [Shopping lists](features/003-shopping-lists.md) | Done | 2 |
 | 4 | [Prep, strategy, and reminders](features/004-weekly-content.md) | Done | 3 |
 | 5 | [Read API and service verification](features/005-read-api.md) | Planned | 4 |
+| 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Planned | 5 |
 
 ## Implementation baseline
 
@@ -21,4 +22,4 @@ Implement features in the order below. Each iteration includes its own verificat
 - Separate HTTP handlers, application queries, and persistence code without a generic repository framework.
 - Introduce migrations and fixture-based verification in feature 1; extend them with each feature.
 
-These specs cover implementation of the service only. Data-entry tools, deployment procedures, and MCP are outside scope.
+Features 1–5 cover the read-only service baseline. Feature 6 extends it with MCP access for agent-driven meal planning, recipe recall, and shopping-list queries and updates. Data-entry UI and deployment procedures remain outside scope.
