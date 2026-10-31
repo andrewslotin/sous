@@ -4,7 +4,8 @@
   turn, and read the pane back to confirm it was submitted. To get answers back, ask the agent to reply over agterm,
   not by writing a file that I poll. The Codex-specific steps are in the implement-feature skill, step 5.
 - When a tool call fails, or a hook stops or blocks one, tell the user at once in one line: what fired and what I'll
-  do next. Never end a turn silently. Keep exploratory command chains short.
+  do next. Never end a turn silently. Keep exploratory command chains short, and post a one-line status after
+  loading context, before writing a brief.
 - Before reading something outside the task (e.g. the next feature's spec), say why in one line.
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the baseline before planning. Raise a missing tool once, with a recommendation.

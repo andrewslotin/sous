@@ -33,11 +33,12 @@ Write a brief to the scratchpad (`brief-NNN.md`), never into the repo. Subagents
 stand on its own:
 - **Docs to read:** the spec, the design, and the relevant reference such as `docs/examples/menu.html`.
 - **Ground rules:** cargo commands allowed; never run the server; never commit; never edit `docs/`. Use runtime
-  `sqlx::query`/`query_as` and no `query!` macros. Do not build later features' scope.
+  `sqlx::query`/`query_as` and no `query!` macros. Do not build later features' scope. Write files with the
+  Write/Edit tools, not shell heredocs, which a Bash hook may reject.
 - **Ownership:** which agent owns which files. Agents that run in parallel must never share a file, and that includes
   sections of `Cargo.toml`: one agent owns `[dependencies]`, another owns `[build-dependencies]`.
 - **The contract between agents:** exact Rust signatures and the JSON document shape, extended from the existing
-  `src/model.rs`.
+  `src/model.rs`. Pin any fixture rows (ids, positions, text) that more than one agent's tests rely on.
 - **Tasks:** a numbered list per agent. Quote spec phrases verbatim and take the narrowest reading of an ambiguous
   one. Feature 2's "available-week links" grew into a full week list that the user then had removed.
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
@@ -96,7 +97,8 @@ Write the request as ONE line, because a newline submits early. Include:
   as a separate `agtermctl session type` call, keeping the reply on one line.
   Write your actual session id into the message, not the variable.
 
-Write the request to `codex-review-N.txt` in the scratchpad and type it from that file. Never inline it: a Bash
+Write the request to `codex-review-N.txt` in the scratchpad with the Write tool, and type it from that file. A
+heredoc counts as inline. Never inline it: a Bash
 hook blocks any command whose text contains version-control words. Do all of the following **in the same turn**.
 Type the text, re-read the pane until it shows `[Pasted Content …]`, send Enter as a separate call, then confirm:
 
@@ -134,5 +136,5 @@ That evidence is a test, or a check Codex did in a browser.
   - the exact test results;
   - what still needs the user, such as a visual check with `make run`, since you never run the server. Suggest
     `make reset` only when a migration or fixture changed.
-- **Commit only when the user asks.** Create a branch first. Use a single-line message with no Claude attribution and
+- **Commit only when the user asks.** Create a branch first, unless the user names one (e.g. "commit on main"). Use a single-line message with no Claude attribution and
   no Co-Authored-By. Fast-forward `main` or open a PR only when asked.
