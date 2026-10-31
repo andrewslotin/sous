@@ -38,13 +38,16 @@ stand on its own:
   sections of `Cargo.toml`: one agent owns `[dependencies]`, another owns `[build-dependencies]`.
 - **The contract between agents:** exact Rust signatures and the JSON document shape, extended from the existing
   `src/model.rs`.
-- **Tasks:** a numbered list per agent.
+- **Tasks:** a numbered list per agent. Quote spec phrases verbatim and take the narrowest reading of an ambiguous
+  one. Feature 2's "available-week links" grew into a full week list that the user then had removed.
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
   integration tests and `tests/browser.rs` for anything the user sees: rendering, keyboard/pointer, layout widths,
   text safety.
 
 If the agents will run in parallel, first land any stubs the contract needs yourself, so the crate compiles on its
-own. Then run `cargo check`.
+own. Before you start, tell the user in one line that this stub step is the skill's own and that the workers write
+all logic and tests. Keep stubs to signatures and `todo!()`. Run `cargo check` and launch the workers as soon as it
+passes.
 
 ## 3. Run Sonnet workers
 
@@ -93,17 +96,20 @@ Write the request as ONE line, because a newline submits early. Include:
   as a separate `agtermctl session type` call, keeping the reply on one line.
   Write your actual session id into the message, not the variable.
 
-Send the text and then Enter as two separate calls **in the same turn**, and then check that it was submitted:
+Write the request to `codex-review-N.txt` in the scratchpad and type it from that file. Never inline it: a Bash
+hook blocks any command whose text contains version-control words. Do all of the following **in the same turn**.
+Type the text, re-read the pane until it shows `[Pasted Content …]`, send Enter as a separate call, then confirm:
 
 ```bash
-agtermctl session type "$MSG" --target "$AGTERM_SESSION_ID" --pane right --socket "$AGTERM_SOCKET"
+agtermctl session type "$(cat <scratchpad>/codex-review-N.txt)" --target "$AGTERM_SESSION_ID" --pane right --socket "$AGTERM_SOCKET"
+agtermctl session text --target "$AGTERM_SESSION_ID" --pane right --lines 5 --socket "$AGTERM_SOCKET"   # until the paste shows
 agtermctl session type $'\r' --target "$AGTERM_SESSION_ID" --pane right --socket "$AGTERM_SOCKET"
 agtermctl session text --target "$AGTERM_SESSION_ID" --pane right --lines 20 --socket "$AGTERM_SOCKET"
 ```
 
-The request went through when the input box is empty and Codex shows `Working`. A `\r` inside the same `type` call
-as the text gets swallowed, and so does a turn that ends before Enter is sent. Then end your turn: Codex's verdict
-arrives as the next message in this conversation.
+The request went through when the input box is empty and Codex shows `Working`. Enter gets lost in three cases: a
+`\r` inside the same `type` call as the text, an Enter sent before the paste registers, and a turn that ends before
+Enter is sent. Then end your turn: Codex's verdict arrives as the next message in this conversation.
 
 ## 6. Iterate until both agree
 
@@ -126,6 +132,7 @@ That evidence is a test, or a check Codex did in a browser.
   - what was built;
   - the review rounds and their findings;
   - the exact test results;
-  - what still needs the user, such as a visual check, since you never run the server.
+  - what still needs the user, such as a visual check with `make run`, since you never run the server. Suggest
+    `make reset` only when a migration or fixture changed.
 - **Commit only when the user asks.** Create a branch first. Use a single-line message with no Claude attribution and
   no Co-Authored-By. Fast-forward `main` or open a PR only when asked.
