@@ -23,5 +23,8 @@
   spec when the user says so.
 - Keep a shared control in the same place on every page kind (e.g. the "All weeks" link in the header row), so
   pages stay consistent with the plan page.
+- The project is open source: public docs (README) must not mention machine-specific paths such as
+  `/Applications/...`. Write them for any platform. Don't show repo file paths as text either: use descriptive
+  links ("the [OpenAPI document](docs/openapi.json)"). After a correction, fix every instance, not just the one named.
 - When the spec is silent on how an empty child collection displays (e.g. a prep session with no tasks), ask the
   user before building it. Don't settle it myself and list it as a scope decision.

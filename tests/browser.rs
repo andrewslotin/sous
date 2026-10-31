@@ -16,7 +16,6 @@ use tempfile::TempDir;
 
 const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
 const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
-const CHROME: &str = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const IGNORE: &str = "requires Google Chrome; run: cargo test --test browser -- --ignored";
 const XSS_NAME: &str = "</script><script>window.pwned=1</script> <b>x</b>";
 
@@ -174,8 +173,8 @@ impl Opts {
             );
             format!("http://{addr}")
         });
+        // No path: headless_chrome uses $CHROME, then searches PATH and standard install locations.
         let browser = Browser::new(LaunchOptions {
-            path: Some(CHROME.into()),
             headless: true,
             sandbox: false,
             ..Default::default()
