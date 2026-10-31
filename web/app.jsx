@@ -120,9 +120,53 @@ function MealCard({ meal }) {
   );
 }
 
+function ShoppingListCard({ list }) {
+  const [expanded, setExpanded] = useState(false);
+  const bodyId = `shop-${list.id}`;
+  return (
+    <div className={`shop${expanded ? " is-open" : ""}`}>
+      <button
+        type="button"
+        className="shop-toggle"
+        aria-expanded={expanded}
+        aria-controls={bodyId}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="shop-head">
+          <span className="shop-main">
+            <span className="shop-label">{list.label}</span>
+            {list.note !== null && <span className="shop-note">{list.note}</span>}
+          </span>
+          <span className="shop-indicator" aria-hidden="true">
+            {expanded ? "−" : "+"}
+          </span>
+        </span>
+      </button>
+      {expanded && (
+        <div className="shop-body" id={bodyId}>
+          {list.categories.length === 0 && <p className="shop-empty">No shopping items.</p>}
+          {list.categories.map((cat) => (
+            <div key={cat.id} className="shop-cat">
+              <div className="shop-cat-name">{cat.name}</div>
+              {cat.items.length > 0 && (
+                <ul className="shop-items">
+                  {cat.items.map((item) => (
+                    <li key={item.id}>{item.text}</li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function MealPlan({ data, selectedWeekday }) {
   const [selectedDay, setSelectedDay] = useState(selectedWeekday - 1);
   const day = data.days[selectedDay];
+  const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
   return (
     <div className="app">
       <div className="header">
@@ -147,6 +191,9 @@ function MealPlan({ data, selectedWeekday }) {
           </button>
         ))}
       </div>
+      {day.shoppingListIds.map((listId) => (
+        <ShoppingListCard key={`${day.date}-${listId}`} list={listsById.get(listId)} />
+      ))}
       {day.meals.length === 0 ? (
         <p className="empty">No meals planned for this day.</p>
       ) : (

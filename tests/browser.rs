@@ -822,3 +822,332 @@ fn test_clock() -> sous::calendar::Clock {
         chrono::Utc.with_ymd_and_hms(2026, 12, 2, 12, 0, 0).unwrap(),
     )
 }
+
+// ---- Feature 3: shopping lists -------------------------------------------------------------
+
+const L1_LABEL: &str = "🛒 Monday Shop → covers Mon–Wed";
+const L1_NOTE: &str = "You have: salmon, oats, walnuts, almonds, chia, miso, spices.";
+const L2_LABEL: &str = "🧴 Household";
+const L1_CATEGORIES: [&str; 3] = ["Produce", "Dairy / Chilled", "Bakery"];
+const L1_ITEMS: [&str; 8] = [
+    "1 cucumber",
+    "1 courgette",
+    "1 bag baby spinach (200g)",
+    "200g mixed berries",
+    "Fresh ginger",
+    "2L oat milk",
+    "Skyr (400g)",
+    "1 loaf dark rye bread",
+];
+const L1_ID: &str = "00000005-0000-4000-8000-00000000001f";
+
+/// SQL for ISO 2026-W`week` with a Monday linked to one shopping list:
+/// (label, note, [(category, [item])]).
+fn shop_week(week: u32, label: &str, note: Option<&str>, cats: &[(&str, &[&str])]) -> String {
+    let q = |s: &str| s.replace('\'', "''");
+    let base = 1000 * week;
+    let list = id(0xc5, base);
+    let mut sql = format!(
+        "INSERT INTO weeks (id, iso_year, iso_week) VALUES ('{}', 2026, {week});\n\
+         INSERT INTO days (id, week_id, weekday) VALUES ('{}', '{}', 1);\n\
+         INSERT INTO shopping_lists (id, week_id, position, label, note) VALUES ('{list}', '{}', 0, '{}', {});\n\
+         INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{}', '{list}', 0);\n",
+        id(0xa1, base),
+        id(0xa2, base),
+        id(0xa1, base),
+        id(0xa1, base),
+        q(label),
+        note.map_or("NULL".to_string(), |n| format!("'{}'", q(n))),
+        id(0xa2, base),
+    );
+    for (ci, (name, items)) in cats.iter().enumerate() {
+        let cat = id(0xc6, base + ci as u32);
+        sql += &format!(
+            "INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('{cat}', '{list}', {ci}, '{}');\n",
+            q(name)
+        );
+        for (ii, item) in items.iter().enumerate() {
+            sql += &format!(
+                "INSERT INTO shopping_items (id, category_id, position, text) VALUES ('{}', '{cat}', {ii}, '{}');\n",
+                id(0xc7, base + (ci * 100 + ii) as u32),
+                q(item)
+            );
+        }
+    }
+    sql
+}
+
+impl Harness {
+    /// Select a day (0 = Monday) by clicking its button.
+    fn select_day(&self, index: usize) {
+        self.click(&format!(".day-button:nth-child({})", index + 1));
+        self.wait_for(&format!(
+            "{}.getAttribute('aria-pressed') === 'true'",
+            Harness::day_button(index)
+        ));
+    }
+
+    fn expand_all_shops(&self) {
+        self.js("document.querySelectorAll('.shop-toggle[aria-expanded=false]').forEach(b => b.click())");
+        self.wait_for(
+            "[...document.querySelectorAll('.shop-toggle')].every(b => b.getAttribute('aria-expanded') === 'true')",
+        );
+    }
+
+    fn count(&self, selector: &str) -> u64 {
+        self.js(&format!("document.querySelectorAll('{selector}').length"))
+            .as_u64()
+            .unwrap()
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn monday_shows_two_shopping_cards_before_summary() {
+    let h = Harness::start("", 1280);
+    assert_eq!(h.texts(".shop-label"), [L2_LABEL, L1_LABEL]);
+    assert_eq!(h.count(".shop"), 2);
+    assert_eq!(
+        h.js(
+            "[...document.querySelectorAll('.shop')].every(s => \
+             (s.compareDocumentPosition(document.querySelector('.summary')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)"
+        ),
+        true
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shared_list_appears_on_wednesday_and_unassigned_nowhere() {
+    let h = Harness::start("", 1280);
+    h.expand_all_shops();
+    let monday_l1 = h.js(&format!(
+        "document.getElementById('shop-{L1_ID}').textContent"
+    ));
+
+    h.select_day(2);
+    assert_eq!(h.texts(".shop-label"), [L1_LABEL]);
+    assert_eq!(h.texts(".shop-note"), [L1_NOTE]);
+    h.click(".shop-toggle");
+    h.wait_for("document.querySelector('.shop-body') !== null");
+    assert_eq!(h.texts(".shop-cat-name"), L1_CATEGORIES);
+    assert_eq!(h.texts(".shop-items li"), L1_ITEMS);
+    assert_eq!(
+        h.js(&format!(
+            "document.getElementById('shop-{L1_ID}').textContent"
+        )),
+        monday_l1
+    );
+    // The card comes before the empty-day message.
+    assert_eq!(h.text(".empty"), "No meals planned for this day.");
+    assert_eq!(
+        h.js(
+            "(document.querySelector('.shop').compareDocumentPosition(document.querySelector('.empty')) \
+             & Node.DOCUMENT_POSITION_FOLLOWING) !== 0"
+        ),
+        true
+    );
+
+    // Tuesday and Sunday have no cards, and no day shows the unassigned list.
+    for day in 0..7 {
+        h.select_day(day);
+        if day == 1 || day == 6 {
+            assert_eq!(h.count(".shop"), 0, "day {day}");
+        }
+        assert!(
+            !h.texts(".shop-label")
+                .iter()
+                .any(|t| t.contains("Thursday Top-Up")),
+            "day {day}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_content_matches_fixture_and_reloads_changes() {
+    let h = Harness::start("", 1280);
+    // Collapsed: the note is exactly the stored note; the note-less card has no note element.
+    assert_eq!(h.texts(".shop-note"), [L1_NOTE]);
+    assert_eq!(
+        h.js("document.querySelectorAll('.shop')[0].querySelector('.shop-note')"),
+        serde_json::Value::Null
+    );
+    assert_eq!(h.count(".shop-body"), 0);
+
+    h.expand_all_shops();
+    assert_eq!(
+        h.texts(".shop-cat-name"),
+        ["Cleaning", "Spices", "Produce", "Dairy / Chilled", "Bakery"]
+    );
+    let mut items = vec!["Dish soap"];
+    items.extend(L1_ITEMS);
+    assert_eq!(h.texts(".shop-items li"), items);
+
+    h.exec(&format!(
+        "UPDATE shopping_items SET text = 'Fresh ginger root' WHERE text = 'Fresh ginger';\n\
+         UPDATE shopping_lists SET note = 'Changed note.' WHERE id = '{L1_ID}';"
+    ));
+    h.goto("/2026/44");
+    assert_eq!(h.texts(".shop-note"), ["Changed note."]);
+    h.expand_all_shops();
+    let items = h.texts(".shop-items li");
+    assert!(items.contains(&"Fresh ginger root".to_string()));
+    assert!(!items.contains(&"Fresh ginger".to_string()));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_items_are_plain_bullets() {
+    let h = Harness::start("", 1280);
+    h.expand_all_shops();
+    assert_eq!(h.count("input[type=checkbox], [role=checkbox]"), 0);
+    assert_eq!(
+        h.js("/\\d+\\/\\d+ items/.test(document.body.textContent)"),
+        false
+    );
+    assert_eq!(
+        h.js("[...document.querySelectorAll('.shop li')].every(li => li.parentElement.tagName === 'UL' \
+              && getComputedStyle(li).listStyleType === 'disc')"),
+        true
+    );
+    assert_eq!(
+        h.js("[...document.querySelectorAll('.shop li')].some(li => getComputedStyle(li).textDecorationLine.includes('line-through'))"),
+        false
+    );
+    let probe = "(() => { const s = getComputedStyle(document.querySelector('.shop li')); \
+                 return [s.backgroundColor, s.textDecorationLine, s.cursor]; })()";
+    let before = h.js(probe);
+    h.click(".shop li");
+    assert_eq!(h.js(probe), before);
+    assert_eq!(before[2], "auto");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_empty_states() {
+    let sql = shop_week(45, "Empty list", None, &[]);
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/45");
+    assert_eq!(h.count(".shop-body"), 0);
+    h.click(".shop-toggle");
+    h.wait_for("document.querySelector('.shop-body') !== null");
+    assert_eq!(h.text(".shop-empty"), "No shopping items.");
+    assert_eq!(h.count(".shop-cat"), 0);
+
+    // The fixture's empty `Spices` category shows only its heading.
+    h.goto("/2026/44");
+    h.expand_all_shops();
+    assert_eq!(
+        h.js("(() => { const c = [...document.querySelectorAll('.shop-cat')].find(c => c.querySelector('.shop-cat-name').textContent === 'Spices'); \
+              return [c.querySelectorAll('li').length, c.children.length]; })()"),
+        serde_json::json!([0, 1])
+    );
+    assert_eq!(h.count(".shop-empty"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_pointer_toggle() {
+    let h = Harness::start("", 1280);
+    let expanded = "document.querySelector('.shop-toggle').getAttribute('aria-expanded')";
+    let indicator = "document.querySelector('.shop-indicator').textContent";
+    assert_eq!(h.js(expanded), "false");
+    assert_eq!(h.js(indicator), "+");
+    assert_eq!(h.count(".shop-body"), 0);
+
+    h.click(".shop-toggle");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    assert_eq!(h.js(indicator), "−");
+    assert_eq!(h.count(".shop-body"), 1);
+    assert_eq!(
+        h.js("document.querySelector('.shop-toggle').getAttribute('aria-controls') === document.querySelector('.shop-body').id"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelector('.shop-body').getBoundingClientRect().height > 0"),
+        true
+    );
+
+    h.click(".shop-toggle");
+    h.wait_for(&format!("{expanded} === 'false'"));
+    assert_eq!(h.js(indicator), "+");
+    assert_eq!(h.count(".shop-body"), 0);
+
+    // Expansion resets when the day changes.
+    h.click(".shop-toggle");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    h.select_day(1);
+    h.select_day(0);
+    assert_eq!(h.count(".shop-body"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_keyboard_toggle() {
+    let h = Harness::start("", 1280);
+    // Tab from the last day button reaches the first shopping toggle.
+    h.js(&format!("{}.focus()", Harness::day_button(6)));
+    h.press("Tab");
+    assert_eq!(
+        h.js("document.activeElement === document.querySelector('.shop-toggle')"),
+        true
+    );
+    let expanded = "document.querySelector('.shop-toggle').getAttribute('aria-expanded')";
+    h.press("Enter");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    h.press("Enter");
+    h.wait_for(&format!("{expanded} === 'false'"));
+    h.press(" ");
+    h.wait_for(&format!("{expanded} === 'true'"));
+    h.press(" ");
+    h.wait_for(&format!("{expanded} === 'false'"));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_text_renders_literally() {
+    let sql = shop_week(46, XSS_NAME, Some(XSS_NAME), &[(XSS_NAME, &[XSS_NAME])]);
+    let h = Harness::start(&sql, 1280);
+    h.goto("/2026/46");
+    h.click(".shop-toggle");
+    h.wait_for("document.querySelector('.shop-body') !== null");
+    assert_eq!(h.text(".shop-label"), XSS_NAME);
+    assert_eq!(h.text(".shop-note"), XSS_NAME);
+    assert_eq!(h.text(".shop-cat-name"), XSS_NAME);
+    assert_eq!(h.text(".shop li"), XSS_NAME);
+    assert_eq!(h.js("typeof window.pwned"), "undefined");
+    assert_eq!(h.count(".shop b"), 0);
+}
+
+fn assert_shop_layout(width: u32) {
+    let h = Harness::start("", width);
+    h.expand_all_shops();
+    assert_eq!(h.js("window.innerWidth"), width);
+    let report = h.js(
+        "(() => { const app = document.querySelector('.app').getBoundingClientRect(); \
+          return { fits: [...document.querySelectorAll('.shop')].every(s => { const r = s.getBoundingClientRect(); \
+            return r.left >= app.left - 0.5 && r.right <= app.right + 0.5 && r.width <= 540; }), \
+            appWidth: app.width, \
+            noScroll: document.documentElement.scrollWidth <= window.innerWidth, \
+            bg: getComputedStyle(document.querySelector('.shop')).backgroundColor, \
+            border: getComputedStyle(document.querySelector('.shop')).borderTopColor }; })()",
+    );
+    assert_eq!(report["fits"], true);
+    assert!(report["appWidth"].as_f64().unwrap() <= 540.0);
+    assert_eq!(report["noScroll"], true);
+    assert_eq!(report["bg"], "rgb(255, 240, 246)");
+    assert_eq!(report["border"], "rgb(251, 182, 206)");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_layout_at_375px() {
+    assert_shop_layout(375);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_layout_at_1280px() {
+    assert_shop_layout(1280);
+}

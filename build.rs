@@ -98,6 +98,8 @@ fn hashed_name(file_name: &str, bytes: &[u8]) -> String {
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=web");
+    // sqlx::migrate!() embeds migrations/ at compile time.
+    println!("cargo:rerun-if-changed=migrations");
 
     let root = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let web = root.join("web");

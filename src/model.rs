@@ -7,6 +7,8 @@ pub struct WeekDocument {
     pub schema_version: u32,
     pub week: Week,
     pub days: Vec<Day>,
+    /// Every list of the week, by `shopping_lists.position`, including unassigned ones.
+    pub shopping_lists: Vec<ShoppingList>,
 }
 
 #[derive(Debug, Serialize)]
@@ -27,6 +29,8 @@ pub struct Day {
     pub date: String,
     pub weekday: u32,
     pub meals: Vec<Meal>,
+    /// Lists shown on this day, by `day_shopping_lists.position`.
+    pub shopping_list_ids: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -51,6 +55,27 @@ pub struct Meal {
 
 #[derive(Debug, Serialize)]
 pub struct Step {
+    pub id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShoppingList {
+    pub id: String,
+    pub label: String,
+    pub note: Option<String>,
+    pub categories: Vec<ShoppingCategory>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShoppingCategory {
+    pub id: String,
+    pub name: String,
+    pub items: Vec<ShoppingItem>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ShoppingItem {
     pub id: String,
     pub text: String,
 }

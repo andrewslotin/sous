@@ -742,3 +742,379 @@ fn test_clock() -> sous::calendar::Clock {
         chrono::Utc.with_ymd_and_hms(2026, 12, 2, 12, 0, 0).unwrap(),
     )
 }
+
+// ---- Feature 3: shopping lists ----
+
+const L1: &str = "00000005-0000-4000-8000-00000000001f";
+const L2: &str = "00000005-0000-4000-8000-000000000020";
+const L3: &str = "00000005-0000-4000-8000-000000000021";
+const MON: &str = "00000002-0000-4000-8000-000000000002";
+const TUE: &str = "00000002-0000-4000-8000-000000000003";
+const FIXTURE_WEEK: &str = "00000001-0000-4000-8000-000000000001";
+
+fn sid(kind: u32, n: u32) -> String {
+    format!("{kind:08}-0000-4000-8000-{n:012x}")
+}
+
+async fn count(c: &mut SqliteConnection, table: &str) -> i64 {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT count(*) FROM {table}")))
+        .fetch_one(c)
+        .await
+        .unwrap()
+}
+
+fn ids(v: &[String]) -> Vec<&str> {
+    v.iter().map(String::as_str).collect()
+}
+
+fn list_ids(doc: &sous::model::WeekDocument) -> Vec<String> {
+    doc.shopping_lists.iter().map(|l| l.id.clone()).collect()
+}
+
+#[tokio::test]
+async fn shopping_day_order_follows_link_position() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(ids(&doc.days[0].shopping_list_ids), [L2, L1]);
+
+    let mut c = t.writer().await;
+    // Swap the two link positions (through a temporary position to respect UNIQUE).
+    for (list, pos) in [(L2, 99), (L1, 0), (L2, 10)] {
+        let sql = format!(
+            "UPDATE day_shopping_lists SET position = {pos} WHERE day_id = '{MON}' AND shopping_list_id = '{list}'"
+        );
+        exec(&mut c, &sql).await.unwrap();
+    }
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(ids(&doc.days[0].shopping_list_ids), [L1, L2]);
+}
+
+#[tokio::test]
+async fn shopping_list_shared_by_days_is_stored_once() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(ids(&doc.days[0].shopping_list_ids), [L2, L1]);
+    assert_eq!(ids(&doc.days[2].shopping_list_ids), [L1]);
+    assert_eq!(doc.shopping_lists.iter().filter(|l| l.id == L1).count(), 1);
+
+    let mut c = t.writer().await;
+    let items = count(&mut c, "shopping_items").await;
+    let lists = count(&mut c, "shopping_lists").await;
+    let sql = format!(
+        "INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{TUE}', '{L1}', 0)"
+    );
+    exec(&mut c, &sql).await.unwrap();
+    assert_eq!(count(&mut c, "shopping_items").await, items);
+    assert_eq!(count(&mut c, "shopping_lists").await, lists);
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(ids(&doc.days[1].shopping_list_ids), [L1]);
+    assert_eq!(doc.shopping_lists.iter().filter(|l| l.id == L1).count(), 1);
+}
+
+#[tokio::test]
+async fn shopping_content_order_and_freshness() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+
+    assert_eq!(ids(&list_ids(&doc)), [L3, L1, L2]);
+    let (l3, l1, l2) = (
+        &doc.shopping_lists[0],
+        &doc.shopping_lists[1],
+        &doc.shopping_lists[2],
+    );
+    assert_eq!(l1.label, "🛒 Monday Shop → covers Mon–Wed");
+    assert_eq!(
+        l1.note.as_deref(),
+        Some("You have: salmon, oats, walnuts, almonds, chia, miso, spices.")
+    );
+    assert_eq!(l2.label, "🧴 Household");
+    assert_eq!(l2.note, None);
+    assert_eq!(l3.label, "🛒 Thursday Top-Up → covers Thu–Sun");
+    assert_eq!(l3.note.as_deref(), Some("Small trip."));
+
+    let shape = |l: &sous::model::ShoppingList| -> Vec<(String, Vec<String>)> {
+        l.categories
+            .iter()
+            .map(|c| {
+                (
+                    c.name.clone(),
+                    c.items.iter().map(|i| i.text.clone()).collect(),
+                )
+            })
+            .collect()
+    };
+    let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+    assert_eq!(
+        shape(l1),
+        [
+            (
+                "Produce".to_string(),
+                s(&[
+                    "1 cucumber",
+                    "1 courgette",
+                    "1 bag baby spinach (200g)",
+                    "200g mixed berries",
+                    "Fresh ginger"
+                ])
+            ),
+            (
+                "Dairy / Chilled".to_string(),
+                s(&["2L oat milk", "Skyr (400g)"])
+            ),
+            ("Bakery".to_string(), s(&["1 loaf dark rye bread"])),
+        ]
+    );
+    assert_eq!(
+        shape(l2),
+        [
+            ("Cleaning".to_string(), s(&["Dish soap"])),
+            ("Spices".to_string(), s(&[])),
+        ]
+    );
+    assert_eq!(
+        shape(l3),
+        [(
+            "Meat".to_string(),
+            s(&["4 skinless chicken thighs (~400g)"])
+        )]
+    );
+
+    // Unassigned L3 is in no day; days without links have empty ids.
+    for d in &doc.days {
+        assert!(!d.shopping_list_ids.iter().any(|i| i == L3));
+    }
+    for i in [1, 3, 4, 5, 6] {
+        assert!(doc.days[i].shopping_list_ids.is_empty(), "day {i}");
+    }
+
+    // Payload shape.
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    let page = page_json(&body);
+    let lists = page["document"]["shoppingLists"].as_array().unwrap();
+    assert_eq!(lists.len(), 3);
+    assert_eq!(lists[0]["id"], L3);
+    assert_eq!(lists[2]["note"], Value::Null);
+    assert_eq!(lists[1]["categories"][0]["name"], "Produce");
+    assert_eq!(lists[1]["categories"][0]["items"][0]["text"], "1 cucumber");
+    assert!(lists[1]["categories"][0]["items"][0]["id"].is_string());
+    assert_eq!(
+        page["document"]["days"][0]["shoppingListIds"],
+        json!([L2, L1])
+    );
+    assert_eq!(page["document"]["days"][4]["shoppingListIds"], json!([]));
+
+    // Edits through a separate writer are visible on the next load.
+    let mut c = t.writer().await;
+    exec(
+        &mut c,
+        "UPDATE shopping_items SET text = '2 cucumbers' WHERE text = '1 cucumber'",
+    )
+    .await
+    .unwrap();
+    exec(
+        &mut c,
+        &format!("UPDATE shopping_lists SET note = 'New note' WHERE id = '{L1}'"),
+    )
+    .await
+    .unwrap();
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(doc.shopping_lists[1].note.as_deref(), Some("New note"));
+    assert_eq!(
+        doc.shopping_lists[1].categories[0].items[0].text,
+        "2 cucumbers"
+    );
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    let page = page_json(&body);
+    assert_eq!(page["document"]["shoppingLists"][1]["note"], "New note");
+    assert_eq!(
+        page["document"]["shoppingLists"][1]["categories"][0]["items"][0]["text"],
+        "2 cucumbers"
+    );
+}
+
+#[tokio::test]
+async fn shopping_constraints_reject_bad_data() {
+    let t = TestDb::migrated().await;
+    let mut c = t.writer().await;
+    let (wa, wb) = (sid(1, 1), sid(1, 2));
+    let (da, da2, db_) = (sid(2, 1), sid(2, 2), sid(2, 3));
+    let (la1, la2, la3, lb) = (sid(5, 1), sid(5, 2), sid(5, 3), sid(5, 4));
+    let (ca, ia) = (sid(6, 1), sid(7, 1));
+    let missing = "99999999-9999-4999-8999-999999999999";
+    for sql in [
+        week_sql(&wa, 2026, 44),
+        week_sql(&wb, 2026, 45),
+        day_sql(&da, &wa, 1),
+        day_sql(&da2, &wa, 2),
+        day_sql(&db_, &wb, 1),
+    ] {
+        exec(&mut c, &sql).await.unwrap();
+    }
+    let list = |id: &str, week: &str, pos: i32, label: &str| {
+        format!(
+            "INSERT INTO shopping_lists (id, week_id, position, label) VALUES ('{id}', '{week}', {pos}, {label})"
+        )
+    };
+    let link = |day: &str, l: &str, pos: i32| {
+        format!(
+            "INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{day}', '{l}', {pos})"
+        )
+    };
+    let cat = |id: &str, l: &str, pos: i32, name: &str| {
+        format!(
+            "INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('{id}', '{l}', {pos}, {name})"
+        )
+    };
+    let item = |id: &str, cat: &str, pos: i32, text: &str| {
+        format!(
+            "INSERT INTO shopping_items (id, category_id, position, text) VALUES ('{id}', '{cat}', {pos}, {text})"
+        )
+    };
+
+    exec(&mut c, &list(&la1, &wa, 0, "'a'")).await.unwrap();
+    exec(&mut c, &list(&la2, &wa, 5, "'b'")).await.unwrap();
+    exec(&mut c, &list(&la3, &wa, 7, "'c'")).await.unwrap();
+    exec(&mut c, &list(&lb, &wb, 0, "'d'")).await.unwrap();
+    exec(&mut c, &link(&da, &la1, 0)).await.unwrap();
+    exec(&mut c, &link(&da2, &la2, 0)).await.unwrap();
+    exec(&mut c, &cat(&ca, &la1, 0, "'cat'")).await.unwrap();
+    exec(&mut c, &item(&ia, &ca, 0, "'it'")).await.unwrap();
+
+    let n = sid(5, 9);
+    let (cn, inew) = (sid(6, 9), sid(7, 9));
+    let bad: Vec<(&str, String)> = vec![
+        ("list fk week", list(&n, missing, 1, "'x'")),
+        ("link fk day", link(missing, &la1, 3)),
+        ("link fk list", link(&da, missing, 3)),
+        ("category fk list", cat(&cn, missing, 3, "'x'")),
+        ("item fk category", item(&inew, missing, 3, "'x'")),
+        ("list dup position", list(&n, &wa, 0, "'x'")),
+        ("category dup position", cat(&cn, &la1, 0, "'x'")),
+        ("item dup position", item(&inew, &ca, 0, "'x'")),
+        ("link dup position", link(&da, &la3, 0)),
+        ("link dup pair", link(&da, &la1, 4)),
+        ("list negative position", list(&n, &wa, -1, "'x'")),
+        ("link negative position", link(&da, &la3, -1)),
+        ("category negative position", cat(&cn, &la1, -1, "'x'")),
+        ("item negative position", item(&inew, &ca, -1, "'x'")),
+        ("list bad uuid", list("nope", &wa, 1, "'x'")),
+        ("category bad uuid", cat("nope", &la1, 1, "'x'")),
+        ("item bad uuid", item("nope", &ca, 1, "'x'")),
+        ("list null label", list(&n, &wa, 1, "NULL")),
+        ("category null name", cat(&cn, &la1, 1, "NULL")),
+        ("item null text", item(&inew, &ca, 1, "NULL")),
+    ];
+    for (what, sql) in bad {
+        assert!(exec(&mut c, &sql).await.is_err(), "{what} was accepted");
+    }
+
+    // Cross-week links and moves are rejected by the triggers.
+    let cross: Vec<(&str, String)> = vec![
+        ("cross-week insert", link(&db_, &la3, 5)),
+        ("cross-week insert (other way)", link(&da2, &lb, 5)),
+        (
+            "update day_id",
+            format!("UPDATE day_shopping_lists SET day_id = '{db_}' WHERE day_id = '{da}'"),
+        ),
+        (
+            "update shopping_list_id",
+            format!(
+                "UPDATE day_shopping_lists SET shopping_list_id = '{lb}' WHERE day_id = '{da}'"
+            ),
+        ),
+        (
+            "move linked day",
+            format!("UPDATE days SET week_id = '{wb}' WHERE id = '{da2}'"),
+        ),
+        (
+            "move linked list",
+            format!("UPDATE shopping_lists SET week_id = '{wb}' WHERE id = '{la2}'"),
+        ),
+    ];
+    for (what, sql) in cross {
+        let err = exec(&mut c, &sql).await.expect_err(what).to_string();
+        assert!(
+            err.contains("different weeks") || err.contains("another week"),
+            "{what}: {err}"
+        );
+    }
+
+    // Rejected statements changed nothing.
+    assert_eq!(count(&mut c, "day_shopping_lists").await, 2);
+    // Moving an unlinked list is allowed.
+    exec(
+        &mut c,
+        &format!("UPDATE shopping_lists SET week_id = '{wb}' WHERE id = '{la3}'"),
+    )
+    .await
+    .unwrap();
+    // So is moving an unlinked day.
+    exec(
+        &mut c,
+        &format!("DELETE FROM day_shopping_lists WHERE day_id = '{da2}'"),
+    )
+    .await
+    .unwrap();
+    exec(
+        &mut c,
+        &format!("UPDATE days SET week_id = '{wb}' WHERE id = '{da2}'"),
+    )
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn shopping_deletes_cascade() {
+    // Deleting a list.
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let mut c = t.writer().await;
+    exec(
+        &mut c,
+        &format!("DELETE FROM shopping_lists WHERE id = '{L1}'"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(count(&mut c, "shopping_lists").await, 2);
+    assert_eq!(count(&mut c, "shopping_categories").await, 3);
+    assert_eq!(count(&mut c, "shopping_items").await, 2);
+    assert_eq!(count(&mut c, "day_shopping_lists").await, 1);
+    assert_eq!(count(&mut c, "days").await, 4);
+    let doc = queries::load_week(&pool, 2026, 44).await.unwrap().unwrap();
+    assert_eq!(ids(&doc.days[0].shopping_list_ids), [L2]);
+    assert!(doc.days[2].shopping_list_ids.is_empty());
+    assert_eq!(ids(&list_ids(&doc)), [L3, L2]);
+    assert_eq!(doc.shopping_lists[1].categories.len(), 2);
+    assert_eq!(doc.shopping_lists[0].categories[0].items.len(), 1);
+
+    // Deleting a day removes its links but not the lists.
+    let t = TestDb::with_fixture().await;
+    let mut c = t.writer().await;
+    exec(&mut c, &format!("DELETE FROM days WHERE id = '{MON}'"))
+        .await
+        .unwrap();
+    assert_eq!(count(&mut c, "day_shopping_lists").await, 1);
+    assert_eq!(count(&mut c, "shopping_lists").await, 3);
+    assert_eq!(count(&mut c, "shopping_items").await, 10);
+
+    // Deleting the week removes everything.
+    let t = TestDb::with_fixture().await;
+    let mut c = t.writer().await;
+    exec(
+        &mut c,
+        &format!("DELETE FROM weeks WHERE id = '{FIXTURE_WEEK}'"),
+    )
+    .await
+    .unwrap();
+    for table in [
+        "shopping_lists",
+        "day_shopping_lists",
+        "shopping_categories",
+        "shopping_items",
+    ] {
+        assert_eq!(count(&mut c, table).await, 0, "{table}");
+    }
+}

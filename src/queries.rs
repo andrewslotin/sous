@@ -1,6 +1,8 @@
 //! Application queries.
 use crate::calendar::{week_dates, week_path};
-use crate::model::{Day, Meal, Step, Week, WeekDocument, WeekSummary};
+use crate::model::{
+    Day, Meal, ShoppingCategory, ShoppingItem, ShoppingList, Step, Week, WeekDocument, WeekSummary,
+};
 use sqlx::{Row, SqlitePool};
 
 /// Load one week inside a single read transaction. `None` if the week row does not exist.
@@ -33,6 +35,7 @@ pub async fn load_week(
             date: d.format("%Y-%m-%d").to_string(),
             weekday: i as u32 + 1,
             meals: Vec::new(),
+            shopping_list_ids: Vec::new(),
         })
         .collect();
 
@@ -63,7 +66,84 @@ pub async fn load_week(
     .bind(&week_id)
     .fetch_all(&mut *tx)
     .await?;
+
+    let list_rows = sqlx::query(
+        "SELECT id, label, note FROM shopping_lists WHERE week_id = ? ORDER BY position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let category_rows = sqlx::query(
+        "SELECT c.id, c.shopping_list_id, c.name FROM shopping_categories c \
+         JOIN shopping_lists l ON l.id = c.shopping_list_id \
+         WHERE l.week_id = ? ORDER BY c.shopping_list_id, c.position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let item_rows = sqlx::query(
+        "SELECT i.id, i.category_id, i.text FROM shopping_items i \
+         JOIN shopping_categories c ON c.id = i.category_id \
+         JOIN shopping_lists l ON l.id = c.shopping_list_id \
+         WHERE l.week_id = ? ORDER BY i.category_id, i.position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
+
+    let link_rows = sqlx::query(
+        "SELECT d.weekday, x.shopping_list_id FROM day_shopping_lists x \
+         JOIN days d ON d.id = x.day_id \
+         WHERE d.week_id = ? ORDER BY d.weekday, x.position",
+    )
+    .bind(&week_id)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
+
+    let mut items: std::collections::HashMap<String, Vec<ShoppingItem>> = Default::default();
+    for row in item_rows {
+        items
+            .entry(row.get("category_id"))
+            .or_default()
+            .push(ShoppingItem {
+                id: row.get("id"),
+                text: row.get("text"),
+            });
+    }
+    let mut categories: std::collections::HashMap<String, Vec<ShoppingCategory>> =
+        Default::default();
+    for row in category_rows {
+        let id: String = row.get("id");
+        categories
+            .entry(row.get("shopping_list_id"))
+            .or_default()
+            .push(ShoppingCategory {
+                items: items.remove(&id).unwrap_or_default(),
+                id,
+                name: row.get("name"),
+            });
+    }
+    let shopping_lists: Vec<ShoppingList> = list_rows
+        .into_iter()
+        .map(|row| {
+            let id: String = row.get("id");
+            ShoppingList {
+                categories: categories.remove(&id).unwrap_or_default(),
+                id,
+                label: row.get("label"),
+                note: row.get("note"),
+            }
+        })
+        .collect();
+    for row in link_rows {
+        let weekday: i64 = row.get("weekday");
+        days[(weekday - 1) as usize]
+            .shopping_list_ids
+            .push(row.get("shopping_list_id"));
+    }
 
     let mut steps: std::collections::HashMap<String, Vec<Step>> = Default::default();
     for row in step_rows {
@@ -106,6 +186,7 @@ pub async fn load_week(
             subtitle: week_row.get("subtitle"),
         },
         days,
+        shopping_lists,
     }))
 }
 

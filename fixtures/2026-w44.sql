@@ -3,6 +3,7 @@
 -- Load into a migrated database:
 --   sous migrate && sqlite3 sous.db < fixtures/2026-w44.sql
 -- Wed has a day row with no meals; Fri and Sat have no day rows.
+-- Shopping: L1 is linked to Mon (after L2) and Wed, L2 to Mon, L3 to no day. L2 has an empty category and no note.
 
 PRAGMA foreign_keys = ON;
 BEGIN;
@@ -52,5 +53,31 @@ VALUES ('00000003-0000-4000-8000-00000000001b', '00000002-0000-4000-8000-0000000
 INSERT INTO meal_steps (id, meal_id, position, text) VALUES ('00000004-0000-4000-8000-00000000001c', '00000003-0000-4000-8000-00000000001b', 2, 'Dress with olive oil, lemon and Dijon.');
 INSERT INTO meal_steps (id, meal_id, position, text) VALUES ('00000004-0000-4000-8000-00000000001d', '00000003-0000-4000-8000-00000000001b', 1, 'Shave Manchego over each plate.');
 INSERT INTO meal_steps (id, meal_id, position, text) VALUES ('00000004-0000-4000-8000-00000000001e', '00000003-0000-4000-8000-00000000001b', 0, 'Bed of mixed leaves. Sliced apple, toasted walnuts.');
+
+-- Shopping lists: L1 (Mon+Wed), L2 (Mon, no note, empty Spices category), L3 (unassigned).
+INSERT INTO shopping_lists (id, week_id, position, label, note) VALUES ('00000005-0000-4000-8000-000000000020', '00000001-0000-4000-8000-000000000001', 20, '🧴 Household', NULL);
+INSERT INTO shopping_lists (id, week_id, position, label, note) VALUES ('00000005-0000-4000-8000-00000000001f', '00000001-0000-4000-8000-000000000001', 10, '🛒 Monday Shop → covers Mon–Wed', 'You have: salmon, oats, walnuts, almonds, chia, miso, spices.');
+INSERT INTO shopping_lists (id, week_id, position, label, note) VALUES ('00000005-0000-4000-8000-000000000021', '00000001-0000-4000-8000-000000000001', 5, '🛒 Thursday Top-Up → covers Thu–Sun', 'Small trip.');
+INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('00000002-0000-4000-8000-000000000002', '00000005-0000-4000-8000-00000000001f', 10);
+INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('00000002-0000-4000-8000-000000000004', '00000005-0000-4000-8000-00000000001f', 0);
+INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('00000002-0000-4000-8000-000000000002', '00000005-0000-4000-8000-000000000020', 0);
+
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000022', '00000005-0000-4000-8000-00000000001f', 10, 'Dairy / Chilled');
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000023', '00000005-0000-4000-8000-00000000001f', 0, 'Produce');
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000024', '00000005-0000-4000-8000-00000000001f', 20, 'Bakery');
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000025', '00000005-0000-4000-8000-000000000020', 0, 'Cleaning');
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000026', '00000005-0000-4000-8000-000000000020', 10, 'Spices');
+INSERT INTO shopping_categories (id, shopping_list_id, position, name) VALUES ('00000006-0000-4000-8000-000000000027', '00000005-0000-4000-8000-000000000021', 0, 'Meat');
+
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-000000000028', '00000006-0000-4000-8000-000000000022', 10, 'Skyr (400g)');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-000000000029', '00000006-0000-4000-8000-000000000022', 0, '2L oat milk');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002a', '00000006-0000-4000-8000-000000000023', 30, '200g mixed berries');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002b', '00000006-0000-4000-8000-000000000023', 0, '1 cucumber');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002c', '00000006-0000-4000-8000-000000000023', 40, 'Fresh ginger');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002d', '00000006-0000-4000-8000-000000000023', 20, '1 bag baby spinach (200g)');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002e', '00000006-0000-4000-8000-000000000023', 10, '1 courgette');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-00000000002f', '00000006-0000-4000-8000-000000000024', 0, '1 loaf dark rye bread');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-000000000030', '00000006-0000-4000-8000-000000000025', 0, 'Dish soap');
+INSERT INTO shopping_items (id, category_id, position, text) VALUES ('00000007-0000-4000-8000-000000000031', '00000006-0000-4000-8000-000000000027', 0, '4 skinless chicken thighs (~400g)');
 
 COMMIT;
