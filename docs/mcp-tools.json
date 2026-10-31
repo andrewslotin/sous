@@ -1,0 +1,1969 @@
+[
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns the service's current date, its IANA timezone, and the current ISO week with its start and end dates and page path. Call this first to resolve relative dates such as \"today\" or \"three weeks ago\"; the server accepts only explicit YYYY-MM-DD dates. Takes no arguments.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "type": "object"
+    },
+    "name": "get_context",
+    "outputSchema": {
+      "$defs": {
+        "WeekSummary": {
+          "description": "One archive entry / available-week link.",
+          "properties": {
+            "endDate": {
+              "type": "string"
+            },
+            "isoWeek": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "isoYear": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "path": {
+              "description": "Canonical page path, e.g. `/2026/44`.",
+              "type": "string"
+            },
+            "startDate": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "isoYear",
+            "isoWeek",
+            "startDate",
+            "endDate",
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "currentWeek": {
+          "$ref": "#/$defs/WeekSummary"
+        },
+        "timezone": {
+          "description": "IANA name of `APP_TIMEZONE`, e.g. `Europe/Berlin`.",
+          "type": "string"
+        },
+        "today": {
+          "description": "`YYYY-MM-DD` in the service timezone.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "today",
+        "timezone",
+        "currentWeek"
+      ],
+      "type": "object"
+    },
+    "title": "Get today's date and the current week"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Lists stored meal-plan weeks, newest first, whose Monday-to-Sunday range overlaps the inclusive fromDate/toDate filter (either bound may be omitted). Results are paged: pass nextCursor back as cursor, with the same filters, until it is null. A reversed range or an invalid date is invalid_input.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "`nextCursor` from the previous page of the same call.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fromDate": {
+          "description": "Inclusive start of the date filter, `YYYY-MM-DD`.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100. Defaults to 20.",
+          "format": "uint32",
+          "maximum": 100,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "toDate": {
+          "description": "Inclusive end of the date filter, `YYYY-MM-DD`.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "list_weeks",
+    "outputSchema": {
+      "$defs": {
+        "StoredWeek": {
+          "description": "One stored week in `list_weeks`.",
+          "properties": {
+            "endDate": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isoWeek": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "isoYear": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "path": {
+              "description": "Canonical page path, e.g. `/2026/44`.",
+              "type": "string"
+            },
+            "startDate": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "isoYear",
+            "isoWeek",
+            "startDate",
+            "endDate",
+            "path"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "nextCursor": {
+          "description": "Null when there are no further results.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "weeks": {
+          "items": {
+            "$ref": "#/$defs/StoredWeek"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "weeks"
+      ],
+      "type": "object"
+    },
+    "title": "List saved weeks"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns the complete saved document of one ISO week (days, meals with steps, shopping lists, prep sessions, strategy cards) plus its revision. Give isoYear and isoWeek together, or neither for the current week. Pass the revision back as expectedRevision to save_week. A week with no saved plan is week_not_found. For one day's shopping lists, use get_shopping_lists instead.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "isoWeek": {
+          "description": "ISO week number, 1 to 53. Give together with `isoYear`, or omit both for the current week.",
+          "format": "uint32",
+          "maximum": 53,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "isoYear": {
+          "description": "ISO week-numbering year. Give together with `isoWeek`, or omit both for the current week.",
+          "format": "int32",
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_week",
+    "outputSchema": {
+      "$defs": {
+        "Day": {
+          "properties": {
+            "date": {
+              "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "meals": {
+              "items": {
+                "$ref": "#/$defs/Meal"
+              },
+              "type": "array"
+            },
+            "reminder": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reminder"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present only when `days.reminder_title` is non-null."
+            },
+            "shoppingListIds": {
+              "description": "Lists shown on this day, by `day_shopping_lists.position`.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "weekday": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "date",
+            "weekday",
+            "meals",
+            "shoppingListIds"
+          ],
+          "type": "object"
+        },
+        "Meal": {
+          "properties": {
+            "assemblyTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "carbsG": {
+              "format": "double",
+              "type": "number"
+            },
+            "cookTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "fatG": {
+              "format": "double",
+              "type": "number"
+            },
+            "fiberG": {
+              "format": "double",
+              "type": "number"
+            },
+            "forTwo": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kcal": {
+              "format": "double",
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "proteinG": {
+              "format": "double",
+              "type": "number"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "type": "array"
+            },
+            "tip": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "name",
+            "description",
+            "kcal",
+            "proteinG",
+            "fatG",
+            "carbsG",
+            "fiberG",
+            "forTwo",
+            "steps"
+          ],
+          "type": "object"
+        },
+        "PrepSession": {
+          "properties": {
+            "covers": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "tasks": {
+              "description": "By `prep_tasks.position`.",
+              "items": {
+                "$ref": "#/$defs/PrepTask"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "tasks"
+          ],
+          "type": "object"
+        },
+        "PrepTask": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "time": {
+              "description": "Display text, never parsed.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "time",
+            "instructions"
+          ],
+          "type": "object"
+        },
+        "Reminder": {
+          "properties": {
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "type": "object"
+        },
+        "ShoppingCategory": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ShoppingItem"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "items"
+          ],
+          "type": "object"
+        },
+        "ShoppingItem": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "ShoppingList": {
+          "properties": {
+            "categories": {
+              "items": {
+                "$ref": "#/$defs/ShoppingCategory"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "categories"
+          ],
+          "type": "object"
+        },
+        "Step": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "StrategyCard": {
+          "properties": {
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "items": {
+              "description": "By `strategy_items.position`.",
+              "items": {
+                "$ref": "#/$defs/StrategyItem"
+              },
+              "type": "array"
+            },
+            "theme": {
+              "description": "One of `green`, `blue`, `purple`, `yellow` (enforced by the database).",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "theme",
+            "items"
+          ],
+          "type": "object"
+        },
+        "StrategyItem": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "Week": {
+          "properties": {
+            "endDate": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isoWeek": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "isoYear": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "prepIntro": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "startDate": {
+              "type": "string"
+            },
+            "subtitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "isoYear",
+            "isoWeek",
+            "startDate",
+            "endDate"
+          ],
+          "type": "object"
+        },
+        "WeekDocument": {
+          "properties": {
+            "days": {
+              "items": {
+                "$ref": "#/$defs/Day"
+              },
+              "type": "array"
+            },
+            "prepSessions": {
+              "description": "By `prep_sessions.position`.",
+              "items": {
+                "$ref": "#/$defs/PrepSession"
+              },
+              "type": "array"
+            },
+            "schemaVersion": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "shoppingLists": {
+              "description": "Every list of the week, by `shopping_lists.position`, including unassigned ones.",
+              "items": {
+                "$ref": "#/$defs/ShoppingList"
+              },
+              "type": "array"
+            },
+            "strategyCards": {
+              "description": "By `strategy_cards.position`.",
+              "items": {
+                "$ref": "#/$defs/StrategyCard"
+              },
+              "type": "array"
+            },
+            "week": {
+              "$ref": "#/$defs/Week"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "week",
+            "days",
+            "shoppingLists",
+            "prepSessions",
+            "strategyCards"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/WeekDocument"
+        },
+        "revision": {
+          "description": "Opaque; derived from all persisted week content.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "title": "Get one week"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Finds meals whose name or description contains query as a literal, case-insensitive substring (wildcard characters match themselves; no fuzzy matching). fromDate and toDate bound the meal's date inclusively. At least a nonempty query or one date bound is required. Results span past and future weeks, newest date first, then meal position, and are paged with nextCursor/cursor. An empty result is a normal response; widen the date range yourself if appropriate. Use get_meal with a result's id for the full recipe.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "description": "`nextCursor` from the previous page of the same call.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fromDate": {
+          "description": "Inclusive start of the date filter, `YYYY-MM-DD`.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "limit": {
+          "description": "Page size, 1 to 100. Defaults to 20.",
+          "format": "uint32",
+          "maximum": 100,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "query": {
+          "description": "Literal, case-insensitive text to find in meal names and descriptions. Required unless a date\nbound is given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "toDate": {
+          "description": "Inclusive end of the date filter, `YYYY-MM-DD`.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "search_meals",
+    "outputSchema": {
+      "$defs": {
+        "MealHit": {
+          "description": "One `search_meals` match.",
+          "properties": {
+            "date": {
+              "description": "`YYYY-MM-DD` of the meal's day.",
+              "type": "string"
+            },
+            "description": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isoWeek": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "isoYear": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "name": {
+              "type": "string"
+            },
+            "type": {
+              "type": "string"
+            },
+            "weekPath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "description",
+            "type",
+            "date",
+            "isoYear",
+            "isoWeek",
+            "weekPath"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "meals": {
+          "items": {
+            "$ref": "#/$defs/MealHit"
+          },
+          "type": "array"
+        },
+        "nextCursor": {
+          "description": "Null when there are no further results.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "meals"
+      ],
+      "type": "object"
+    },
+    "title": "Search saved meals"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Returns one saved meal with every field: description, ordered recipe steps, timings, tip, nutrition, plus the meal's date, weekday, ISO week and week page path. The recipe is the one stored on that dated meal. Unknown ids are meal_not_found.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "mealId": {
+          "description": "Meal id, a lowercase UUID, as returned by `search_meals` or `get_week`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mealId"
+      ],
+      "type": "object"
+    },
+    "name": "get_meal",
+    "outputSchema": {
+      "$defs": {
+        "Step": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "assemblyTime": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "carbsG": {
+          "format": "double",
+          "type": "number"
+        },
+        "cookTime": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "date": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "fatG": {
+          "format": "double",
+          "type": "number"
+        },
+        "fiberG": {
+          "format": "double",
+          "type": "number"
+        },
+        "forTwo": {
+          "type": "boolean"
+        },
+        "id": {
+          "type": "string"
+        },
+        "isoWeek": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "isoYear": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "kcal": {
+          "format": "double",
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "proteinG": {
+          "format": "double",
+          "type": "number"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/Step"
+          },
+          "type": "array"
+        },
+        "tip": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "type": "string"
+        },
+        "weekPath": {
+          "type": "string"
+        },
+        "weekday": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "id",
+        "type",
+        "name",
+        "description",
+        "kcal",
+        "proteinG",
+        "fatG",
+        "carbsG",
+        "fiberG",
+        "forTwo",
+        "steps",
+        "date",
+        "weekday",
+        "isoYear",
+        "isoWeek",
+        "weekPath"
+      ],
+      "type": "object"
+    },
+    "title": "Get one meal with its recipe"
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": true
+    },
+    "description": "Use this whenever the user asks what to buy or what is on the shopping list for a day, such as today. Returns only the shopping lists assigned to that date (default: today in the service timezone), resolved by the server, in stored order with their categories and items, each list once, nothing merged. Prefer it to get_week, which returns the whole week and leaves matching lists to days to you. planExists distinguishes a week with no saved plan from a plan that has no lists on that day. Lists assigned only to other days, or to no day, are excluded.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "date": {
+          "description": "`YYYY-MM-DD`. Defaults to today in the service timezone.",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "name": "get_shopping_lists",
+    "outputSchema": {
+      "$defs": {
+        "ShoppingCategory": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ShoppingItem"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "items"
+          ],
+          "type": "object"
+        },
+        "ShoppingItem": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "ShoppingList": {
+          "properties": {
+            "categories": {
+              "items": {
+                "$ref": "#/$defs/ShoppingCategory"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "categories"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "date": {
+          "type": "string"
+        },
+        "isoWeek": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "isoYear": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "lists": {
+          "description": "Assigned lists in `day_shopping_lists.position` order; empty when none or no plan.",
+          "items": {
+            "$ref": "#/$defs/ShoppingList"
+          },
+          "type": "array"
+        },
+        "planExists": {
+          "type": "boolean"
+        },
+        "timezone": {
+          "type": "string"
+        },
+        "weekPath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "date",
+        "timezone",
+        "planExists",
+        "isoYear",
+        "isoWeek",
+        "weekPath",
+        "lists"
+      ],
+      "type": "object"
+    },
+    "title": "Get the shopping lists for a day"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Creates or replaces ONE ISO week. This is a full replacement within that week: any existing day, meal, step, shopping list, category, item, prep session or strategy card that is not in the submitted document is deleted. To change one thing, call get_week, edit the document, and submit all of it. Other weeks are never touched. Use client-generated lowercase UUIDs for new records and keep existing ids to preserve them. Optional values must be explicit nulls; array order is stored order. expectedRevision null creates only and fails if the week exists; otherwise it must equal the revision from get_week, and a mismatch returns revision_conflict, after which you must fetch the week again and reconcile. There is no force option. The whole save is one transaction: an invalid document changes nothing. Returns the committed week and its new revision.",
+    "inputSchema": {
+      "$defs": {
+        "DayInput": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "meals": {
+              "items": {
+                "$ref": "#/$defs/MealInput"
+              },
+              "type": "array"
+            },
+            "reminder": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ReminderInput"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "shoppingListIds": {
+              "description": "Ids of lists in this document's `shoppingLists`, in display order.",
+              "items": {
+                "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "weekday": {
+              "description": "1 (Monday) ..= 7 (Sunday).",
+              "format": "uint32",
+              "maximum": 7,
+              "minimum": 1,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "id",
+            "weekday",
+            "meals",
+            "shoppingListIds",
+            "reminder"
+          ],
+          "type": "object"
+        },
+        "MealInput": {
+          "additionalProperties": false,
+          "properties": {
+            "assemblyTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "carbsG": {
+              "format": "double",
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "cookTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "fatG": {
+              "format": "double",
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "fiberG": {
+              "format": "double",
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "forTwo": {
+              "type": "boolean"
+            },
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "kcal": {
+              "format": "double",
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "proteinG": {
+              "format": "double",
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/TextInput"
+              },
+              "type": "array"
+            },
+            "tip": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "$ref": "#/$defs/MealType"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "name",
+            "description",
+            "kcal",
+            "proteinG",
+            "fatG",
+            "carbsG",
+            "fiberG",
+            "forTwo",
+            "assemblyTime",
+            "cookTime",
+            "tip",
+            "steps"
+          ],
+          "type": "object"
+        },
+        "MealType": {
+          "enum": [
+            "Breakfast",
+            "Lunch",
+            "Dinner",
+            "Snack"
+          ],
+          "type": "string"
+        },
+        "PrepSessionInput": {
+          "additionalProperties": false,
+          "properties": {
+            "covers": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "tasks": {
+              "items": {
+                "$ref": "#/$defs/PrepTaskInput"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "covers",
+            "tasks"
+          ],
+          "type": "object"
+        },
+        "PrepTaskInput": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "time": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "time",
+            "instructions"
+          ],
+          "type": "object"
+        },
+        "ReminderInput": {
+          "additionalProperties": false,
+          "properties": {
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "body",
+            "icon"
+          ],
+          "type": "object"
+        },
+        "ShoppingCategoryInput": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/TextInput"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "items"
+          ],
+          "type": "object"
+        },
+        "ShoppingListInput": {
+          "additionalProperties": false,
+          "properties": {
+            "categories": {
+              "items": {
+                "$ref": "#/$defs/ShoppingCategoryInput"
+              },
+              "type": "array"
+            },
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "note",
+            "categories"
+          ],
+          "type": "object"
+        },
+        "StrategyCardInput": {
+          "additionalProperties": false,
+          "properties": {
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/TextInput"
+              },
+              "type": "array"
+            },
+            "theme": {
+              "$ref": "#/$defs/Theme"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "icon",
+            "theme",
+            "items"
+          ],
+          "type": "object"
+        },
+        "TextInput": {
+          "additionalProperties": false,
+          "description": "A step, shopping item or strategy item.",
+          "properties": {
+            "id": {
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "Theme": {
+          "enum": [
+            "green",
+            "blue",
+            "purple",
+            "yellow"
+          ],
+          "type": "string"
+        },
+        "WeekFieldsInput": {
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "description": "Canonical lowercase UUID; must equal the stored id when replacing an existing week.",
+              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+              "type": "string"
+            },
+            "prepIntro": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "subtitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "subtitle",
+            "prepIntro"
+          ],
+          "type": "object"
+        },
+        "WeekInput": {
+          "additionalProperties": false,
+          "properties": {
+            "days": {
+              "description": "Day records, at most one per weekday. A weekday that is absent has no day record.",
+              "items": {
+                "$ref": "#/$defs/DayInput"
+              },
+              "type": "array"
+            },
+            "prepSessions": {
+              "items": {
+                "$ref": "#/$defs/PrepSessionInput"
+              },
+              "type": "array"
+            },
+            "shoppingLists": {
+              "items": {
+                "$ref": "#/$defs/ShoppingListInput"
+              },
+              "type": "array"
+            },
+            "strategyCards": {
+              "items": {
+                "$ref": "#/$defs/StrategyCardInput"
+              },
+              "type": "array"
+            },
+            "week": {
+              "$ref": "#/$defs/WeekFieldsInput"
+            }
+          },
+          "required": [
+            "week",
+            "days",
+            "shoppingLists",
+            "prepSessions",
+            "strategyCards"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/WeekInput",
+          "description": "The complete week. Everything not listed here is deleted from the stored week."
+        },
+        "expectedRevision": {
+          "description": "The `revision` from `get_week` for this week, or null to create a week that does not exist yet.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isoWeek": {
+          "description": "ISO week number of the week to save, 1 to 53.",
+          "format": "uint32",
+          "maximum": 53,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "isoYear": {
+          "description": "ISO week-numbering year of the week to save.",
+          "format": "int32",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "isoYear",
+        "isoWeek",
+        "expectedRevision",
+        "document"
+      ],
+      "type": "object"
+    },
+    "name": "save_week",
+    "outputSchema": {
+      "$defs": {
+        "Day": {
+          "properties": {
+            "date": {
+              "type": "string"
+            },
+            "id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "meals": {
+              "items": {
+                "$ref": "#/$defs/Meal"
+              },
+              "type": "array"
+            },
+            "reminder": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Reminder"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Present only when `days.reminder_title` is non-null."
+            },
+            "shoppingListIds": {
+              "description": "Lists shown on this day, by `day_shopping_lists.position`.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "weekday": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "date",
+            "weekday",
+            "meals",
+            "shoppingListIds"
+          ],
+          "type": "object"
+        },
+        "Meal": {
+          "properties": {
+            "assemblyTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "carbsG": {
+              "format": "double",
+              "type": "number"
+            },
+            "cookTime": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "description": {
+              "type": "string"
+            },
+            "fatG": {
+              "format": "double",
+              "type": "number"
+            },
+            "fiberG": {
+              "format": "double",
+              "type": "number"
+            },
+            "forTwo": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string"
+            },
+            "kcal": {
+              "format": "double",
+              "type": "number"
+            },
+            "name": {
+              "type": "string"
+            },
+            "proteinG": {
+              "format": "double",
+              "type": "number"
+            },
+            "steps": {
+              "items": {
+                "$ref": "#/$defs/Step"
+              },
+              "type": "array"
+            },
+            "tip": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "type": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "name",
+            "description",
+            "kcal",
+            "proteinG",
+            "fatG",
+            "carbsG",
+            "fiberG",
+            "forTwo",
+            "steps"
+          ],
+          "type": "object"
+        },
+        "PrepSession": {
+          "properties": {
+            "covers": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "tasks": {
+              "description": "By `prep_tasks.position`.",
+              "items": {
+                "$ref": "#/$defs/PrepTask"
+              },
+              "type": "array"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "tasks"
+          ],
+          "type": "object"
+        },
+        "PrepTask": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "instructions": {
+              "type": "string"
+            },
+            "name": {
+              "type": "string"
+            },
+            "time": {
+              "description": "Display text, never parsed.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "time",
+            "instructions"
+          ],
+          "type": "object"
+        },
+        "Reminder": {
+          "properties": {
+            "body": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "type": "object"
+        },
+        "ShoppingCategory": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "items": {
+              "items": {
+                "$ref": "#/$defs/ShoppingItem"
+              },
+              "type": "array"
+            },
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "name",
+            "items"
+          ],
+          "type": "object"
+        },
+        "ShoppingItem": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "ShoppingList": {
+          "properties": {
+            "categories": {
+              "items": {
+                "$ref": "#/$defs/ShoppingCategory"
+              },
+              "type": "array"
+            },
+            "id": {
+              "type": "string"
+            },
+            "label": {
+              "type": "string"
+            },
+            "note": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "label",
+            "categories"
+          ],
+          "type": "object"
+        },
+        "Step": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "StrategyCard": {
+          "properties": {
+            "icon": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "items": {
+              "description": "By `strategy_items.position`.",
+              "items": {
+                "$ref": "#/$defs/StrategyItem"
+              },
+              "type": "array"
+            },
+            "theme": {
+              "description": "One of `green`, `blue`, `purple`, `yellow` (enforced by the database).",
+              "type": "string"
+            },
+            "title": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "title",
+            "theme",
+            "items"
+          ],
+          "type": "object"
+        },
+        "StrategyItem": {
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "text"
+          ],
+          "type": "object"
+        },
+        "Week": {
+          "properties": {
+            "endDate": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "isoWeek": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "isoYear": {
+              "format": "int32",
+              "type": "integer"
+            },
+            "prepIntro": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "startDate": {
+              "type": "string"
+            },
+            "subtitle": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "isoYear",
+            "isoWeek",
+            "startDate",
+            "endDate"
+          ],
+          "type": "object"
+        },
+        "WeekDocument": {
+          "properties": {
+            "days": {
+              "items": {
+                "$ref": "#/$defs/Day"
+              },
+              "type": "array"
+            },
+            "prepSessions": {
+              "description": "By `prep_sessions.position`.",
+              "items": {
+                "$ref": "#/$defs/PrepSession"
+              },
+              "type": "array"
+            },
+            "schemaVersion": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "shoppingLists": {
+              "description": "Every list of the week, by `shopping_lists.position`, including unassigned ones.",
+              "items": {
+                "$ref": "#/$defs/ShoppingList"
+              },
+              "type": "array"
+            },
+            "strategyCards": {
+              "description": "By `strategy_cards.position`.",
+              "items": {
+                "$ref": "#/$defs/StrategyCard"
+              },
+              "type": "array"
+            },
+            "week": {
+              "$ref": "#/$defs/Week"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "week",
+            "days",
+            "shoppingLists",
+            "prepSessions",
+            "strategyCards"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "document": {
+          "$ref": "#/$defs/WeekDocument"
+        },
+        "revision": {
+          "description": "Opaque; derived from all persisted week content.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "document",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "title": "Save a complete week"
+  }
+]

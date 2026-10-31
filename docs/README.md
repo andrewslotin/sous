@@ -11,7 +11,7 @@ Implement features in the order below. Each iteration includes its own verificat
 | 3 | [Shopping lists](features/003-shopping-lists.md) | Done | 2 |
 | 4 | [Prep, strategy, and reminders](features/004-weekly-content.md) | Done | 3 |
 | 5 | [Read API and service verification](features/005-read-api.md) | Done | 4 |
-| 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Planned | 5 |
+| 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Done | 5 |
 
 ## Implementation baseline
 

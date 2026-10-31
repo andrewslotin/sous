@@ -2,8 +2,10 @@ pub mod api;
 pub mod assets;
 pub mod calendar;
 pub mod db;
+pub mod mcp;
 pub mod model;
 pub mod queries;
+pub mod save;
 
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
@@ -37,6 +39,28 @@ pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
             clock,
         })
         .merge(assets::routes())
+}
+
+/// Write pool and request-validation settings for `/mcp`.
+pub struct McpConfig {
+    /// Dedicated writable pool; used only by `save_week`.
+    pub write_pool: SqlitePool,
+    /// Accepted `Host` values; empty means the loopback defaults.
+    pub allowed_hosts: Vec<String>,
+    /// Accepted `Origin` values; empty rejects every request that carries an `Origin` header.
+    pub allowed_origins: Vec<String>,
+}
+
+/// `app(read_pool, clock)` plus the `/mcp` endpoint.
+pub fn app_with_mcp(read_pool: SqlitePool, clock: Clock, mcp: McpConfig) -> Router {
+    let service = mcp::service(
+        read_pool.clone(),
+        mcp.write_pool,
+        clock.clone(),
+        mcp.allowed_hosts,
+        mcp.allowed_origins,
+    );
+    app(read_pool, clock).nest_service("/mcp", service)
 }
 
 /// Dynamic HTML and JSON are never cached; assets keep their own headers.

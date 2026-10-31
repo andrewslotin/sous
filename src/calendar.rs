@@ -36,6 +36,32 @@ impl Clock {
     pub fn today(&self) -> NaiveDate {
         (self.now)().with_timezone(&self.tz).date_naive()
     }
+
+    /// The configured service timezone.
+    pub fn timezone(&self) -> Tz {
+        self.tz
+    }
+}
+
+/// Parse a strict `YYYY-MM-DD` calendar date (four-digit year 0001–9999, two-digit month and day).
+/// Anything else, including `2026-1-5`, surrounding whitespace and impossible dates, is `None`.
+pub fn parse_date(value: &str) -> Option<NaiveDate> {
+    let b = value.as_bytes();
+    if b.len() != 10 || b[4] != b'-' || b[7] != b'-' {
+        return None;
+    }
+    let digits = |range: std::ops::Range<usize>| -> Option<u32> {
+        let part = &b[range];
+        if !part.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        Some(part.iter().fold(0, |n, d| n * 10 + u32::from(d - b'0')))
+    };
+    let year = digits(0..4)?;
+    if year == 0 {
+        return None;
+    }
+    NaiveDate::from_ymd_opt(year as i32, digits(5..7)?, digits(8..10)?)
 }
 
 /// Parse an `APP_TIMEZONE` value. `None` means unset and yields [`DEFAULT_TIMEZONE`];
@@ -282,6 +308,51 @@ mod tests {
         assert_eq!(clock.today(), d(2026, 11, 1));
         secs.store(utc(2026, 11, 2, 0, 0, 0).timestamp(), Ordering::SeqCst);
         assert_eq!(clock.today(), d(2026, 11, 2));
+    }
+
+    #[test]
+    fn parse_date_is_strict() {
+        assert_eq!(parse_date("2026-10-26"), Some(d(2026, 10, 26)));
+        assert_eq!(parse_date("0001-01-01"), Some(d(1, 1, 1)));
+        assert_eq!(parse_date("9999-12-31"), Some(d(9999, 12, 31)));
+        assert_eq!(parse_date("2024-02-29"), Some(d(2024, 2, 29)));
+        for bad in [
+            "",
+            "2026-1-5",
+            "2026-01-5",
+            " 2026-01-05",
+            "2026-01-05 ",
+            "2026-02-30",
+            "2025-02-29",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-01-00",
+            "0000-01-01",
+            "10000-01-01",
+            "2026/01/05",
+            "20260105",
+            "+026-01-05",
+            "2026-01-+5",
+            "２０２６-01-05",
+            "2026-01-05T00:00:00",
+        ] {
+            assert_eq!(parse_date(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn clock_reports_its_timezone() {
+        let instant = utc(2026, 10, 26, 9, 0, 0);
+        assert_eq!(
+            Clock::fixed(chrono_tz::Europe::Berlin, instant).timezone(),
+            chrono_tz::Europe::Berlin
+        );
+        assert_eq!(
+            Clock::system(chrono_tz::Pacific::Kiritimati)
+                .timezone()
+                .name(),
+            "Pacific/Kiritimati"
+        );
     }
 
     #[test]

@@ -85,6 +85,8 @@ struct Opts {
     clock: Clock,
     db: Db,
     path: &'static str,
+    /// Serve `/mcp` too (with a writable pool).
+    mcp: bool,
 }
 
 impl Opts {
@@ -95,7 +97,13 @@ impl Opts {
             clock: test_clock(),
             db: Db::Fixture,
             path: "/2026/44",
+            mcp: false,
         }
+    }
+
+    fn mcp(mut self) -> Self {
+        self.mcp = true;
+        self
     }
 
     fn sql(mut self, sql: &str) -> Self {
@@ -134,6 +142,7 @@ impl Opts {
             clock,
             db: mode,
             path,
+            mcp,
         } = self;
         let base = rt.block_on(async {
             let pool = if mode == Db::NoTables {
@@ -168,9 +177,20 @@ impl Opts {
             };
             let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
             let addr = listener.local_addr().unwrap();
-            tokio::spawn(
-                async move { axum::serve(listener, sous::app(pool, clock)).await.unwrap() },
-            );
+            let app = if mcp {
+                sous::app_with_mcp(
+                    pool,
+                    clock,
+                    sous::McpConfig {
+                        write_pool: db::open_write_pool(&db_path).await.unwrap(),
+                        allowed_hosts: vec![],
+                        allowed_origins: vec![],
+                    },
+                )
+            } else {
+                sous::app(pool, clock)
+            };
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             format!("http://{addr}")
         });
         // No path: headless_chrome uses $CHROME, then searches PATH and standard install locations.
@@ -2120,4 +2140,111 @@ fn visual_capture_at_375px() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn visual_capture_at_1280px() {
     visual_capture(1280);
+}
+
+/// Save a week through the real MCP endpoint of the in-process server.
+fn mcp_save_week(h: &Harness, args: serde_json::Value) {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientConfig, Implementation};
+    use rmcp::transport::StreamableHttpClientTransport;
+    use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
+
+    let serde_json::Value::Object(arguments) = args else {
+        panic!("arguments must be an object")
+    };
+    let url = format!("{}/mcp", h.base);
+    let result = h.rt.block_on(async move {
+        let client = ClientConfig::new(
+            ClientCapabilities::default(),
+            Implementation::new("sous-browser-test", "0.1.0"),
+        )
+        .serve(StreamableHttpClientTransport::from_config(
+            StreamableHttpClientTransportConfig::with_uri(url),
+        ))
+        .await
+        .expect("connect");
+        let result = client
+            .call_tool(CallToolRequestParams::new("save_week").with_arguments(arguments))
+            .await
+            .expect("save_week");
+        client.cancel().await.ok();
+        result
+    });
+    assert_ne!(result.is_error, Some(true), "{result:?}");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn week_saved_through_mcp_renders_in_the_browser() {
+    use serde_json::json;
+    let u = |n: u32| format!("e6000000-0000-4000-8000-{n:012x}");
+    let meal = |n: u32, kind: &str, name: &str, steps: [&str; 2]| {
+        json!({
+            "id": u(n), "type": kind, "name": name, "description": "Per person",
+            "kcal": 400, "proteinG": 30, "fatG": 10, "carbsG": 40, "fiberG": 8, "forTwo": true,
+            "assemblyTime": "10 min", "cookTime": null, "tip": "Taste before serving.",
+            "steps": [
+                {"id": u(n + 1), "text": steps[0]},
+                {"id": u(n + 2), "text": steps[1]},
+            ],
+        })
+    };
+    let document = json!({
+        "week": {"id": u(1), "subtitle": "Saved by an assistant", "prepIntro": "Prep on Sunday."},
+        "days": [{
+            "id": u(2), "weekday": 1,
+            "meals": [
+                meal(10, "Breakfast", "Overnight Oats", ["Stir oats and milk.", "Chill overnight."]),
+                meal(20, "Dinner", "Red Lentil Soup", ["Sweat the onion.", "Simmer the lentils."]),
+            ],
+            "shoppingListIds": [u(30)],
+            "reminder": {"title": "Soak the oats", "body": null, "icon": "🌙"},
+        }],
+        "shoppingLists": [{
+            "id": u(30), "label": "Monday Shop", "note": null,
+            "categories": [{"id": u(40), "name": "Produce", "items": [
+                {"id": u(41), "text": "2 onions"}, {"id": u(42), "text": "1 lemon"},
+            ]}],
+        }],
+        "prepSessions": [],
+        "strategyCards": [{
+            "id": u(50), "title": "Batch cooking", "icon": null, "theme": "green",
+            "items": [{"id": u(51), "text": "Double the soup."}],
+        }],
+    });
+
+    let h = Opts::new().db(Db::Empty).mcp().path("/weeks").launch();
+    mcp_save_week(
+        &h,
+        json!({"isoYear": 2026, "isoWeek": 45, "expectedRevision": null, "document": document}),
+    );
+
+    h.goto("/2026/45");
+    h.js("(() => { document.querySelectorAll('.day-button')[0].click(); return true; })()");
+    assert_eq!(h.texts(".meal-name"), ["Overnight Oats", "Red Lentil Soup"]);
+    assert_eq!(h.texts(".subtitle"), ["Saved by an assistant"]);
+    assert_eq!(h.texts(".reminder-title"), ["Soak the oats"]);
+    assert_eq!(h.texts(".shop-label"), ["Monday Shop"]);
+
+    h.js("(() => { document.querySelectorAll('.meal-toggle').forEach(b => b.click()); return true; })()");
+    h.wait_for("document.querySelectorAll('.steps').length === 2");
+    assert_eq!(
+        h.texts(".steps li"),
+        [
+            "Stir oats and milk.",
+            "Chill overnight.",
+            "Sweat the onion.",
+            "Simmer the lentils."
+        ]
+    );
+
+    h.click(".shop-toggle");
+    h.wait_for("document.querySelector('.shop-items') !== null");
+    assert_eq!(h.texts(".shop-cat-name"), ["Produce"]);
+    assert_eq!(h.texts(".shop-items li"), ["2 onions", "1 lemon"]);
+
+    h.js("(() => { document.querySelectorAll('.tab-button')[2].click(); return true; })()");
+    h.wait_for("document.querySelector('.strategy-title') !== null");
+    assert_eq!(h.texts(".strategy-title"), ["Batch cooking"]);
+    assert_eq!(h.texts(".strategy-items li"), ["Double the soup."]);
 }

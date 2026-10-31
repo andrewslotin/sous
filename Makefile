@@ -18,6 +18,7 @@ migrate:
 seed: migrate
 	sqlite3 $(SOUS_DATABASE) < fixtures/2026-w44.sql
 	sqlite3 $(SOUS_DATABASE) < fixtures/2026-w44-weekly.sql
+	sqlite3 $(SOUS_DATABASE) < fixtures/2026-history.sql
 
 reset:
 	rm -f $(SOUS_DATABASE) $(SOUS_DATABASE)-shm $(SOUS_DATABASE)-wal

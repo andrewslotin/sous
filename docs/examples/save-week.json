@@ -1,0 +1,136 @@
+{
+  "week": {
+    "id": "5a5a0001-0000-4000-8000-000000000001",
+    "subtitle": "Warming one-pot dinners",
+    "prepIntro": "Sunday: cook the lentils and wash the greens so weeknight dinners take 20 minutes."
+  },
+  "days": [
+    {
+      "id": "5a5a0002-0000-4000-8000-000000000001",
+      "weekday": 1,
+      "meals": [
+        {
+          "id": "5a5a0003-0000-4000-8000-000000000001",
+          "type": "Breakfast",
+          "name": "Overnight Oats",
+          "description": "Per person: 50g oats, 150ml oat milk, 1 tbsp chia, berries",
+          "kcal": 390,
+          "proteinG": 14.5,
+          "fatG": 11,
+          "carbsG": 55,
+          "fiberG": 11,
+          "forTwo": true,
+          "assemblyTime": "5 min",
+          "cookTime": null,
+          "tip": "Make it the night before.",
+          "steps": [
+            { "id": "5a5a0004-0000-4000-8000-000000000001", "text": "Stir oats, milk and chia in a jar." },
+            { "id": "5a5a0004-0000-4000-8000-000000000002", "text": "Refrigerate overnight and top with berries." }
+          ]
+        },
+        {
+          "id": "5a5a0003-0000-4000-8000-000000000002",
+          "type": "Dinner",
+          "name": "Red Lentil Soup",
+          "description": "Per person: 80g red lentils, onion, carrot, lemon",
+          "kcal": 520,
+          "proteinG": 28,
+          "fatG": 9.5,
+          "carbsG": 74,
+          "fiberG": 16,
+          "forTwo": true,
+          "assemblyTime": "10 min",
+          "cookTime": "25 min",
+          "tip": null,
+          "steps": [
+            { "id": "5a5a0004-0000-4000-8000-000000000003", "text": "Sweat the onion and carrot in a little oil." },
+            { "id": "5a5a0004-0000-4000-8000-000000000004", "text": "Add lentils and water, simmer for 20 minutes." },
+            { "id": "5a5a0004-0000-4000-8000-000000000005", "text": "Blend half, season, and finish with lemon juice." }
+          ]
+        }
+      ],
+      "shoppingListIds": [
+        "5a5a0006-0000-4000-8000-000000000001",
+        "5a5a0006-0000-4000-8000-000000000002"
+      ],
+      "reminder": {
+        "title": "Soak the oats tonight",
+        "body": null,
+        "icon": "🌙"
+      }
+    },
+    {
+      "id": "5a5a0002-0000-4000-8000-000000000002",
+      "weekday": 2,
+      "meals": [],
+      "shoppingListIds": [
+        "5a5a0006-0000-4000-8000-000000000001",
+        "5a5a0006-0000-4000-8000-000000000002"
+      ],
+      "reminder": null
+    }
+  ],
+  "shoppingLists": [
+    {
+      "id": "5a5a0006-0000-4000-8000-000000000001",
+      "label": "🛒 Monday Shop",
+      "note": "Check the pantry for oats and chia first.",
+      "categories": [
+        {
+          "id": "5a5a0007-0000-4000-8000-000000000001",
+          "name": "Produce",
+          "items": [
+            { "id": "5a5a0008-0000-4000-8000-000000000001", "text": "2 onions" },
+            { "id": "5a5a0008-0000-4000-8000-000000000002", "text": "4 carrots" },
+            { "id": "5a5a0008-0000-4000-8000-000000000003", "text": "2 lemons" }
+          ]
+        },
+        {
+          "id": "5a5a0007-0000-4000-8000-000000000002",
+          "name": "Bakery",
+          "items": []
+        }
+      ]
+    },
+    {
+      "id": "5a5a0006-0000-4000-8000-000000000002",
+      "label": "🧴 Household",
+      "note": null,
+      "categories": [
+        {
+          "id": "5a5a0007-0000-4000-8000-000000000003",
+          "name": "Cleaning",
+          "items": [
+            { "id": "5a5a0008-0000-4000-8000-000000000004", "text": "Dish soap" }
+          ]
+        }
+      ]
+    }
+  ],
+  "prepSessions": [
+    {
+      "id": "5a5a0009-0000-4000-8000-000000000001",
+      "title": "Sunday prep",
+      "covers": "Mon to Tue",
+      "tasks": [
+        {
+          "id": "5a5a000a-0000-4000-8000-000000000001",
+          "name": "Cook the lentils",
+          "time": "20 min",
+          "instructions": "Rinse, boil in salted water, drain and cool."
+        }
+      ]
+    }
+  ],
+  "strategyCards": [
+    {
+      "id": "5a5a000b-0000-4000-8000-000000000001",
+      "title": "Batch cooking",
+      "icon": "🍲",
+      "theme": "green",
+      "items": [
+        { "id": "5a5a000c-0000-4000-8000-000000000001", "text": "Double the soup and freeze half." }
+      ]
+    }
+  ]
+}

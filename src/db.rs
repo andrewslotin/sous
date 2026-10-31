@@ -25,6 +25,18 @@ pub async fn migrate(path: &Path) -> Result<(), Box<dyn std::error::Error + Send
     Ok(())
 }
 
+/// Open the dedicated writable pool used only by the MCP `save_week` tool.
+pub async fn open_write_pool(path: &Path) -> Result<SqlitePool, sqlx::Error> {
+    SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            options(path)
+                .journal_mode(SqliteJournalMode::Wal)
+                .busy_timeout(std::time::Duration::from_secs(5)),
+        )
+        .await
+}
+
 /// Open the read-only pool used by request handlers.
 pub async fn open_read_pool(path: &Path) -> Result<SqlitePool, sqlx::Error> {
     SqlitePoolOptions::new()

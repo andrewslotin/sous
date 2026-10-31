@@ -3,6 +3,7 @@
 - Messaging any TUI agent with `agtermctl session type`: type the text, then send Enter as a SEPARATE call in the same
   turn, and read the pane back to confirm it was submitted. To get answers back, ask the agent to reply over agterm,
   not by writing a file that I poll. The Codex-specific steps are in the implement-feature skill, step 5.
+  Long agterm replies arrive truncated: ask for one message per finding, each under 400 characters.
 - When a tool call fails, or a hook stops or blocks one, tell the user at once in one line: what fired and what I'll
   do next. Never end a turn silently. Keep exploratory command chains short (at most three calls before a status
   line), and post a one-line status after loading context (before writing a brief) and before a multi-call handoff
@@ -28,3 +29,6 @@
   links ("the [OpenAPI document](docs/openapi.json)"). After a correction, fix every instance, not just the one named.
 - When the spec is silent on how an empty child collection displays (e.g. a prep session with no tasks), ask the
   user before building it. Don't settle it myself and list it as a scope decision.
+- MCP tool descriptions must say when to use the tool, not only what it returns. When a narrow tool overlaps a broad
+  one (`get_shopping_lists` vs `get_week`), point each description and the server instructions at the right one.
+  A real client picked `get_week` for "today's shopping list" until the descriptions said so.

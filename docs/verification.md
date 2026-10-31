@@ -35,9 +35,31 @@ Maps every acceptance criterion in the [technical design](technical-design.md#ve
 | 7 | Mobile/desktop visual verification of all tabs, expanded cards, empty states and archived/current week selection | Browser: `visual_capture_at_375px`/`1280px` (asserts selections and empty states, writes screenshots). Manual: visual check below. |
 | 8 | Every technical-design criterion is covered | This document. |
 
+## Feature 6: MCP meal planning
+
+Protocol tests are in `tests/mcp.rs`; data-layer tests are in `tests/planning.rs`. Client setup and tool semantics
+are in the [MCP guide](mcp.md), and `mcp_tools_doc_matches_server` keeps the [tool list](mcp-tools.json) in step with the server.
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | A client discovers and runs every tool; malformed requests and unsupported protocol versions fail cleanly | MCP: `stateless_flow_lists_seven_tools_and_calls_them`, `legacy_initialize_flow_works`, `server_info_names_sous_and_warns_that_text_is_data`, `malformed_and_unsupported_requests_fail_cleanly`, `argument_errors_are_tool_errors`, `mcp_tools_doc_matches_server`. |
+| 2 | The three user journeys work on a fixed-clock fixture | MCP: `journey_plan_recall_and_shop`, `save_week_example_round_trips`. |
+| 3 | Defaults follow `APP_TIMEZONE` across midnight, DST and ISO year boundaries; explicit dates do not | MCP: `defaults_follow_the_service_timezone`, `explicit_dates_ignore_the_clock_timezone`. |
+| 4 | Search: multiple, none, repeated, case, literal wildcards, date boundaries, pagination | Planning: `search_meals_matches_literally_and_case_insensitively`, `search_meals_by_date_range_only`, `search_meals_pages_without_skips_or_repeats`, `search_meals_cursor_survives_inserted_meals`, `search_meals_rejects_foreign_cursors`, `list_weeks_page_walks_every_page_once`. MCP: `search_paginates_through_the_cursor`. |
+| 5 | Shopping queries distinguish missing plans, missing days, no lists, empty lists and shared lists | Planning: `shopping_lists_on_monday_and_wednesday`, `shopping_lists_on_days_without_lists`, `shopping_lists_on_keeps_empty_lists_and_categories`. MCP: `shopping_cases_through_mcp`. |
+| 6 | MCP and the read API agree; recipe retrieval has every field and the source date; copies do not change history | MCP: `get_week_equals_the_read_api_and_get_meal_has_every_field`. Planning: `get_meal_returns_every_field`, `saved_history_is_independent_of_copies`. |
+| 7 | Creating and revising a week preserves ids, order and content; the next web/API read shows it | Planning: `save_creates_a_week_and_round_trips`, `save_revises_with_reordering_drops_and_additions`, `saved_content_is_visible_without_restarting`. MCP: `saved_week_is_visible_without_rebuilding_the_router`. Browser: `week_saved_through_mcp_renders_in_the_browser`. |
+| 8 | Invalid saves change nothing; concurrent and external writes are atomic and detected | Planning: `save_rejects_invalid_documents_and_leaves_the_database_unchanged`, `save_detects_stale_and_missing_revisions`, `save_detects_external_edits`, `save_is_atomic_with_concurrent_readers_and_writers`. MCP: `invalid_and_conflicting_saves_change_nothing`. |
+| 9 | Read tools cannot write; page and API mutations still return 405; database errors are safe; bad hosts and origins are rejected | MCP: `read_tools_never_write_and_never_touch_the_write_pool`, `pages_and_api_still_reject_mutations`, `database_failures_return_a_safe_error`, `host_and_origin_validation`. Planning: `write_pool_writes_and_read_pool_rejects`, `database_errors_are_safe`. |
+| 10 | A recorded MCP client run plans, recalls and shops without database access | MCP: `mcp_client_smoke_test` (run with `--nocapture` to print the negotiated protocol version and client). Last run: rmcp 3.8 client `sous-smoke-client 0.1.0`, protocol `2026-07-28`; the legacy handshake negotiated `2025-11-25`. |
+
 ## Manual verification
 
 | Date | Check | Result |
 | --- | --- | --- |
 | 2026-10-31 | Review of `target/visual/` screenshots at 375 px and 1280 px against `docs/examples/menu.html` | Pass: typography, colors, card and badge styles, strategy themes, empty states and selections match; differences limited to the approved ones (bullet shopping lists, ISO day order, archive pages) |
 | 2026-10-31 | Visual check of the running service (`make reset && make run`): all tabs, expanded cards, empty states, archive, current and archived week selection, desktop and narrow mobile | Pass (user) |
+| 2026-10-31 | Connect a real MCP client to the running service: `claude mcp add --transport http sous http://127.0.0.1:3000/mcp`, then `claude mcp list` | Pass (user): Claude Code 2.1.309 reports `sous: http://127.0.0.1:3000/mcp (HTTP) - ✔ Connected` |
+| 2026-11-01 | With the connected client, plan a new week | Pass (user): Claude Code called `list_weeks` and `search_meals` (date range) to review recent plans, then `save_week` for 2026 week 45 with `expectedRevision: null`; the result returned the committed document (7 days, 2 shopping lists, 3 prep sessions, 4 strategy cards) and a new revision |
+| 2026-11-01 | With the connected client, recall "the casserole from three weeks ago" and its steps | Pass (user): Claude Code called `get_context` (today 2026-11-01, Europe/Berlin, week 44), then `get_meal` for the meal found by `search_meals`; it returned Chicken & Broccoli Casserole, Wednesday 2026-10-07 (2026 week 41), with all fields and its 4 stored steps in order |
+| 2026-11-01 | With the connected client, fetch today's shopping lists | Pass (user): Claude Code called `get_context`, then `get_shopping_lists` for 2026-11-01 (Europe/Berlin); it returned `planExists: true` and only the list assigned to Sunday, "🛒 Sunday Lunch → Manchego, Apple & Walnut Salad", with its categories and items in stored order |

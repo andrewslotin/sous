@@ -51,6 +51,20 @@ Configure it with environment variables:
 
 Weeks use ISO 8601 numbering (Monday to Sunday). The API is described in the [OpenAPI document](docs/openapi.json).
 
+### MCP
+
+Sous also serves a [Model Context Protocol](https://modelcontextprotocol.io) endpoint at
+`http://127.0.0.1:3000/mcp`, so an assistant can plan weeks, recall earlier recipes and fetch today's shopping
+lists. To connect Claude Code:
+
+```sh
+claude mcp add --transport http sous http://127.0.0.1:3000/mcp
+```
+
+There is no authentication: keep Sous on the loopback address, or put an authenticated layer in front of it. The
+`SOUS_MCP_ALLOWED_HOSTS` and `SOUS_MCP_ALLOWED_ORIGINS` variables control which `Host` and `Origin` values are
+accepted. The [MCP guide](docs/mcp.md) lists every tool, the save semantics and worked examples.
+
 ### Adding data
 
 The schema is defined in the [migrations](migrations) and documented in the

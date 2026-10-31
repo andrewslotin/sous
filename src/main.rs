@@ -27,9 +27,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let tz = sous::calendar::parse_timezone(std::env::var("APP_TIMEZONE").ok().as_deref())?;
     sous::db::migrate(&db_path).await?;
     let pool = sous::db::open_read_pool(&db_path).await?;
+    let mcp = sous::McpConfig {
+        write_pool: sous::db::open_write_pool(&db_path).await?,
+        allowed_hosts: sous::mcp::parse_list(
+            std::env::var("SOUS_MCP_ALLOWED_HOSTS").ok().as_deref(),
+        ),
+        allowed_origins: sous::mcp::parse_list(
+            std::env::var("SOUS_MCP_ALLOWED_ORIGINS").ok().as_deref(),
+        ),
+    };
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
-    axum::serve(listener, sous::app(pool, sous::calendar::Clock::system(tz)))
+    let clock = sous::calendar::Clock::system(tz);
+    axum::serve(listener, sous::app_with_mcp(pool, clock, mcp))
         .with_graceful_shutdown(async {
             let _ = tokio::signal::ctrl_c().await;
         })
