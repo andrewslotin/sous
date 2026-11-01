@@ -6,11 +6,11 @@
     "description": "Read-only JSON API for weekly meal plans. The document format version is the `schemaVersion` field. Every response carries `Cache-Control: no-store`. No cross-origin access is enabled."
   },
   "paths": {
-    "/api/weeks/{year}/{week}": {
+    "/api/{year}/{week}": {
       "get": {
         "operationId": "getWeek",
         "summary": "Get the complete meal plan of one ISO week.",
-        "description": "Uses the same query and document as the HTML page `/{year}/{week}`, read from one database snapshot. Every other path under `/api` returns the `not_found` error with status 404.",
+        "description": "Uses the same query and document as the HTML page `/{year}/{week}`, read from one database snapshot. Any two-segment path under `/api` is a week path, so `/api/abc/1` is `invalid_week`, not a missing route.",
         "parameters": [
           {
             "name": "year",
@@ -539,7 +539,7 @@
             }
           },
           "308": {
-            "description": "A valid week with zero-padded path segments; permanent redirect to the canonical API path, e.g. `/api/weeks/2026/044` to `/api/weeks/2026/44`.",
+            "description": "A valid week with zero-padded path segments; permanent redirect to the canonical API path, e.g. `/api/2026/044` to `/api/2026/44`.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -557,7 +557,7 @@
             }
           },
           "404": {
-            "description": "No plan for this valid week, an invalid year or week, or any other path under `/api`.",
+            "description": "No plan for this valid week, or an invalid year or week.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -590,9 +590,139 @@
                         "message": "Invalid week."
                       }
                     }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only GET is supported. No JSON body is guaranteed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable. The body never contains database details.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "service_unavailable": {
+                    "summary": "Database error",
+                    "value": {
+                      "error": {
+                        "code": "service_unavailable",
+                        "message": "Meal plans are temporarily unavailable."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/{year}": {
+      "get": {
+        "operationId": "getYear",
+        "summary": "List the stored meal plans of one ISO week-year.",
+        "description": "Uses the same query and status rule as the HTML page `/{year}`, read from one database snapshot. A year without plans is 404 `year_not_found`, except the current year (the ISO week-year of today in the service timezone), which returns an empty `weeks` array. A single segment that is not a four-digit year from 0001 to 9999 returns `not_found`, as does any path under `/api` that matches neither this route nor the two-segment week route.",
+        "parameters": [
+          {
+            "name": "year",
+            "in": "path",
+            "required": true,
+            "description": "ISO week-year: exactly four decimal digits, 0001 to 9999. Anything else is `not_found`.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9]{4}$",
+              "examples": [
+                "2026"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The year listing.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/YearDocument"
+                },
+                "example": {
+                  "schemaVersion": 1,
+                  "year": 2026,
+                  "previousYear": 2025,
+                  "nextYear": null,
+                  "weeks": [
+                    {
+                      "isoYear": 2026,
+                      "isoWeek": 44,
+                      "startDate": "2026-10-26",
+                      "endDate": "2026-11-01",
+                      "path": "/2026/44"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A valid year without plans that is not the current year, or a path that is not a year.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "year_not_found": {
+                    "summary": "Valid year without plans",
+                    "value": {
+                      "error": {
+                        "code": "year_not_found",
+                        "message": "No meal plans available yet."
+                      }
+                    }
                   },
                   "not_found": {
-                    "summary": "Any other path under /api",
+                    "summary": "Not a year, or a path under /api that matches no route",
                     "value": {
                       "error": {
                         "code": "not_found",
@@ -605,7 +735,7 @@
             }
           },
           "405": {
-            "description": "Only GET is supported. No JSON body is guaranteed.",
+            "description": "Only GET is supported (`Allow: GET,HEAD`). No JSON body is guaranteed.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -1191,6 +1321,86 @@
         ],
         "additionalProperties": false
       },
+      "YearDocument": {
+        "type": "object",
+        "description": "The stored weeks of one ISO week-year and its adjacent years. Identical to the data of the HTML page `/{year}`.",
+        "properties": {
+          "schemaVersion": {
+            "const": 1,
+            "type": "integer",
+            "description": "API format version; independent of SQL migration versions."
+          },
+          "year": {
+            "type": "integer",
+            "description": "The ISO week-year, 1 to 9999."
+          },
+          "previousYear": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`year - 1` when it has at least one stored plan, otherwise null."
+          },
+          "nextYear": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "`year + 1` when it has at least one stored plan, otherwise null."
+          },
+          "weeks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WeekSummary"
+            },
+            "description": "Stored weeks of the year, newest first, including future weeks. Empty only for the current year without plans."
+          }
+        },
+        "required": [
+          "schemaVersion",
+          "year",
+          "previousYear",
+          "nextYear",
+          "weeks"
+        ],
+        "additionalProperties": false
+      },
+      "WeekSummary": {
+        "type": "object",
+        "description": "One stored week in a year listing.",
+        "properties": {
+          "isoYear": {
+            "type": "integer",
+            "description": "ISO week-year."
+          },
+          "isoWeek": {
+            "type": "integer",
+            "description": "ISO week number."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Monday of the week, `YYYY-MM-DD`."
+          },
+          "endDate": {
+            "type": "string",
+            "format": "date",
+            "description": "Sunday of the week, `YYYY-MM-DD`."
+          },
+          "path": {
+            "type": "string",
+            "description": "Canonical page path of the week, e.g. `/2026/44`."
+          }
+        },
+        "required": [
+          "isoYear",
+          "isoWeek",
+          "startDate",
+          "endDate",
+          "path"
+        ],
+        "additionalProperties": false
+      },
       "Error": {
         "type": "object",
         "description": "JSON error body.",
@@ -1205,6 +1415,7 @@
                 "enum": [
                   "week_not_found",
                   "invalid_week",
+                  "year_not_found",
                   "not_found",
                   "service_unavailable"
                 ]

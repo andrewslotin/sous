@@ -120,7 +120,7 @@ Weeks whose Monday-to-Sunday range overlaps the inclusive `fromDate` to `toDate`
 ### `get_week`
 
 Returns `document` and `revision`. The `document` is identical to the JSON of the read API for the same week
-(`GET /api/weeks/<year>/<week>`). Pass the `revision` back as `expectedRevision` when saving. A week with no saved
+(`GET /api/<year>/<week>`). Pass the `revision` back as `expectedRevision` when saving. A week with no saved
 plan is `week_not_found`. A week number that does not exist in that year (such as week 53 of 2025), or only one of
 `isoYear` and `isoWeek`, is `invalid_input`.
 

@@ -13,5 +13,5 @@ Implement features in the order below. Each iteration includes its own verificat
 | 5 | [Read API and service verification](features/005-read-api.md) | Done | 4 |
 | 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Done | 5 |
 | 7 | [Year archive pages](features/007-year-archive.md) | Done | 2 |
-| 8 | [API routes matching page routes](features/008-api-routes.md) | Planned | 7 |
+| 8 | [API routes matching page routes](features/008-api-routes.md) | Done | 7 |
 | 9 | [Docker image and CI](features/009-docker-image.md) | Planned | — |

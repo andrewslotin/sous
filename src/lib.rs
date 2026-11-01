@@ -9,7 +9,7 @@ pub mod save;
 
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::get;
 use axum::{Router, middleware};
@@ -32,7 +32,7 @@ pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
         .route("/{year}", get(year_handler).fallback(year_method_fallback))
         .route("/{year}/{week}", get(week_handler))
         .merge(api::routes())
-        .fallback(not_found)
+        .fallback(fallback)
         .layer(middleware::map_response(no_store))
         .with_state(AppState {
             pool: read_pool,
@@ -92,6 +92,15 @@ async fn not_found() -> Response {
         StatusCode::NOT_FOUND,
         message_page("Not found", "No meal plan exists at this address."),
     )
+}
+
+/// Unmatched paths: JSON under `/api`, the HTML not-found page elsewhere.
+async fn fallback(uri: Uri) -> Response {
+    if api::is_api_path(uri.path()) {
+        api::not_found().await
+    } else {
+        not_found().await
+    }
 }
 
 fn page_response(status: StatusCode, title: &str, page: &Page) -> Response {

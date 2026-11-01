@@ -49,7 +49,8 @@ The [feature tracker](README.md) links the incremental implementation specs. Fea
 | `/` | Render current ISO week using configured timezone. |
 | `/<year>/<week>` | Render the specified ISO week; canonical week number has no leading zero. |
 | `/<year>` | List the stored plans of one ISO week-year in descending week order, with date ranges and links, and link the adjacent years that have plans. |
-| `/api/weeks/<year>/<week>` | Return a complete, ordered week document as JSON. |
+| `/api/<year>/<week>` | Return a complete, ordered week document as JSON. |
+| `/api/<year>` | Return the year page's listing as JSON. |
 
 For example, `/2026/44` represents October 26–November 1, 2026. Validate that the requested week exists in the ISO calendar; some years have no week 53. Accept four-digit years from 0001–9999 only when the entire seven-day date range is representable. Redirect zero-padded valid week paths to their canonical form.
 
@@ -149,6 +150,8 @@ strategyCards: [ { id, title, icon, theme, items: [...] } ]
 ```
 
 Nested meals and tasks carry their stored display fields and IDs. Arrays are ordered. Nullable fields are explicit; absent collections are empty arrays. The API document does not expose internal migration tables or filesystem paths. Missing/invalid weeks return 404 with a stable JSON error code; database failures return 503.
+
+`/api/<year>` returns the year page's data (`year`, `previousYear`, `nextYear`, `weeks`) from one query, with the year page's status rule: a year without plans is 404 `year_not_found` unless it is the current year. Any two-segment path under `/api` is a week path: a valid week returns its document, and an invalid year or week is `invalid_week`. A single segment that is not a year, and any path under `/api` that matches neither route, returns `not_found`.
 
 Do not cache HTML or week JSON: send `Cache-Control: no-store`. Serve content-hashed static assets with long-lived immutable caching. No application data cache or restart is needed to observe committed writes. An open page changes only after navigation or refresh.
 

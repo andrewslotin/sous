@@ -1920,11 +1920,7 @@ async fn saved_content_is_visible_without_restarting() {
     let app = sous::app(t.reader().await, berlin_clock());
     let api = |app: axum::Router| async move {
         let res = app
-            .oneshot(
-                Request::get("/api/weeks/2026/45")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/2026/45").body(Body::empty()).unwrap())
             .await
             .unwrap();
         let status = res.status();

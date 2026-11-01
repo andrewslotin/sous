@@ -989,13 +989,13 @@ async fn argument_errors_are_tool_errors() {
 async fn get_week_equals_the_read_api_and_get_meal_has_every_field() {
     let env = Env::with_fixtures().await;
     let app = env.app(journey_clock());
-    let (status, api) = get_json(&app, "/api/weeks/2026/44").await;
+    let (status, api) = get_json(&app, "/api/2026/44").await;
     assert_eq!(status, StatusCode::OK);
     let mcp = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 44})).await;
     assert_eq!(mcp["document"], api);
 
     let meal = ok(&app, "get_meal", json!({"mealId": CASSEROLE_DINNER})).await;
-    let (_, w41) = get_json(&app, "/api/weeks/2026/41").await;
+    let (_, w41) = get_json(&app, "/api/2026/41").await;
     let from_week = &w41["days"][2]["meals"][0];
     assert_eq!(from_week["id"], CASSEROLE_DINNER);
     let mut expected = from_week.clone();
@@ -1029,12 +1029,12 @@ async fn get_week_equals_the_read_api_and_get_meal_has_every_field() {
 async fn saved_week_is_visible_without_rebuilding_the_router() {
     let env = Env::with_fixtures().await;
     let app = env.app(journey_clock());
-    let (status, _) = get_json(&app, "/api/weeks/2026/45").await;
+    let (status, _) = get_json(&app, "/api/2026/45").await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
     ok(&app, "save_week", save_args(45, Value::Null, week45())).await;
 
-    let (status, api) = get_json(&app, "/api/weeks/2026/45").await;
+    let (status, api) = get_json(&app, "/api/2026/45").await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         api["days"][0]["meals"][1]["steps"][2]["text"],
@@ -1233,7 +1233,7 @@ async fn pages_and_api_still_reject_mutations() {
     let env = Env::with_fixtures().await;
     let app = env.app(journey_clock());
     let before = env.dump().await;
-    for uri in ["/", "/2026/44", "/api/weeks/2026/44"] {
+    for uri in ["/", "/2026/44", "/api/2026/44"] {
         for method in ["POST", "PUT", "DELETE"] {
             let request = Request::builder()
                 .method(method)

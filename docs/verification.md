@@ -68,6 +68,19 @@ Backend tests use fixed clocks in `Europe/Berlin` unless stated. `parse_year_pat
 
 Year pages are captured at 375 px and 1280 px by `visual_capture_at_375px`/`1280px` (`year`, `empty-year`), and `list_pages_fit_375px` checks that a year page with all three header links does not overflow.
 
+## Feature 8: API routes
+
+Backend tests use the fixed clock of the year archive tests unless stated.
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | `/api/2026/44` returns the week document and `/api/2026/044` redirects to it | Backend: `api_matches_page_bootstrap`, `api_zero_padded_redirects`, `openapi_matches_api`. MCP: `get_week_equals_the_read_api_and_get_meal_has_every_field`. |
+| 2 | `/api/weeks/2026/44`, `/api/weeks`, `/api/0000`, `/api/10000` and `/api/nothing` return the JSON `not_found` response | Backend: `api_error_contract`, `api_year_contract`. |
+| 3 | `/api/2026` lists the same weeks, in the same order, and the same adjacent years as the `/2026` page, including gap years | Backend: `api_year_matches_year_page_bootstrap`. |
+| 4 | Every `/api/<year>` case has its status, content type and stable JSON code, around New Year and with an empty or unavailable database | Backend: `api_year_contract`, `api_year_current_year_around_new_year`, `api_mutations_405_and_no_leaks`. |
+| 5 | The OpenAPI document describes both routes and their error codes, has no `/weeks` path, and its examples match the server | Backend: `openapi_matches_api`. |
+| 6 | The API reflects committed changes on the next request | Backend: `api_year_is_fresh`, `api_freshness_after_commit`. |
+
 ## Manual verification
 
 | Date | Check | Result |

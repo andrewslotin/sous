@@ -142,6 +142,21 @@ pub struct WeekSummary {
     pub path: String,
 }
 
+/// Version of the JSON document format (`schemaVersion`).
+pub const SCHEMA_VERSION: u32 = 1;
+
+/// `GET /api/<year>`: the year page's data as JSON.
+#[derive(Debug, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct YearDocument {
+    pub schema_version: u32,
+    pub year: i32,
+    pub previous_year: Option<i32>,
+    pub next_year: Option<i32>,
+    /// Newest first.
+    pub weeks: Vec<WeekSummary>,
+}
+
 /// Stored plans of one ISO week-year plus whether the adjacent years have plans.
 #[derive(Debug)]
 pub struct YearListing {

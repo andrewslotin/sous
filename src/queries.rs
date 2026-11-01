@@ -853,7 +853,7 @@ async fn load_week_paused(
     }
 
     Ok(Some(WeekDocument {
-        schema_version: 1,
+        schema_version: crate::model::SCHEMA_VERSION,
         week: Week {
             id: week_id,
             iso_year,

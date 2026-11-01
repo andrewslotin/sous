@@ -2082,7 +2082,7 @@ async fn api_matches_page_bootstrap() {
         TestDb::with_base_fixture().await,
     ] {
         let pool = t.reader().await;
-        let (s, h, body) = get(&pool, "/api/weeks/2026/44").await;
+        let (s, h, body) = get(&pool, "/api/2026/44").await;
         assert_eq!(s, StatusCode::OK);
         assert_eq!(h[header::CONTENT_TYPE], "application/json");
         assert_eq!(h[header::CACHE_CONTROL], "no-store");
@@ -2093,7 +2093,7 @@ async fn api_matches_page_bootstrap() {
 
     // Null and empty values are explicit keys.
     let t = TestDb::with_fixture().await;
-    let doc = api_json(&t.reader().await, "/api/weeks/2026/44").await;
+    let doc = api_json(&t.reader().await, "/api/2026/44").await;
     assert_eq!(doc["schemaVersion"], 1);
     let thursday = doc["days"][3].as_object().unwrap();
     assert_eq!(thursday["id"], Value::Null);
@@ -2125,7 +2125,7 @@ async fn api_matches_page_bootstrap() {
 
     // A week without weekly content.
     let t = TestDb::with_base_fixture().await;
-    let doc = api_json(&t.reader().await, "/api/weeks/2026/44").await;
+    let doc = api_json(&t.reader().await, "/api/2026/44").await;
     assert_eq!(doc["prepSessions"], json!([]));
     assert_eq!(doc["strategyCards"], json!([]));
     assert_eq!(doc["week"]["prepIntro"], Value::Null);
@@ -2137,19 +2137,20 @@ async fn api_error_contract() {
     let pool = t.reader().await;
     let nf = StatusCode::NOT_FOUND;
 
-    let res = get(&pool, "/api/weeks/2026/45").await;
+    let res = get(&pool, "/api/2026/45").await;
     assert_json_response(&res, nf, &week_not_found(), "missing week");
 
     for uri in [
-        "/api/weeks/2025/53",
-        "/api/weeks/abc/1",
-        "/api/weeks/2026/abc",
-        "/api/weeks/0000/1",
-        "/api/weeks/10000/1",
-        "/api/weeks/2026/0",
-        "/api/weeks/2026/54",
-        "/api/weeks/%FF/1",
-        "/api/weeks/2026/%FF",
+        "/api/2025/53",
+        "/api/abc/1",
+        "/api/2026/abc",
+        "/api/0000/1",
+        "/api/10000/1",
+        "/api/2026/0",
+        "/api/2026/54",
+        "/api/%FF/1",
+        "/api/2026/%FF",
+        "/api/weeks/2026",
     ] {
         let res = get(&pool, uri).await;
         assert_json_response(&res, nf, &invalid_week(), uri);
@@ -2161,9 +2162,11 @@ async fn api_error_contract() {
         "/api/nothing",
         "/api/weeks",
         "/api/weeks/",
-        "/api/weeks/2026",
-        "/api/weeks/2026/44/extra",
-        "/api/weeks/2026/44/",
+        "/api/weeks/2026/44",
+        "/api/weeks/2026/45",
+        "/api/2026/",
+        "/api/2026/44/extra",
+        "/api/2026/44/",
     ] {
         let res = get(&pool, uri).await;
         assert_json_response(&res, nf, &api_not_found(), uri);
@@ -2173,7 +2176,7 @@ async fn api_error_contract() {
     let closed = t.reader().await;
     closed.close().await;
     for (name, pool) in [("tableless", &tableless), ("closed", &closed)] {
-        for uri in ["/api/weeks/2026/44", "/api/weeks/2026/45"] {
+        for uri in ["/api/2026/44", "/api/2026/45"] {
             let res = get(pool, uri).await;
             assert_json_response(
                 &res,
@@ -2190,12 +2193,12 @@ async fn api_zero_padded_redirects() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
     for (from, to) in [
-        ("/api/weeks/2026/04", "/api/weeks/2026/4"),
-        ("/api/weeks/2026/004", "/api/weeks/2026/4"),
-        ("/api/weeks/2026/044", "/api/weeks/2026/44"),
-        ("/api/weeks/2026/053", "/api/weeks/2026/53"),
-        ("/api/weeks/9999/051", "/api/weeks/9999/51"),
-        ("/api/weeks/0001/01", "/api/weeks/0001/1"),
+        ("/api/2026/04", "/api/2026/4"),
+        ("/api/2026/004", "/api/2026/4"),
+        ("/api/2026/044", "/api/2026/44"),
+        ("/api/2026/053", "/api/2026/53"),
+        ("/api/9999/051", "/api/9999/51"),
+        ("/api/0001/01", "/api/0001/1"),
     ] {
         let (s, h, _) = get(&pool, from).await;
         assert_eq!(s, StatusCode::PERMANENT_REDIRECT, "{from}");
@@ -2204,7 +2207,7 @@ async fn api_zero_padded_redirects() {
     }
     // The redirect does not touch the database.
     let (_dir, tableless) = tableless_pool().await;
-    let (s, _, _) = get(&tableless, "/api/weeks/2026/044").await;
+    let (s, _, _) = get(&tableless, "/api/2026/044").await;
     assert_eq!(s, StatusCode::PERMANENT_REDIRECT);
 }
 
@@ -2305,11 +2308,7 @@ async fn api_freshness_after_commit() {
     let fetch = || async {
         let res = app
             .clone()
-            .oneshot(
-                Request::get("/api/weeks/2026/44")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
+            .oneshot(Request::get("/api/2026/44").body(Body::empty()).unwrap())
             .await
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
@@ -2336,23 +2335,30 @@ async fn api_freshness_after_commit() {
 async fn api_mutations_405_and_no_leaks() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
-    for uri in [
-        "/api/weeks/2026/44",
-        "/api/weeks/2026/45",
-        "/api/weeks/abc/1",
-    ] {
+    for uri in ["/api/2026/44", "/api/2026/45", "/api/abc/1", "/api/2026"] {
         for method in ["POST", "PUT", "PATCH", "DELETE"] {
             let (s, h, _) = send(&pool, method, uri, None).await;
             assert_eq!(s, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
             assert_eq!(h[header::CACHE_CONTROL], "no-store", "{method} {uri}");
+            if uri == "/api/2026" {
+                assert_eq!(h[header::ALLOW], "GET,HEAD", "{method} {uri}");
+            }
+        }
+    }
+    // Not a year: the JSON not-found response, whatever the method.
+    for uri in ["/api/nothing", "/api/weeks"] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let res = send(&pool, method, uri, None).await;
+            assert_json_response(&res, StatusCode::NOT_FOUND, &api_not_found(), uri);
         }
     }
 
     // No cross-origin access.
     let origin = Some("https://example.com");
     for uri in [
-        "/api/weeks/2026/44",
-        "/api/weeks/2026/45",
+        "/api/2026/44",
+        "/api/2026/45",
+        "/api/2026",
         "/api/nothing",
         "/2026/44",
     ] {
@@ -2362,7 +2368,7 @@ async fn api_mutations_405_and_no_leaks() {
             "{uri}"
         );
     }
-    let (_, h, _) = send(&pool, "OPTIONS", "/api/weeks/2026/44", origin).await;
+    let (_, h, _) = send(&pool, "OPTIONS", "/api/2026/44", origin).await;
     assert!(h.get(header::ACCESS_CONTROL_ALLOW_ORIGIN).is_none());
 
     // Database errors leak nothing.
@@ -2372,7 +2378,7 @@ async fn api_mutations_405_and_no_leaks() {
     closed.close().await;
     let fixture_dir = t._dir.path().to_str().unwrap().to_string();
     for pool in [&tableless, &closed] {
-        for uri in ["/api/weeks/2026/44", "/2026/44", "/2026", "/"] {
+        for uri in ["/api/2026/44", "/api/2026", "/2026/44", "/2026", "/"] {
             let (s, _, body) = get(pool, uri).await;
             assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
             for needle in [
@@ -2389,6 +2395,276 @@ async fn api_mutations_405_and_no_leaks() {
             }
         }
     }
+}
+
+/// Body of a `YearDocument` as the API serializes it.
+fn year_doc(year: i64, previous: Value, next: Value, weeks: Vec<Value>) -> Value {
+    json!({
+        "schemaVersion": 1,
+        "year": year,
+        "previousYear": previous,
+        "nextYear": next,
+        "weeks": weeks,
+    })
+}
+
+fn year_not_found() -> Value {
+    api_error("year_not_found", "No meal plans available yet.")
+}
+
+/// `/api/<year>` against the bootstrap of `/<year>`: same status class, same data.
+async fn assert_year_api_matches_page(pool: &SqlitePool, year: i32) {
+    let page_uri = format!("/{year:04}");
+    let api_uri = format!("/api/{year:04}");
+    let (page_status, _, page_body) = get(pool, &page_uri).await;
+    let api = get(pool, &api_uri).await;
+    if page_status == StatusCode::NOT_FOUND {
+        assert_json_response(&api, StatusCode::NOT_FOUND, &year_not_found(), &api_uri);
+        return;
+    }
+    assert_eq!(page_status, StatusCode::OK, "{page_uri}");
+    let page = page_json(&page_body);
+    let (s, h, body) = &api;
+    assert_eq!(*s, StatusCode::OK, "{api_uri}");
+    assert_eq!(h[header::CONTENT_TYPE], "application/json", "{api_uri}");
+    assert_eq!(h[header::CACHE_CONTROL], "no-store", "{api_uri}");
+    assert!(
+        body.starts_with("{\"schemaVersion\":1,\"year\":"),
+        "{api_uri}: {body}"
+    );
+    let doc: Value = serde_json::from_str(body).unwrap();
+    let mut keys: Vec<&str> = doc
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        ["nextYear", "previousYear", "schemaVersion", "weeks", "year"],
+        "{api_uri}"
+    );
+    assert_eq!(doc["schemaVersion"], 1, "{api_uri}");
+    for key in ["year", "previousYear", "nextYear", "weeks"] {
+        assert_eq!(doc[key], page[key], "{api_uri} {key}");
+    }
+}
+
+#[tokio::test]
+async fn api_year_matches_year_page_bootstrap() {
+    let t = TestDb::with_fixture().await;
+    insert_weeks(
+        &t,
+        &[
+            (2027, 1),
+            (2025, 52),
+            (2026, 53),
+            (2026, 1),
+            (2026, 49),
+            (2020, 53),
+        ],
+    )
+    .await;
+    let pool = t.reader().await;
+    for year in [2020, 2025, 2026, 2027, 2019, 2024, 2028] {
+        assert_year_api_matches_page(&pool, year).await;
+    }
+    let api = api_json(&pool, "/api/2026").await;
+    assert_eq!(api["weeks"].as_array().unwrap().len(), 4);
+    assert_eq!(
+        api["weeks"][0],
+        summary(2026, 53, "2026-12-28", "2027-01-03", "/2026/53")
+    );
+    assert_eq!(
+        api["weeks"][3],
+        summary(2026, 1, "2025-12-29", "2026-01-04", "/2026/1")
+    );
+    assert_eq!(api["previousYear"], 2025);
+    assert_eq!(api["nextYear"], 2027);
+
+    // Gap years: 2025 has no plans, so 2026 links to nothing and 2025 is a 404.
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(2023, 5), (2024, 5), (2026, 5)]).await;
+    let pool = t.reader().await;
+    for year in [2022, 2023, 2024, 2025, 2026, 2027] {
+        assert_year_api_matches_page(&pool, year).await;
+    }
+    let api = api_json(&pool, "/api/2024").await;
+    assert_eq!(
+        (&api["previousYear"], &api["nextYear"]),
+        (&json!(2023), &json!(null))
+    );
+    let (s, _, _) = get(&pool, "/api/2025").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+
+    // First and last supported years.
+    let t = TestDb::migrated().await;
+    insert_weeks(&t, &[(1, 1), (9999, 51), (9999, 1)]).await;
+    let pool = t.reader().await;
+    for year in [1, 2, 9998, 9999] {
+        assert_year_api_matches_page(&pool, year).await;
+    }
+    let api = api_json(&pool, "/api/0001").await;
+    assert_eq!(
+        api["weeks"],
+        json!([summary(1, 1, "0001-01-01", "0001-01-07", "/0001/1")])
+    );
+    assert_eq!(api["year"], 1);
+}
+
+#[tokio::test]
+async fn api_year_contract() {
+    let ok = StatusCode::OK;
+    let nf = StatusCode::NOT_FOUND;
+    let week44 = summary(2026, 44, "2026-10-26", "2026-11-01", "/2026/44");
+
+    // A year with plans.
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let res = get(&pool, "/api/2026").await;
+    let expected = year_doc(2026, json!(null), json!(null), vec![week44]);
+    assert_json_response(&res, ok, &expected, "year with plans");
+
+    // The current year without plans is 200, in an empty and in a non-empty database.
+    let empty = TestDb::migrated().await;
+    let empty_pool = empty.reader().await;
+    let current_empty = year_doc(2026, json!(null), json!(null), vec![]);
+    let res = get(&empty_pool, "/api/2026").await;
+    assert_json_response(&res, ok, &current_empty, "current year, empty database");
+    let res = get(&empty_pool, "/api/2025").await;
+    assert_json_response(&res, nf, &year_not_found(), "other year, empty database");
+
+    let other = TestDb::migrated().await;
+    insert_weeks(&other, &[(2024, 10)]).await;
+    let other_pool = other.reader().await;
+    let res = get(&other_pool, "/api/2026").await;
+    assert_json_response(&res, ok, &current_empty, "current year, no plans");
+    let res = get(&other_pool, "/api/2025").await;
+    assert_json_response(&res, nf, &year_not_found(), "other year, no plans");
+
+    // Not a year: not_found without touching the database.
+    let (_dir, tableless) = tableless_pool().await;
+    let closed = t.reader().await;
+    closed.close().await;
+    for segment in [
+        "weeks", "0000", "10000", "nothing", "26", "02026", "+026", "%FF", "%202026",
+    ] {
+        let uri = format!("/api/{segment}");
+        for (name, pool) in [
+            ("good", &pool),
+            ("tableless", &tableless),
+            ("closed", &closed),
+        ] {
+            let res = get(pool, &uri).await;
+            assert_json_response(&res, nf, &api_not_found(), &format!("{name} {uri}"));
+        }
+    }
+    for uri in ["/api/weeks/2026/44", "/api/weeks", "/api/nothing"] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &api_not_found(), uri);
+    }
+
+    // Database failure, for the current year and another one.
+    for (name, pool) in [("tableless", &tableless), ("closed", &closed)] {
+        for uri in ["/api/2026", "/api/2025"] {
+            let res = get(pool, uri).await;
+            assert_json_response(
+                &res,
+                StatusCode::SERVICE_UNAVAILABLE,
+                &unavailable_error(),
+                &format!("{name} {uri}"),
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn api_year_current_year_around_new_year() {
+    use chrono::TimeZone;
+    let t = TestDb::migrated().await;
+    let pool = t.reader().await;
+    let check = |year: i32, current: i32, res: &Reply, what: &str| {
+        if year == current {
+            let body = year_doc(year as i64, json!(null), json!(null), vec![]);
+            assert_json_response(res, StatusCode::OK, &body, what);
+        } else {
+            assert_json_response(res, StatusCode::NOT_FOUND, &year_not_found(), what);
+        }
+    };
+
+    for (clock, current) in [
+        (berlin(2025, 12, 28, 22, 59, 59), 2025),
+        (berlin(2025, 12, 28, 23, 0, 0), 2026),
+        (berlin(2027, 1, 3, 12, 0, 0), 2026),
+        (berlin(2027, 1, 4, 12, 0, 0), 2027),
+    ] {
+        for year in [2025, 2026, 2027] {
+            let res = get_at(&pool, clock.clone(), &format!("/api/{year}")).await;
+            check(
+                year,
+                current,
+                &res,
+                &format!("/api/{year}, current {current}"),
+            );
+        }
+    }
+
+    let instant = chrono::Utc
+        .with_ymd_and_hms(2025, 12, 29, 0, 30, 0)
+        .unwrap();
+    for (tz, current) in [
+        (sous::calendar::DEFAULT_TIMEZONE, 2026),
+        (chrono_tz::America::New_York, 2025),
+    ] {
+        for year in [2025, 2026] {
+            let res = get_at(&pool, Clock::fixed(tz, instant), &format!("/api/{year}")).await;
+            check(year, current, &res, &format!("/api/{year} in {tz}"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn api_year_is_fresh() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let paths = |doc: &Value| -> Vec<String> {
+        doc["weeks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|w| w["path"].as_str().unwrap().to_string())
+            .collect()
+    };
+
+    assert_eq!(paths(&api_json(&pool, "/api/2026").await), ["/2026/44"]);
+
+    // An open transaction's insert is invisible; once it ends the week shows up.
+    let mut c = t.writer().await;
+    let mut tx = c.begin().await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(week_sql(&uuid(7), 2026, 50)))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    assert_eq!(paths(&api_json(&pool, "/api/2026").await), ["/2026/44"]);
+    tx.commit().await.unwrap();
+    let doc = api_json(&pool, "/api/2026").await;
+    assert_eq!(paths(&doc), ["/2026/50", "/2026/44"]);
+
+    // The first plan of the next year makes `nextYear` appear; deleting it removes it.
+    assert_eq!(doc["nextYear"], json!(null));
+    exec(&mut c, &week_sql(&uuid(8), 2027, 1)).await.unwrap();
+    assert_eq!(api_json(&pool, "/api/2026").await["nextYear"], 2027);
+    exec(&mut c, "DELETE FROM weeks WHERE iso_year = 2027")
+        .await
+        .unwrap();
+    assert_eq!(api_json(&pool, "/api/2026").await["nextYear"], json!(null));
+
+    // Deleted weeks disappear.
+    exec(&mut c, "DELETE FROM weeks WHERE iso_week = 50")
+        .await
+        .unwrap();
+    assert_eq!(paths(&api_json(&pool, "/api/2026").await), ["/2026/44"]);
 }
 
 #[tokio::test]
@@ -2483,11 +2759,24 @@ fn check_schema(root: &Value, schema: &Value, value: &Value, at: &str) {
 async fn openapi_matches_api() {
     let spec: Value = serde_json::from_str(OPENAPI).unwrap();
     assert_eq!(spec["openapi"], "3.1.0");
-    let responses = &spec["paths"]["/api/weeks/{year}/{week}"]["get"]["responses"];
+    let paths = spec["paths"].as_object().unwrap();
+    assert_eq!(paths.len(), 2);
+    assert!(paths.keys().all(|p| !p.contains("/weeks")));
+    assert!(!OPENAPI.contains("/api/weeks"));
+    let responses = &spec["paths"]["/api/{year}/{week}"]["get"]["responses"];
+    assert_eq!(
+        spec["paths"]["/api/{year}/{week}"]["get"]["operationId"],
+        "getWeek"
+    );
+    assert_eq!(
+        spec["paths"]["/api/{year}"]["get"]["operationId"],
+        "getYear"
+    );
+    let year_responses = &spec["paths"]["/api/{year}"]["get"]["responses"];
 
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
-    let live = api_json(&pool, "/api/weeks/2026/44").await;
+    let live = api_json(&pool, "/api/2026/44").await;
 
     // (a) The documented example is the live output.
     let content = &responses["200"]["content"]["application/json"];
@@ -2495,8 +2784,22 @@ async fn openapi_matches_api() {
     // (b) The live output satisfies the schema, with and without weekly content.
     check_schema(&spec, &content["schema"], &live, "$");
     let bare = TestDb::with_base_fixture().await;
-    let live_bare = api_json(&bare.reader().await, "/api/weeks/2026/44").await;
+    let live_bare = api_json(&bare.reader().await, "/api/2026/44").await;
     check_schema(&spec, &content["schema"], &live_bare, "$bare");
+
+    // The year route: the example is the live output with a plan in the previous year.
+    let year_t = TestDb::with_fixture().await;
+    insert_weeks(&year_t, &[(2025, 52)]).await;
+    let year_pool = year_t.reader().await;
+    let live_year = api_json(&year_pool, "/api/2026").await;
+    let year_content = &year_responses["200"]["content"]["application/json"];
+    assert_eq!(year_content["example"], live_year);
+    check_schema(&spec, &year_content["schema"], &live_year, "$year");
+    let empty = TestDb::migrated().await;
+    let live_empty = api_json(&empty.reader().await, "/api/2026").await;
+    assert_eq!(live_empty["weeks"], json!([]));
+    check_schema(&spec, &year_content["schema"], &live_empty, "$year-empty");
+
     let schemas = spec["components"]["schemas"].as_object().unwrap();
     for name in [
         "WeekDocument",
@@ -2512,38 +2815,46 @@ async fn openapi_matches_api() {
         "PrepTask",
         "StrategyCard",
         "StrategyItem",
+        "YearDocument",
+        "WeekSummary",
         "Error",
     ] {
         assert!(schemas.contains_key(name), "{name}");
     }
 
-    // (c) Every error example is what the server returns, and there are no others.
+    // (c) Every error example is what the server returns, and each route has no others.
     let (_dir, tableless) = tableless_pool().await;
-    let cases = [
-        ("week_not_found", &pool, "/api/weeks/2026/45"),
-        ("invalid_week", &pool, "/api/weeks/2025/53"),
-        ("not_found", &pool, "/api/nothing"),
-        ("service_unavailable", &tableless, "/api/weeks/2026/44"),
+    let week_cases = [
+        ("week_not_found", &pool, "/api/2026/45"),
+        ("invalid_week", &pool, "/api/2025/53"),
+        ("service_unavailable", &tableless, "/api/2026/44"),
     ];
-    for (code, pool, uri) in cases {
-        let (s, _, body) = get(pool, uri).await;
-        let body: Value = serde_json::from_str(&body).unwrap();
-        let media = &responses[s.as_u16().to_string()]["content"]["application/json"];
-        let example = media["examples"]
-            .as_object()
-            .and_then(|e| e.values().find(|e| e["value"]["error"]["code"] == code))
-            .unwrap_or_else(|| panic!("no example for {code}"));
-        assert_eq!(example["value"], body, "{code}");
-        check_schema(&spec, &media["schema"], &body, code);
-    }
-    let documented: usize = ["404", "503"]
-        .iter()
-        .map(|s| {
-            responses[*s]["content"]["application/json"]["examples"]
+    let year_cases = [
+        ("year_not_found", &pool, "/api/2025"),
+        ("not_found", &pool, "/api/nothing"),
+        ("service_unavailable", &tableless, "/api/2026"),
+    ];
+    for (route_responses, cases) in [(responses, &week_cases), (year_responses, &year_cases)] {
+        for (code, pool, uri) in cases {
+            let (s, _, body) = get(pool, uri).await;
+            let body: Value = serde_json::from_str(&body).unwrap();
+            let media = &route_responses[s.as_u16().to_string()]["content"]["application/json"];
+            let example = media["examples"]
                 .as_object()
-                .unwrap()
-                .len()
-        })
-        .sum();
-    assert_eq!(documented, cases.len());
+                .and_then(|e| e.values().find(|e| e["value"]["error"]["code"] == *code))
+                .unwrap_or_else(|| panic!("no example for {code}"));
+            assert_eq!(example["value"], body, "{code}");
+            check_schema(&spec, &media["schema"], &body, code);
+        }
+        let documented: usize = ["404", "503"]
+            .iter()
+            .map(|s| {
+                route_responses[*s]["content"]["application/json"]["examples"]
+                    .as_object()
+                    .unwrap()
+                    .len()
+            })
+            .sum();
+        assert_eq!(documented, cases.len());
+    }
 }

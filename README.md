@@ -50,7 +50,8 @@ Configure it with environment variables:
 | `/` | The current ISO week |
 | `/<year>/<week>` | A specific ISO week, e.g. `/2026/44` |
 | `/<year>` | The stored weeks of one ISO week-year, newest first, e.g. `/2026` |
-| `/api/weeks/<year>/<week>` | The full week as JSON |
+| `/api/<year>/<week>` | The full week as JSON |
+| `/api/<year>` | The year listing as JSON |
 
 Weeks use ISO 8601 numbering (Monday to Sunday). The API is described in the [OpenAPI document](docs/openapi.json).
 
