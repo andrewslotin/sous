@@ -32,7 +32,7 @@ Browser → HTTP service
              └── application queries → SQLite
 ```
 
-The application serves frontend assets and data from the same origin and reads from one SQLite database. Use Rust with Axum and Tokio, SQLx for SQLite queries and versioned migrations, and Serde for serialization. Separate transport handlers, application queries, and persistence code, without a generic repository framework. Use runtime-checked queries with temporary-database integration tests; compilation does not require a database or checked-in SQLx query metadata. Compile the existing React frontend at build time and embed its assets in the `sous` binary.
+The application serves frontend assets and data from the same origin and reads from one SQLite database. Use Rust with Axum and Tokio, SQLx for SQLite queries and versioned migrations, and Serde for serialization. Separate transport handlers, application queries, and persistence code, without a generic repository framework. Use runtime-checked queries with temporary-database integration tests; compilation does not require a database or checked-in SQLx query metadata. Compile the existing React frontend at build time and embed its assets in the `sous` binary. The service ships as a statically linked binary in a `scratch` container image.
 
 The [feature tracker](README.md) links the incremental implementation specs. Features 1–5 implement this read-only baseline. [Feature 6: MCP meal planning and recall](features/006-mcp-meal-planning.md) extends it with agent-facing queries and transactional writes at `/mcp`; its contract supersedes the baseline's data-entry exclusion and read-only connection rule only for MCP write tools. Existing page and JSON API contracts remain unchanged.
 

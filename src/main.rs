@@ -36,13 +36,54 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             std::env::var("SOUS_MCP_ALLOWED_ORIGINS").ok().as_deref(),
         ),
     };
+    let shutdown = Shutdown::new()?;
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "listening");
     let clock = sous::calendar::Clock::system(tz);
     axum::serve(listener, sous::app_with_mcp(pool, clock, mcp))
-        .with_graceful_shutdown(async {
-            let _ = tokio::signal::ctrl_c().await;
-        })
+        .with_graceful_shutdown(shutdown.wait())
         .await?;
+    tracing::info!("stopped");
     Ok(())
+}
+
+/// Signal handlers, registered before binding so no signal after `listening` is missed.
+#[cfg(unix)]
+struct Shutdown {
+    sigint: tokio::signal::unix::Signal,
+    sigterm: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl Shutdown {
+    fn new() -> std::io::Result<Self> {
+        use tokio::signal::unix::{SignalKind, signal};
+        Ok(Self {
+            sigint: signal(SignalKind::interrupt())?,
+            sigterm: signal(SignalKind::terminate())?,
+        })
+    }
+
+    async fn wait(mut self) {
+        let name = tokio::select! {
+            _ = self.sigint.recv() => "SIGINT",
+            _ = self.sigterm.recv() => "SIGTERM",
+        };
+        tracing::info!(signal = name, "shutting down");
+    }
+}
+
+#[cfg(not(unix))]
+struct Shutdown;
+
+#[cfg(not(unix))]
+impl Shutdown {
+    fn new() -> std::io::Result<Self> {
+        Ok(Self)
+    }
+
+    async fn wait(self) {
+        let _ = tokio::signal::ctrl_c().await;
+        tracing::info!(signal = "ctrl_c", "shutting down");
+    }
 }

@@ -81,6 +81,25 @@ Backend tests use the fixed clock of the year archive tests unless stated.
 | 5 | The OpenAPI document describes both routes and their error codes, has no `/weeks` path, and its examples match the server | Backend: `openapi_matches_api`. |
 | 6 | The API reflects committed changes on the next request | Backend: `api_year_is_fresh`, `api_freshness_after_commit`. |
 
+## Feature 9: Docker image and CI
+
+Shutdown tests are in `tests/shutdown.rs`. The local container checks, which record the image size, ran with Podman
+on an arm64 host. The amd64 build, pull-request and tag checks are deferred until the repository is published on GitHub.
+Each result goes in the manual verification table when it is run.
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | `docker build .` succeeds from a clean checkout on amd64 and arm64 hosts | Manual: arm64 build (below). Pending: an amd64 build, from the publishing workflow's pull-request run. |
+| 2 | The final stage is `FROM scratch`, copies only `/sous`, `/data` and `/tmp`, and the binary is statically linked | The `Dockerfile` final stage is `FROM scratch` with exactly those three `COPY` lines. Manual: `file` on the extracted binary (below). |
+| 3 | The container serves `/` and `/api/<year>/<week>` as UID 65532, creates `/data/sous.db`, and keeps its data across a restart | Manual: run, UID and restart check (below). |
+| 4 | MCP requests through the published port succeed with the default allowed hosts | Manual: MCP initialize through the published port (below). |
+| 5 | `docker run --rm -v sous-data:/data <image> migrate` applies migrations and exits 0 | Manual: migrate-only run (below). |
+| 6 | `docker stop` exits with status 0 well before the timeout, and the logs show a graceful shutdown | Backend: `sigterm_shuts_down_gracefully_with_status_0`, `sigint_shuts_down_gracefully_with_status_0`. Manual: graceful stop (below). |
+| 7 | The build context excludes local databases, `target/` and `.git` | Manual: build-context listing (below). |
+| 8 | On a pull request, the publishing workflow builds both platforms and pushes nothing | Pending: pull-request run, not yet run. |
+| 9 | A matching `vX.Y.Z` tag publishes a manifest list under `X.Y.Z`, `X.Y` and `latest`; a mismatched tag fails before building | Pending: test tag push, not yet run. |
+| 10 | On a pull request, the test workflow runs all four jobs and passes; a failing test, a formatting difference or a clippy warning fails its job | Pending: pull-request run, not yet run. |
+
 ## Manual verification
 
 | Date | Check | Result |
@@ -91,3 +110,10 @@ Backend tests use the fixed clock of the year archive tests unless stated.
 | 2026-11-01 | With the connected client, plan a new week | Pass (user): Claude Code called `list_weeks` and `search_meals` (date range) to review recent plans, then `save_week` for 2026 week 45 with `expectedRevision: null`; the result returned the committed document (7 days, 2 shopping lists, 3 prep sessions, 4 strategy cards) and a new revision |
 | 2026-11-01 | With the connected client, recall "the casserole from three weeks ago" and its steps | Pass (user): Claude Code called `get_context` (today 2026-11-01, Europe/Berlin, week 44), then `get_meal` for the meal found by `search_meals`; it returned Chicken & Broccoli Casserole, Wednesday 2026-10-07 (2026 week 41), with all fields and its 4 stored steps in order |
 | 2026-11-01 | With the connected client, fetch today's shopping lists | Pass (user): Claude Code called `get_context`, then `get_shopping_lists` for 2026-11-01 (Europe/Berlin); it returned `planExists: true` and only the list assigned to Sunday, "🛒 Sunday Lunch → Manchego, Apple & Walnut Salad", with its categories and items in stored order |
+| 2026-11-01 | Feature 9, check 1: build the image from the working tree on an arm64 host (`podman build`, tagged `sous`) | Pass (user) |
+| 2026-11-01 | Feature 9, check 2: extract `/sous` from the image and run `file` on it; record the image size | Pass (user): `ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), statically linked, … stripped`; image `localhost/sous:latest` is 10.2 MB |
+| 2026-11-01 | Feature 9, check 3: run the image with the named volume `sous-data` and `-p 3000:3000` (Podman); request `/` and `/api/2026/44`; read the process user; list `/data` before and after `podman restart` | Pass (user): `/` returned `200 OK` and `/api/2026/44` `404 Not Found` (empty database); the process runs as `65532`; `/data` held `sous.db` (180224 bytes) with its `-shm` and `-wal` files, owned by `65532:65532`, unchanged after the restart |
+| 2026-11-01 | Feature 9, check 4: with the container from check 3 and the default allowed hosts, `POST http://localhost:3000/mcp` with an `initialize` request | Pass (user): `200 OK`, `application/json`, protocol `2025-11-25`, `serverInfo` `sous 0.1.0` with the server instructions |
+| 2026-11-01 | Feature 9, check 5: `podman run --rm -v sous-data:/data sous migrate` | Pass (user): logged `migrations applied db=/data/sous.db` and exited 0 |
+| 2026-11-01 | Feature 9, check 6: `time podman stop sous` on the container from check 3, then its exit code and last log lines | Pass: the stop took 0.37 s (user); exit code `0`; the logs end with `shutting down signal="SIGTERM"` and `stopped` |
+| 2026-11-01 | Feature 9, check 7: build a probe image that copies the whole context and lists it, from a working tree that contains `sous.db`, `target/` and `.git` (`podman build`, which applies `.dockerignore`) | Pass (user): the context held only `Cargo.lock`, `Cargo.toml`, `build.rs`, `migrations`, `src` and `web` |

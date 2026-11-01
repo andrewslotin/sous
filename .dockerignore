@@ -1,0 +1,8 @@
+# Allowlist: ignore everything, then include only what the build needs.
+*
+!Cargo.toml
+!Cargo.lock
+!build.rs
+!src
+!web
+!migrations

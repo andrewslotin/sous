@@ -97,12 +97,65 @@ make run
 
 Then open <http://127.0.0.1:3000/2026/44>.
 
+## Docker
+
+The image runs Sous from `scratch`: one statically linked binary, an empty `/data` for the database and an empty
+`/tmp`. Build it from a checkout and run it with a named volume:
+
+```sh
+docker build -t sous .
+docker run -d --name sous -p 3000:3000 -v sous-data:/data sous
+```
+
+Then open <http://localhost:3000>. Sous creates `/data/sous.db` on first start and keeps it in the volume. The
+process runs as UID 65532, and a new named volume takes the ownership of `/data`. `docker stop sous` shuts the server
+down gracefully. To apply migrations without starting the server:
+
+```sh
+docker run --rm -v sous-data:/data sous migrate
+```
+
+The image sets these defaults. Override any of them with `-e`; `APP_TIMEZONE` and the MCP variables keep the defaults
+from the table above.
+
+| Variable | Image default |
+| --- | --- |
+| `SOUS_ADDR` | `0.0.0.0:3000` |
+| `SOUS_DATABASE` | `/data/sous.db` |
+| `RUST_LOG` | `info` |
+
+Tagged releases are published for linux/amd64 and linux/arm64 to the GitHub Container Registry as
+`ghcr.io/<owner>/<repo>`, where `<owner>/<repo>` is the lowercase name of the GitHub repository. Version `X.Y.Z` is
+available as `X.Y.Z`, `X.Y` and `latest`. Pre-releases get only their own version tag. Use the same `docker run`
+command with that name in place of `sous`.
+
+A bind mount replaces the volume's ownership handling, so the host directory must be writable by UID 65532, or you
+must run the container with a matching `--user`, for example `--user "$(id -u):$(id -g)"`.
+
+Behind a reverse proxy, set `SOUS_MCP_ALLOWED_HOSTS` to the public host name, for example
+`-e SOUS_MCP_ALLOWED_HOSTS=sous.example.com`. Otherwise the MCP endpoint rejects the proxied requests. As elsewhere,
+Sous has no authentication.
+
+The image has no shell or `sqlite3`, so seed the database from the host. Create it in a directory on the host, stop
+any server using it, and mount that directory:
+
+```sh
+mkdir data
+SOUS_DATABASE=data/sous.db make reset
+docker run -d -p 3000:3000 --user "$(id -u):$(id -g)" -v "$PWD/data:/data" sous
+```
+
+There is no `HEALTHCHECK`, because the image has no HTTP client. Orchestrators should probe `GET /`.
+
 ## Development
 
 ```sh
 make test           # cargo test
 make test-browser   # browser tests; need Chrome or Chromium
 ```
+
+GitHub Actions runs the format check, clippy, the tests and the browser tests on every pull request and every push
+to `main`.
 
 The browser tests find Chrome on your `PATH` or in its standard install location. To use a different browser
 binary, set `CHROME` to its path.
