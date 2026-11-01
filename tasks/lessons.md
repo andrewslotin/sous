@@ -15,8 +15,12 @@
 - Name artifacts precisely: "agent brief (scratchpad)", not "spec".
 - Check the toolchain against the technical design's architecture before planning. Raise a missing tool once, with a recommendation.
 - Verify facts before putting them in an agent brief; agents copy mistakes. Check worker-written docs (OpenAPI
-  ranges, formats, descriptions) against the code too, before review. Validate documented example payloads against
-  the advertised schema in a test: `expectedRevision: null` was required but the schema said string only.
+  ranges, formats, descriptions) against the code too, before review. Read every changed prose sentence against the
+  contract table, especially quantifiers ("any value", "every other path"): Codex caught "any value is
+  `invalid_week`" for valid week paths. Validate documented example payloads against the advertised schema in a
+  test: `expectedRevision: null` was required but the schema said string only.
+- Scope a brief's text bans to the file and say why: "no `/api/weeks` text in the OpenAPI document" led the worker to
+  paraphrase the spec's own paths in the verification record.
 - An optimistic-concurrency revision must hash every persisted row and column of the aggregate, not the rendered
   document, or hidden and order-only external edits are lost on save.
 - "Case-insensitive" in a spec means Unicode case folding (`caseless`), not `to_lowercase`, which misses `σ`/`ς`.

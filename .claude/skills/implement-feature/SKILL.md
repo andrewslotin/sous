@@ -32,7 +32,8 @@ Settled project decisions. Do not ask about them again:
 Write a brief to the scratchpad (`brief-NNN.md`), never into the repo. Subagents start with no context, so it must
 stand on its own:
 - **Docs to read:** the spec, the design, and the relevant reference such as `docs/examples/menu.html`.
-- **Ground rules:** cargo commands allowed; never run the server; never commit; never edit `docs/`. Use runtime
+- **Ground rules:** cargo commands allowed; never run the server; never commit; never edit `docs/`, except the docs the
+  spec says to update, each assigned to one owner (the tracker stays yours). Use runtime
   `sqlx::query`/`query_as` and no `query!` macros. Do not build later features' scope. Write files with the
   Write/Edit tools, not shell heredocs, which a Bash hook may reject.
 - **Ownership:** which agent owns which files. Agents that run in parallel must never share a file, and that includes
@@ -131,7 +132,9 @@ Treat each finding as a claim to check. Look at the evidence: screenshots, file 
 steps. If you disagree, reply to Codex over agterm with your reasoning, using the same send-and-Enter procedure.
 For each accepted finding:
 1. Give the fixes to a Sonnet agent with a precise brief. Require a regression test, and require proof that the
-   test **fails without the fix**: revert the fix temporarily, run the test, then restore it.
+   test **fails without the fix**: revert the fix temporarily, run the test, then restore it. A docs-only wording
+   fix needs no agent or regression test: make it yourself, sweep the file for the same wording, and rerun the
+   doc's test (e.g. `openapi_matches_api`).
 2. Run the step 4 checks again yourself.
 3. Ask Codex to re-review. Summarise each fix and its evidence, and include the reply-via-agterm instructions again.
 
