@@ -22,7 +22,6 @@ seed: migrate
 
 reset:
 	rm -f $(SOUS_DATABASE) $(SOUS_DATABASE)-shm $(SOUS_DATABASE)-wal
-	$(MAKE) seed
 
 test:
 	cargo test
