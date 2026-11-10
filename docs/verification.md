@@ -100,6 +100,23 @@ Each result goes in the manual verification table when it is run.
 | 9 | A matching `vX.Y.Z` tag publishes a manifest list under `X.Y.Z`, `X.Y` and `latest`; a mismatched tag fails before building | Pending: test tag push, not yet run. |
 | 10 | On a pull request, the test workflow runs all four jobs and passes; a failing test, a formatting difference or a clippy warning fails its job | Pending: pull-request run, not yet run. |
 
+## Feature 10: create weeks without a null revision
+
+Tests are in `tests/mcp.rs` (protocol, with temporary databases) and `tests/planning.rs` (data layer).
+
+| # | Criterion | Evidence |
+| --- | --- | --- |
+| 1 | `save_week` without `expectedRevision` creates a week that does not exist; the result, `get_week` and web/API reads show the committed document | `save_week_without_expected_revision_creates_a_new_week` |
+| 2 | Without `expectedRevision` for a saved week: `revision_conflict`, "already saved" message, database unchanged | `save_week_without_expected_revision_on_a_saved_week_conflicts`, `invalid_and_conflicting_saves_change_nothing`; data layer: `save_creates_a_week_and_round_trips`, `save_detects_stale_and_missing_revisions` |
+| 3 | `expectedRevision: null` behaves as before, for a new week and a saved week | `save_week_with_null_expected_revision_is_unchanged`, `saved_week_is_visible_without_rebuilding_the_router`, `week_saved_through_mcp_renders_in_the_browser` (browser, ignored by default) |
+| 4 | A revision string, including `"null"`, for a week with no plan: `revision_conflict`, "no plan is saved" message, nothing created | `save_week_revision_for_an_unsaved_week_conflicts`; data layer: `save_detects_stale_and_missing_revisions` |
+| 5 | A matching revision replaces; a stale one is `revision_conflict` with the "changed since it was read" message; existing concurrency and external-writer tests pass | `save_week_matching_and_stale_revisions`; data layer: `save_detects_external_edits`, `save_is_atomic_with_concurrent_readers_and_writers`, `external_position_only_edit_is_a_revision_conflict`, `external_hidden_reminder_body_edit_is_a_revision_conflict`, `error_codes_and_messages` |
+| 6 | The `save_week` input schema does not list `expectedRevision` as required; the tool list document matches `tools/list` | `stateless_flow_lists_seven_tools_and_calls_them`, `save_week_schema_admits_null_expected_revision_for_create`, `mcp_tools_doc_matches_server` |
+| 7 | The tool description, server instructions and MCP guide describe omitting `expectedRevision` to create a week | `stateless_flow_lists_seven_tools_and_calls_them` (description), `server_info_names_sous_and_warns_that_text_is_data` (instructions); the [MCP guide](mcp.md) (reviewed) |
+| 8 | The recorded MCP client smoke test creates a week without `expectedRevision` | `mcp_client_smoke_test` |
+
+Manual: create a week with no saved plan from a Claude Code session, without `expectedRevision` (below).
+
 ## Manual verification
 
 | Date | Check | Result |
@@ -117,3 +134,4 @@ Each result goes in the manual verification table when it is run.
 | 2026-11-01 | Feature 9, check 5: `podman run --rm -v sous-data:/data sous migrate` | Pass (user): logged `migrations applied db=/data/sous.db` and exited 0 |
 | 2026-11-01 | Feature 9, check 6: `time podman stop sous` on the container from check 3, then its exit code and last log lines | Pass: the stop took 0.37 s (user); exit code `0`; the logs end with `shutting down signal="SIGTERM"` and `stopped` |
 | 2026-11-01 | Feature 9, check 7: build a probe image that copies the whole context and lists it, from a working tree that contains `sous.db`, `target/` and `.git` (`podman build`, which applies `.dockerignore`) | Pass (user): the context held only `Cargo.lock`, `Cargo.toml`, `build.rs`, `migrations`, `src` and `web` |
+| 2026-11-11 | Feature 10: from a Claude Code session connected to a running server with an empty database, create a week with no saved plan using `save_week` without `expectedRevision`, then open its page | Pass: `save_week` for 2026 week 46 without `expectedRevision` returned the committed document and a revision; `get_week` returned the same document and revision; a second call without `expectedRevision` returned `revision_conflict` with the "already saved" message; `/2026/46` and `/api/2026/46` returned `200` with the saved meal |

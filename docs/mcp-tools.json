@@ -1072,7 +1072,7 @@
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Creates or replaces ONE ISO week. This is a full replacement within that week: any existing day, meal, step, shopping list, category, item, prep session or strategy card that is not in the submitted document is deleted. To change one thing, call get_week, edit the document, and submit all of it. Other weeks are never touched. Use client-generated lowercase UUIDs for new records and keep existing ids to preserve them. Optional values must be explicit nulls; array order is stored order. expectedRevision null creates only and fails if the week exists; otherwise it must equal the revision from get_week, and a mismatch returns revision_conflict, after which you must fetch the week again and reconcile. There is no force option. The whole save is one transaction: an invalid document changes nothing. Returns the committed week and its new revision.",
+    "description": "Creates or replaces ONE ISO week. This is a full replacement within that week: any existing day, meal, step, shopping list, category, item, prep session or strategy card that is not in the submitted document is deleted. To change one thing, call get_week, edit the document, and submit all of it. Other weeks are never touched. Use client-generated lowercase UUIDs for new records and keep existing ids to preserve them. Optional values must be explicit nulls; array order is stored order. To create a week that has no saved plan yet, omit expectedRevision; if a plan is already saved, this returns revision_conflict. To replace a saved week, pass the revision from get_week as expectedRevision; a mismatch returns revision_conflict, after which you must fetch the week again and reconcile. There is no force option. The whole save is one transaction: an invalid document changes nothing. Returns the committed week and its new revision.",
     "inputSchema": {
       "$defs": {
         "DayInput": {
@@ -1496,7 +1496,8 @@
           "description": "The complete week. Everything not listed here is deleted from the stored week."
         },
         "expectedRevision": {
-          "description": "The `revision` from `get_week` for this week, or null to create a week that does not exist yet.",
+          "default": null,
+          "description": "The revision from get_week, to replace that saved week. Omit it to create a week that has no saved plan yet; null also creates.",
           "type": [
             "string",
             "null"
@@ -1518,7 +1519,6 @@
       "required": [
         "isoYear",
         "isoWeek",
-        "expectedRevision",
         "document"
       ],
       "type": "object"

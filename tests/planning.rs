@@ -5,7 +5,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use sous::calendar::{Clock, week_dates};
 use sous::model::{RevisedWeek, WeekInput};
-use sous::queries::{self, PageRequest, QueryError};
+use sous::queries::{self, Conflict, PageRequest, QueryError};
 use sous::{db, save};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
 use sqlx::{Connection, SqliteConnection, SqlitePool};
@@ -154,6 +154,13 @@ async fn exists(pool: &SqlitePool, table: &str, id: &str) -> bool {
 
 fn code<T: std::fmt::Debug>(result: Result<T, QueryError>) -> &'static str {
     result.expect_err("expected an error").code()
+}
+
+fn conflict<T: std::fmt::Debug>(result: Result<T, QueryError>) -> Conflict {
+    match result.expect_err("expected an error") {
+        QueryError::RevisionConflict(conflict) => conflict,
+        other => panic!("expected a revision conflict, got {other:?}"),
+    }
 }
 
 fn ids<T>(items: &[T], id: impl Fn(&T) -> &str) -> Vec<String> {
@@ -431,7 +438,7 @@ async fn assert_external_edit_conflicts(edit_sql: String) {
         edited(|v| v["week"]["subtitle"] = json!("x")),
     )
     .await;
-    assert_eq!(code(stale), "revision_conflict");
+    assert_eq!(conflict(stale), Conflict::Stale);
     assert_eq!(
         dump(&rp).await,
         before,
@@ -1286,9 +1293,19 @@ fn error_codes_and_messages() {
             "No meal with this id.",
         ),
         (
-            QueryError::RevisionConflict,
+            QueryError::RevisionConflict(Conflict::AlreadySaved),
             "revision_conflict",
-            "The week changed since it was read, or already exists. Fetch it with get_week and resubmit.",
+            "A plan is already saved for this week. Fetch it with get_week and resubmit with its revision.",
+        ),
+        (
+            QueryError::RevisionConflict(Conflict::NotSaved),
+            "revision_conflict",
+            "No plan is saved for this week. Omit expectedRevision to create it.",
+        ),
+        (
+            QueryError::RevisionConflict(Conflict::Stale),
+            "revision_conflict",
+            "The week changed since it was read. Fetch it with get_week and resubmit.",
         ),
     ];
     for (error, code, message) in cases {
@@ -1323,8 +1340,8 @@ async fn save_creates_a_week_and_round_trips() {
     // Creating again is a conflict, and nothing is duplicated.
     let again = dump(&rp).await;
     assert_eq!(
-        code(save_w45(&wp, None, sample()).await),
-        "revision_conflict"
+        conflict(save_w45(&wp, None, sample()).await),
+        Conflict::AlreadySaved
     );
     assert_eq!(dump(&rp).await, again);
 }
@@ -1403,8 +1420,8 @@ async fn save_revises_with_reordering_drops_and_additions() {
     // The request that already succeeded cannot be replayed.
     let after = dump(&rp).await;
     assert_eq!(
-        code(save_w45(&wp, Some(&created.revision), revised.clone()).await),
-        "revision_conflict"
+        conflict(save_w45(&wp, Some(&created.revision), revised.clone()).await),
+        Conflict::Stale
     );
     assert_eq!(dump(&rp).await, after);
 
@@ -1745,10 +1762,13 @@ async fn save_detects_stale_and_missing_revisions() {
     let rp = t.reader().await;
     // Some(revision) for a week that does not exist.
     let before = dump(&rp).await;
-    assert_eq!(
-        code(save_w45(&wp, Some("deadbeef"), sample()).await),
-        "revision_conflict"
-    );
+    for revision in ["deadbeef", "null", ""] {
+        assert_eq!(
+            conflict(save_w45(&wp, Some(revision), sample()).await),
+            Conflict::NotSaved,
+            "{revision:?}"
+        );
+    }
     assert_eq!(dump(&rp).await, before);
 
     let created = save_w45(&wp, None, sample()).await.unwrap();
@@ -1761,13 +1781,16 @@ async fn save_detects_stale_and_missing_revisions() {
     .unwrap();
     let after = dump(&rp).await;
     // The first revision is now stale.
+    for stale in [created.revision.as_str(), "", "null"] {
+        assert_eq!(
+            conflict(save_w45(&wp, Some(stale), sample()).await),
+            Conflict::Stale,
+            "{stale:?}"
+        );
+    }
     assert_eq!(
-        code(save_w45(&wp, Some(&created.revision), sample()).await),
-        "revision_conflict"
-    );
-    assert_eq!(
-        code(save_w45(&wp, Some(""), sample()).await),
-        "revision_conflict"
+        conflict(save_w45(&wp, None, sample()).await),
+        Conflict::AlreadySaved
     );
     assert_eq!(dump(&rp).await, after);
     let current = queries::get_week(&rp, 2026, 45).await.unwrap();
@@ -1787,8 +1810,8 @@ async fn save_detects_external_edits() {
     .await;
     let after_edit = dump(&rp).await;
     assert_eq!(
-        code(save_w45(&wp, Some(&created.revision), sample()).await),
-        "revision_conflict"
+        conflict(save_w45(&wp, Some(&created.revision), sample()).await),
+        Conflict::Stale
     );
     assert_eq!(dump(&rp).await, after_edit);
     // A fresh read gives a revision that works.
@@ -1843,7 +1866,7 @@ async fn save_is_atomic_with_concurrent_readers_and_writers() {
 
     let saved_a = a.await.unwrap().unwrap();
     let result_b = b.await.unwrap();
-    assert_eq!(code(result_b), "revision_conflict");
+    assert_eq!(conflict(result_b), Conflict::Stale);
     let last = queries::get_week(&rp, 2026, 45).await.unwrap();
     assert_eq!(last.revision, saved_a.revision);
     assert_eq!(to_json(&last.document)["week"]["subtitle"], "From A");

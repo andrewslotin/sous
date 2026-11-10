@@ -89,7 +89,7 @@ the server never interprets words such as "yesterday". Call `get_context` first 
 | `search_meals` | Find saved meals by name or description and by date | `query`, `fromDate`, `toDate`, `limit` (1 to 100), `cursor`; at least one of `query`, `fromDate`, `toDate` |
 | `get_meal` | One meal with every field and its source date | `mealId` (required) |
 | `get_shopping_lists` | Lists assigned to one day | `date` (default: today) |
-| `save_week` | Create or replace one whole week | `isoYear`, `isoWeek`, `expectedRevision`, `document` (all required) |
+| `save_week` | Create or replace one whole week | `isoYear`, `isoWeek`, `document` (required); `expectedRevision` (omit to create, the `get_week` revision to replace) |
 
 ### Results and errors
 
@@ -102,7 +102,7 @@ block holding the same JSON, for clients that only show text. A failed call has 
 | `invalid_input` | A missing, unknown or malformed argument, a bad date or cursor, or an invalid document. Nothing was changed. |
 | `week_not_found` | No plan is saved for that ISO week. |
 | `meal_not_found` | No meal has that id. |
-| `revision_conflict` | `expectedRevision` does not match the stored week. Call `get_week`, merge, and save again. |
+| `revision_conflict` | The week is already saved, has no saved plan, or changed since it was read; the message says which. Call `get_week`, merge, and save again. |
 | `service_unavailable` | The database could not be used. The message is deliberately generic. |
 
 An unknown tool name is a JSON-RPC protocol error (`-32602`), not a tool error.
@@ -171,8 +171,8 @@ invalid document changes nothing. There is no force option, no partial update an
 
 Rules for the document:
 
-- Every field is required. Optional values must be an explicit `null`; a missing key is `invalid_input`.
-  The same applies to `expectedRevision`.
+- Every field inside `document` is required. Optional values must be an explicit `null`; a missing key is
+  `invalid_input`. The top-level `expectedRevision` argument may be omitted.
 - Unknown fields are rejected.
 - Ids are lowercase UUIDs, for example `5a5a0001-0000-4000-8000-000000000001`. Generate a new one for
   every new record and keep the existing one for every record you retain. `week.id` must equal the stored id when
@@ -191,10 +191,20 @@ Rules for the document:
 
 `expectedRevision`:
 
-- `null` creates the week and fails with `revision_conflict` if it already exists.
-- A revision string replaces the week only if it still matches `get_week`'s latest `revision`; otherwise
+- Omit it (or pass `null`) to create a week that has no saved plan. If a plan is already saved, the result is
+  `revision_conflict`.
+- A revision string replaces the week only if it matches `get_week`'s latest `revision`; otherwise
   `revision_conflict`. This catches edits made in between, including edits from another connection.
-- A revision for a week that does not exist is `revision_conflict`.
+- A revision string for a week with no saved plan is `revision_conflict`. This holds for any string, including the
+  text `"null"`.
+
+The `revision_conflict` message says which case occurred:
+
+| Situation | Message |
+| --- | --- |
+| Create requested (omitted or `null`) but the week is already saved | `A plan is already saved for this week. Fetch it with get_week and resubmit with its revision.` |
+| Revision string sent, no plan saved for the week | `No plan is saved for this week. Omit expectedRevision to create it.` |
+| Revision string does not match the stored week | `The week changed since it was read. Fetch it with get_week and resubmit.` |
 
 The result is the committed week, `{ "document": ..., "revision": ... }`, the same shape as `get_week`.
 
@@ -225,7 +235,7 @@ Save next week (the document is abbreviated here; use the [example](examples/sav
 
 ```json
 { "name": "save_week",
-  "arguments": { "isoYear": 2026, "isoWeek": 45, "expectedRevision": null,
+  "arguments": { "isoYear": 2026, "isoWeek": 45,
                  "document": { "week": { "id": "...", "subtitle": null, "prepIntro": null },
                                "days": [], "shoppingLists": [], "prepSessions": [], "strategyCards": [] } } }
 ```

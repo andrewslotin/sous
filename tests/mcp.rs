@@ -251,6 +251,20 @@ async fn err(app: &Router, tool: &str, args: Value) -> String {
     code
 }
 
+const ALREADY_SAVED: &str =
+    "A plan is already saved for this week. Fetch it with get_week and resubmit with its revision.";
+const NOT_SAVED: &str = "No plan is saved for this week. Omit expectedRevision to create it.";
+const STALE: &str = "The week changed since it was read. Fetch it with get_week and resubmit.";
+
+/// Calls `save_week` and asserts a `revision_conflict` error with exactly this message.
+async fn assert_conflict(app: &Router, args: Value, message: &str) {
+    let result = call(app, "save_week", args).await;
+    assert_eq!(result["isError"], true, "{result}");
+    let error = &result["structuredContent"]["error"];
+    assert_eq!(error["code"], "revision_conflict", "{result}");
+    assert_eq!(error["message"], message, "{result}");
+}
+
 async fn get_json(app: &Router, uri: &str) -> (StatusCode, Value) {
     let reply = send(
         app,
@@ -337,6 +351,11 @@ fn save_args(iso_week: u32, expected: Value, document: Value) -> Value {
     json!({"isoYear": 2026, "isoWeek": iso_week, "expectedRevision": expected, "document": document})
 }
 
+/// `save_week` arguments with the `expectedRevision` key left out.
+fn save_args_omitting_revision(iso_week: u32, document: Value) -> Value {
+    json!({"isoYear": 2026, "isoWeek": iso_week, "document": document})
+}
+
 // ---- AC1: protocol ----
 
 #[tokio::test]
@@ -366,7 +385,9 @@ async fn stateless_flow_lists_seven_tools_and_calls_them() {
     for needle in [
         "full replacement",
         "deleted",
-        "creates only",
+        "omit expectedrevision",
+        "already saved",
+        "pass the revision from get_week as expectedrevision",
         "revision_conflict",
         "no force",
     ] {
@@ -381,9 +402,13 @@ async fn stateless_flow_lists_seven_tools_and_calls_them() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    for field in ["isoYear", "isoWeek", "expectedRevision", "document"] {
+    for field in ["isoYear", "isoWeek", "document"] {
         assert!(required.contains(&field), "{field} must be required");
     }
+    assert!(
+        !required.contains(&"expectedRevision"),
+        "expectedRevision must be optional: {required:?}"
+    );
     for tool in tools {
         assert_eq!(
             tool["inputSchema"]["additionalProperties"], false,
@@ -410,6 +435,7 @@ async fn server_info_names_sous_and_warns_that_text_is_data() {
     let instructions = result["instructions"].as_str().unwrap();
     assert!(instructions.contains("get_context"));
     assert!(instructions.contains("replaces the whole week"));
+    assert!(instructions.contains("omit expectedRevision"));
     assert!(instructions.contains("not instructions"));
     assert!(result["capabilities"]["tools"].is_object());
 }
@@ -1089,9 +1115,6 @@ async fn invalid_and_conflicting_saves_change_nothing() {
             .unwrap()
             .contains("tip")
     );
-    // So is a missing expectedRevision.
-    let args = json!({"isoYear": 2026, "isoWeek": 45, "document": week45()});
-    assert_eq!(err(&app, "save_week", args).await, "invalid_input");
     // And unknown fields or enum values.
     let mut brunch = week45();
     brunch["days"][0]["meals"][0]["type"] = json!("Brunch");
@@ -1117,33 +1140,25 @@ async fn invalid_and_conflicting_saves_change_nothing() {
     let after_save = env.dump().await;
     let mut edited = week45();
     edited["days"][0]["meals"][0]["name"] = json!("Porridge");
-    assert_eq!(
-        err(
-            &app,
-            "save_week",
-            save_args(45, json!("stale"), edited.clone())
-        )
-        .await,
-        "revision_conflict"
-    );
-    assert_eq!(
-        err(
-            &app,
-            "save_week",
-            save_args(45, Value::Null, edited.clone())
-        )
-        .await,
-        "revision_conflict"
-    );
-    assert_eq!(
-        err(
-            &app,
-            "save_week",
-            save_args(46, json!(revision), edited.clone())
-        )
-        .await,
-        "revision_conflict"
-    );
+    assert_conflict(&app, save_args(45, json!("stale"), edited.clone()), STALE).await;
+    assert_conflict(
+        &app,
+        save_args(45, Value::Null, edited.clone()),
+        ALREADY_SAVED,
+    )
+    .await;
+    assert_conflict(
+        &app,
+        save_args_omitting_revision(45, edited.clone()),
+        ALREADY_SAVED,
+    )
+    .await;
+    assert_conflict(
+        &app,
+        save_args(46, json!(revision), edited.clone()),
+        NOT_SAVED,
+    )
+    .await;
     assert_eq!(
         env.dump().await,
         after_save,
@@ -1162,10 +1177,7 @@ async fn invalid_and_conflicting_saves_change_nothing() {
         revised["document"]["days"][0]["meals"][0]["name"],
         "Porridge"
     );
-    assert_eq!(
-        err(&app, "save_week", save_args(45, json!(revision), edited)).await,
-        "revision_conflict"
-    );
+    assert_conflict(&app, save_args(45, json!(revision), edited), STALE).await;
 
     // The error text names the remedy.
     let result = call(&app, "save_week", save_args(45, json!("stale"), week45())).await;
@@ -1473,7 +1485,12 @@ async fn mcp_client_smoke_test() {
 
     let context = tool(&client, "get_context", json!({})).await;
     assert_eq!(context["today"], "2026-10-26");
-    let saved = tool(&client, "save_week", save_args(45, Value::Null, week45())).await;
+    let saved = tool(
+        &client,
+        "save_week",
+        save_args_omitting_revision(45, week45()),
+    )
+    .await;
     assert_eq!(saved["document"]["week"]["isoWeek"], 45);
     let found = tool(
         &client,
@@ -1547,7 +1564,11 @@ async fn save_week_schema_admits_null_expected_revision_for_create() {
         .iter()
         .map(|v| v.as_str().unwrap())
         .collect();
-    assert!(required.contains(&"expectedRevision"), "{required:?}");
+    assert!(!required.contains(&"expectedRevision"), "{required:?}");
+    assert_eq!(
+        schema["properties"]["expectedRevision"]["type"],
+        json!(["string", "null"])
+    );
 
     let validator = jsonschema::validator_for(schema).expect("inputSchema compiles");
     let example: Value = serde_json::from_str(SAVE_EXAMPLE).unwrap();
@@ -1563,8 +1584,119 @@ async fn save_week_schema_admits_null_expected_revision_for_create() {
         "create example with null expectedRevision must validate"
     );
     assert!(validator.is_valid(&args(Some(json!("0123abcd")))));
-    assert!(!validator.is_valid(&args(None)), "key stays required");
+    assert!(
+        validator.is_valid(&args(None)),
+        "create example without expectedRevision must validate"
+    );
     assert!(!validator.is_valid(&args(Some(json!(7)))));
+}
+
+fn week_args(iso_week: u32) -> Value {
+    json!({"isoYear": 2026, "isoWeek": iso_week})
+}
+
+#[tokio::test]
+async fn save_week_without_expected_revision_creates_a_new_week() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    assert_eq!(err(&app, "get_week", week_args(45)).await, "week_not_found");
+
+    let saved = ok(&app, "save_week", save_args_omitting_revision(45, week45())).await;
+    assert_eq!(saved["document"]["week"]["isoWeek"], 45);
+    assert_subset(&week45(), &saved["document"], "document");
+
+    let fetched = ok(&app, "get_week", week_args(45)).await;
+    assert_eq!(fetched["document"], saved["document"]);
+    assert_eq!(fetched["revision"], saved["revision"]);
+
+    let (status, api) = get_json(&app, "/api/2026/45").await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(api, saved["document"]);
+    let page = send(
+        &app,
+        Request::get("/2026/45")
+            .header("host", "localhost")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK);
+    let payload = page_json(&page.text);
+    assert_eq!(payload["kind"], "week");
+    assert_eq!(payload["document"], saved["document"]);
+}
+
+#[tokio::test]
+async fn save_week_without_expected_revision_on_a_saved_week_conflicts() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    ok(&app, "save_week", save_args_omitting_revision(45, week45())).await;
+    let before = env.dump().await;
+    let mut edited = week45();
+    edited["days"][0]["meals"][0]["name"] = json!("Porridge");
+    assert_conflict(&app, save_args_omitting_revision(45, edited), ALREADY_SAVED).await;
+    assert_eq!(env.dump().await, before);
+}
+
+#[tokio::test]
+async fn save_week_with_null_expected_revision_is_unchanged() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    let saved = ok(&app, "save_week", save_args(45, Value::Null, week45())).await;
+    assert_eq!(saved["document"]["week"]["isoWeek"], 45);
+    let fetched = ok(&app, "get_week", week_args(45)).await;
+    assert_eq!(fetched["revision"], saved["revision"]);
+
+    let before = env.dump().await;
+    let mut edited = week45();
+    edited["days"][0]["meals"][0]["name"] = json!("Porridge");
+    assert_conflict(&app, save_args(45, Value::Null, edited), ALREADY_SAVED).await;
+    assert_eq!(env.dump().await, before);
+}
+
+#[tokio::test]
+async fn save_week_revision_for_an_unsaved_week_conflicts() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    let before = env.dump().await;
+    for revision in ["null", "deadbeef", ""] {
+        assert_conflict(&app, save_args(45, json!(revision), week45()), NOT_SAVED).await;
+        assert_eq!(env.dump().await, before, "{revision:?}");
+        assert_eq!(err(&app, "get_week", week_args(45)).await, "week_not_found");
+    }
+}
+
+#[tokio::test]
+async fn save_week_matching_and_stale_revisions() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    let saved = ok(&app, "save_week", save_args(45, Value::Null, week45())).await;
+    let revision = saved["revision"].as_str().unwrap().to_owned();
+    let mut edited = week45();
+    edited["days"][0]["meals"][0]["name"] = json!("Porridge");
+
+    let before = env.dump().await;
+    for stale in ["stale", "null"] {
+        assert_conflict(&app, save_args(45, json!(stale), edited.clone()), STALE).await;
+    }
+    assert_eq!(env.dump().await, before);
+
+    let revised = ok(
+        &app,
+        "save_week",
+        save_args(45, json!(revision), edited.clone()),
+    )
+    .await;
+    assert_ne!(revised["revision"], saved["revision"]);
+    assert_eq!(
+        revised["document"]["days"][0]["meals"][0]["name"],
+        "Porridge"
+    );
+
+    // The old revision is now stale.
+    let after = env.dump().await;
+    assert_conflict(&app, save_args(45, json!(revision), edited), STALE).await;
+    assert_eq!(env.dump().await, after);
 }
 
 /// Every key of `input` must appear in `actual` with an equal value; read-only extras are allowed.

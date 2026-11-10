@@ -1,13 +1,14 @@
 //! Transactional full-week replacement for the MCP `save_week` tool.
 use crate::calendar::week_dates;
 use crate::model::{DayInput, MealType, RevisedWeek, Theme, WeekInput};
-use crate::queries::{QueryError, is_canonical_uuid, load_week_in, week_revision};
+use crate::queries::{Conflict, QueryError, is_canonical_uuid, load_week_in, week_revision};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashSet;
 
 /// Validate and save one complete week in a single write transaction.
-/// `expected_revision`: `None` creates only if the week does not exist; `Some` replaces only if it
-/// matches the current revision. Returns the committed document and its new revision.
+/// `expected_revision`: `None` creates only if the week does not exist (else `AlreadySaved`); `Some`
+/// replaces only if it matches the current revision (`Stale` on mismatch, `NotSaved` if the week does
+/// not exist). Any string, including `"null"`, is an ordinary revision. Returns the committed document and its new revision.
 pub async fn save_week(
     write_pool: &SqlitePool,
     iso_year: i32,
@@ -207,10 +208,11 @@ async fn replace_week(
     let current = load_week_in(&mut *conn, iso_year, iso_week).await?;
     match (&current, expected_revision) {
         (None, None) => {}
-        (Some(_), None) | (None, Some(_)) => return Err(QueryError::RevisionConflict),
+        (Some(_), None) => return Err(QueryError::RevisionConflict(Conflict::AlreadySaved)),
+        (None, Some(_)) => return Err(QueryError::RevisionConflict(Conflict::NotSaved)),
         (Some(document), Some(expected)) => {
             if week_revision(&mut *conn, &document.week.id).await? != expected {
-                return Err(QueryError::RevisionConflict);
+                return Err(QueryError::RevisionConflict(Conflict::Stale));
             }
         }
     }

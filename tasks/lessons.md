@@ -9,6 +9,9 @@
   one line. A "please send the handoff ... one message per item" request made me send seven messages the user never
   asked for.
   Long agterm replies arrive truncated: ask for one message per finding, each under 400 characters.
+- The review loop ends only when Codex's reply to MY review request arrives in my pane. A verdict I read off
+  Codex's pane, or one from a review the user started there, does not count: still send the skill's request (with
+  scope decisions and the docs sweep) and wait for the reply before touching the tracker.
 - When a tool call fails, or a hook stops or blocks one, tell the user at once in one line: what fired and what I'll
   do next. Never end a turn silently. Keep exploratory command chains short (at most three calls before a status
   line), and post a one-line status after loading context (before writing a brief) and before a multi-call handoff

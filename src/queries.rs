@@ -10,6 +10,17 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
+/// Which optimistic-concurrency check failed in `save_week`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Conflict {
+    /// Create requested (expectedRevision omitted or null) but a plan is already saved for the week.
+    AlreadySaved,
+    /// A revision string was sent but no plan is saved for the week.
+    NotSaved,
+    /// A revision string was sent and does not match the stored week's current revision.
+    Stale,
+}
+
 /// Failure of an MCP-facing query or save. `code()` is the stable application error code.
 #[derive(Debug)]
 pub enum QueryError {
@@ -17,7 +28,7 @@ pub enum QueryError {
     InvalidInput(String),
     WeekNotFound,
     MealNotFound,
-    RevisionConflict,
+    RevisionConflict(Conflict),
     /// Logged server-side; never shown.
     Database(sqlx::Error),
 }
@@ -35,7 +46,7 @@ impl QueryError {
             QueryError::InvalidInput(_) => "invalid_input",
             QueryError::WeekNotFound => "week_not_found",
             QueryError::MealNotFound => "meal_not_found",
-            QueryError::RevisionConflict => "revision_conflict",
+            QueryError::RevisionConflict(_) => "revision_conflict",
             QueryError::Database(_) => "service_unavailable",
         }
     }
@@ -46,7 +57,13 @@ impl QueryError {
             QueryError::InvalidInput(message) => message.clone(),
             QueryError::WeekNotFound => "No meal plan for this week.".into(),
             QueryError::MealNotFound => "No meal with this id.".into(),
-            QueryError::RevisionConflict => "The week changed since it was read, or already exists. Fetch it with get_week and resubmit.".into(),
+            QueryError::RevisionConflict(Conflict::AlreadySaved) => "A plan is already saved for this week. Fetch it with get_week and resubmit with its revision.".into(),
+            QueryError::RevisionConflict(Conflict::NotSaved) => {
+                "No plan is saved for this week. Omit expectedRevision to create it.".into()
+            }
+            QueryError::RevisionConflict(Conflict::Stale) => {
+                "The week changed since it was read. Fetch it with get_week and resubmit.".into()
+            }
             QueryError::Database(_) => "Meal plans are temporarily unavailable.".into(),
         }
     }
