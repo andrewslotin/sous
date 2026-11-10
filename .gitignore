@@ -4,3 +4,4 @@ target/
 *.db-wal
 .mcp.json
 menu
+data/
