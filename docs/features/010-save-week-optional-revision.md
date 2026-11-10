@@ -26,7 +26,7 @@ Some MCP clients cannot send JSON `null` for a top-level argument whose schema t
 
 - Every other `save_week` rule is unchanged: full replacement, one transaction, required document fields with explicit `null` for optional values, ID rules and validation codes. The relaxation applies only to the top-level `expectedRevision` argument, not to fields inside `document`.
 - Update the `save_week` tool description and the server `instructions` so both say: omit `expectedRevision` to create a week, pass the revision from `get_week` to replace one. Leave the other tools unchanged.
-- Update the [MCP guide](../mcp.md) (the tools table, the `expectedRevision` rules and the "Plan a new week" example, which should omit the argument), the [tool list](../mcp-tools.json), the technical design if it states the rule, and the [verification record](../verification.md).
+- Update the [MCP guide](../mcp.md) (the tools table, the `expectedRevision` rules and the "Plan a new week" example, which should omit the argument), the [tool list](../mcp-tools.json) and the technical design if it states the rule.
 
 ## Acceptance criteria
 

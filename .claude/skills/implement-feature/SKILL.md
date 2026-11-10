@@ -82,9 +82,8 @@ cargo test --test browser -- --ignored
 Read the key new code: the migration, the handlers, the queries and the changed JSX/CSS. Compare it with the spec
 and the reference, and catch scope creep or gaps before asking Codex to review.
 
-Sweep the docs, not just the files the spec names. Grep the README and `docs/` (design, verification record,
-OpenAPI, MCP guide) for every route, payload and test name the feature changed. Fix stale current-contract
-references, and check that every test name the verification record cites still exists.
+Sweep the docs, not just the files the spec names. Grep the README and `docs/` (design, OpenAPI,
+MCP guide) for every route, payload and test name the feature changed. Fix stale current-contract references.
 
 ## 5. Ask Codex to review
 

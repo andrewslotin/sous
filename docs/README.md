@@ -1,6 +1,6 @@
 # Sous feature tracker
 
-The [technical design](technical-design.md) defines the service contract. The [example page](examples/menu.html) defines the visual reference. The [OpenAPI document](openapi.json) describes the read API, and the [verification record](verification.md) maps acceptance criteria to tests and manual checks.
+The [technical design](technical-design.md) defines the service contract. The [example page](examples/menu.html) defines the visual reference. The [OpenAPI document](openapi.json) describes the read API.
 
 Implement features in the order below. Each iteration includes its own verification and leaves a usable service. Status values: Planned, In progress, Done. Mark a feature Done when its acceptance criteria pass.
 

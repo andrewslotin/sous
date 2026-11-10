@@ -92,7 +92,6 @@ Add `.github/workflows/ci.yml`:
   - running behind a reverse proxy, which requires setting `SOUS_MCP_ALLOWED_HOSTS` to the public host name
   - seeding: the image has no shell or `sqlite3`, so seed the database file from the host
 - Technical design: in Architecture, add one sentence saying the service ships as a static binary in a `scratch` image.
-- Add a row for this feature to the [verification record](../verification.md).
 
 ## Out of scope
 
@@ -115,4 +114,4 @@ Add `.github/workflows/ci.yml`:
 
 ## Verification
 
-Add an integration test that runs the built binary with a temporary database. It waits for the "listening" log line, sends SIGTERM and asserts exit status 0 within 5 seconds. Checks 1–7 are manual Docker checks; record the image size alongside them in the [verification record](../verification.md). Checks 8 and 10 are pull-request runs; for check 10, push one commit that breaks a test, misformats a line and introduces a clippy warning, then revert it. Check 9 is a test tag pushed to a fork or a pre-release tag.
+Add an integration test that runs the built binary with a temporary database. It waits for the "listening" log line, sends SIGTERM and asserts exit status 0 within 5 seconds. Checks 1–7 are manual Docker checks. Checks 8 and 10 are pull-request runs; for check 10, push one commit that breaks a test, misformats a line and introduces a clippy warning, then revert it. Check 9 is a test tag pushed to a fork or a pre-release tag.

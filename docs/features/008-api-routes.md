@@ -54,4 +54,4 @@ Use `application/json` and `Cache-Control: no-store`, as for the week document. 
 
 ## Verification
 
-Extend the API contract tests with a fixed clock, covering ISO year boundaries, the current-year rule around New Year, gap years, empty databases and database failure. Compare each year response with the bootstrap data of the matching year page. Update the [verification record](../verification.md).
+Extend the API contract tests with a fixed clock, covering ISO year boundaries, the current-year rule around New Year, gap years, empty databases and database failure. Compare each year response with the bootstrap data of the matching year page.

@@ -51,4 +51,4 @@ Return the status in the initial HTML response, not only in browser state.
 
 ## Verification
 
-Use table-driven HTTP tests with a fixed clock, covering ISO year boundaries, the current-year rule around New Year in the configured timezone, gap years, the first and last supported years, empty databases and database failure. In the browser, verify the “All weeks”, “This week” and year links navigate correctly, and capture year pages at 375 px and 1280 px. Update the [verification record](../verification.md).
+Use table-driven HTTP tests with a fixed clock, covering ISO year boundaries, the current-year rule around New Year in the configured timezone, gap years, the first and last supported years, empty databases and database failure. In the browser, verify the “All weeks”, “This week” and year links navigate correctly, and capture year pages at 375 px and 1280 px.
