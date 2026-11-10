@@ -15,3 +15,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 7 | [Year archive pages](features/007-year-archive.md) | Done | 2 |
 | 8 | [API routes matching page routes](features/008-api-routes.md) | Done | 7 |
 | 9 | [Docker image and CI](features/009-docker-image.md) | In progress | — |
+| 10 | [Create weeks without a null revision](features/010-save-week-optional-revision.md) | Planned | 6 |
