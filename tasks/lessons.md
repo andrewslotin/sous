@@ -48,3 +48,9 @@
 - MCP tool descriptions must say when to use the tool, not only what it returns. When a narrow tool overlaps a broad
   one (`get_shopping_lists` vs `get_week`), point each description and the server instructions at the right one.
   A real client picked `get_week` for "today's shopping list" until the descriptions said so.
+- Once the user picks a design option, write the feature spec in `docs/features/` and add it to the tracker. Don't
+  launch `implement-feature` unless the user asks for implementation. The skill takes a spec, and the user wanted to
+  review the spec first.
+- When an MCP tool call fails with an error the server state can't explain, first suspect the client's argument
+  encoding (Claude Code most likely sent `null` for a `["string","null"]` argument as the text `"null"`). Say so
+  instead of blaming the database.
