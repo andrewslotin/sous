@@ -57,3 +57,6 @@
 - When an MCP tool call fails with an error the server state can't explain, first suspect the client's argument
   encoding (Claude Code most likely sent `null` for a `["string","null"]` argument as the text `"null"`). Say so
   instead of blaming the database.
+- A short reply right after I list numbered decisions most likely answers one of them. Match it to the item first,
+  and if it's unclear which one, ask which item. Don't read it as a new design request and offer redesigns: "I don't
+  want calendar to display the month anymore" was about decision 6, the initial month.
