@@ -310,7 +310,7 @@ pub fn tools() -> Vec<Tool> {
             "get_week",
             "Get one week",
             "Returns the complete saved document of one ISO week (days, meals with steps, shopping \
-             lists, prep sessions, strategy cards) plus its revision. Give isoYear and isoWeek \
+             lists, prep sessions) plus its revision. Give isoYear and isoWeek \
              together, or neither for the current week. Pass the revision back as expectedRevision \
              to save_week. A week with no saved plan is week_not_found. For one day's shopping lists, use \
              get_shopping_lists instead.",
@@ -351,7 +351,7 @@ pub fn tools() -> Vec<Tool> {
             "save_week",
             "Save a complete week",
             "Creates or replaces ONE ISO week. This is a full replacement within that week: any \
-             existing day, meal, step, shopping list, category, item, prep session or strategy card \
+             existing day, meal, step, shopping list, category, item or prep session \
              that is not in the submitted document is deleted. To change one thing, call get_week, edit \
              the document, and submit all of it. Other weeks are never touched. Use client-generated \
              lowercase UUIDs for new records and keep existing ids to preserve them. Optional values \

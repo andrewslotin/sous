@@ -6,16 +6,7 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const TABS = [
   { id: "plan", label: "Daily Plan" },
   { id: "prep", label: "Prep Sessions" },
-  { id: "strategy", label: "Strategy" },
 ];
-
-// Fixed whitelist: the database theme is mapped to a class here, never used as one directly.
-const STRATEGY_THEMES = {
-  green: "strategy-green",
-  blue: "strategy-blue",
-  purple: "strategy-purple",
-  yellow: "strategy-yellow",
-};
 
 const MEAL_ICONS = { Breakfast: "☀️", Lunch: "🥗", Dinner: "🍽️", Snack: "🥜" };
 
@@ -216,22 +207,6 @@ function PrepCard({ session }) {
   );
 }
 
-function StrategyCard({ card }) {
-  const theme = STRATEGY_THEMES[card.theme];
-  return (
-    <div className={theme ? `strategy ${theme}` : "strategy"}>
-      <div className="strategy-title">{card.icon !== null ? `${card.icon} ${card.title}` : card.title}</div>
-      {card.items.length > 0 && (
-        <ul className="strategy-items">
-          {card.items.map((item) => (
-            <li key={item.id}>{item.text}</li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
 function Reminder({ reminder }) {
   return (
     <div className="reminder">
@@ -313,16 +288,6 @@ function MealPlan({ page }) {
           )}
         </>
       )}
-      {activeTab === "strategy" &&
-        (data.strategyCards.length === 0 ? (
-          <p className="empty">No strategy notes for this week.</p>
-        ) : (
-          <div className="strategy-list">
-            {data.strategyCards.map((c) => (
-              <StrategyCard key={c.id} card={c} />
-            ))}
-          </div>
-        ))}
     </CalendarShell>
   );
 }

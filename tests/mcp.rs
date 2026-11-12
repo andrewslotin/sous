@@ -16,6 +16,7 @@ use tower::ServiceExt;
 const W44: &str = include_str!("../fixtures/2026-w44.sql");
 const W44_WEEKLY: &str = include_str!("../fixtures/2026-w44-weekly.sql");
 const HISTORY: &str = include_str!("../fixtures/2026-history.sql");
+const STRATEGY_0003: &str = include_str!("fixtures/0003-strategy.sql");
 const TOOLS_DOC: &str = include_str!("../docs/mcp-tools.json");
 const SAVE_EXAMPLE: &str = include_str!("../docs/examples/save-week.json");
 
@@ -63,6 +64,46 @@ impl Env {
             sqlx::raw_sql(sql).execute(&mut c).await.unwrap();
         }
         env
+    }
+
+    /// A database migrated through 0003 only, holding the strategy rows and every other fixture,
+    /// then upgraded by `db::migrate`.
+    async fn upgraded_from_version_3() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("old.db");
+        let mut old = sqlx::migrate!();
+        old.migrations = old
+            .migrations
+            .iter()
+            .filter(|m| m.version <= 3)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+        assert_eq!(old.migrations.len(), 3);
+        {
+            let mut c = SqliteConnection::connect_with(
+                &SqliteConnectOptions::new()
+                    .filename(&path)
+                    .create_if_missing(true)
+                    .journal_mode(SqliteJournalMode::Wal)
+                    .foreign_keys(true),
+            )
+            .await
+            .unwrap();
+            old.run(&mut c).await.unwrap();
+            for sql in [W44, W44_WEEKLY, STRATEGY_0003, HISTORY] {
+                sqlx::raw_sql(sql).execute(&mut c).await.unwrap();
+            }
+        }
+        db::migrate(&path).await.unwrap();
+        let read = db::open_read_pool(&path).await.unwrap();
+        let write = db::open_write_pool(&path).await.unwrap();
+        Env {
+            _dir: dir,
+            path,
+            read,
+            write,
+        }
     }
 
     /// A separate connection, like an external writer.
@@ -337,11 +378,6 @@ fn week45() -> Value {
         "prepSessions": [
             {"id": id(60), "title": "Sunday prep", "covers": "Mon–Tue", "tasks": [
                 {"id": id(61), "name": "Cook lentils", "time": "20 min", "instructions": "Boil and drain."},
-            ]},
-        ],
-        "strategyCards": [
-            {"id": id(70), "title": "Batch cooking", "icon": "🍲", "theme": "green", "items": [
-                {"id": id(71), "text": "Double the soup."},
             ]},
         ],
     })
@@ -1066,7 +1102,8 @@ async fn saved_week_is_visible_without_rebuilding_the_router() {
         api["days"][0]["meals"][1]["steps"][2]["text"],
         "Simmer 20 minutes."
     );
-    assert_eq!(api["strategyCards"][0]["theme"], "green");
+    assert!(api.get("strategyCards").is_none());
+    assert_eq!(api["schemaVersion"], 2);
     let page = send(
         &app,
         Request::get("/2026/45")
@@ -1187,6 +1224,137 @@ async fn invalid_and_conflicting_saves_change_nothing() {
             .unwrap()
             .contains("get_week")
     );
+}
+
+// ---- Feature 12: strategy cards are gone ----
+
+#[tokio::test]
+async fn save_week_rejects_strategy_cards_and_get_week_has_none() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+
+    let saved = ok(&app, "save_week", save_args(45, Value::Null, week45())).await;
+    let revision = saved["revision"].clone();
+    assert!(saved["document"].get("strategyCards").is_none());
+    assert_eq!(saved["document"]["schemaVersion"], 2);
+    let fetched = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 44})).await;
+    assert!(fetched["document"].get("strategyCards").is_none());
+    assert_eq!(fetched["document"]["schemaVersion"], 2);
+    let (_, year) = get_json(&app, "/api/2026").await;
+    assert_eq!(year["schemaVersion"], 1);
+
+    let before = env.dump().await;
+    let card = json!({
+        "id": id(70), "title": "Batch cooking", "icon": "🍲", "theme": "green",
+        "items": [{"id": id(71), "text": "Double the soup."}],
+    });
+    for cards in [json!([]), json!([card])] {
+        let mut with_cards = week45();
+        with_cards["days"][0]["meals"][0]["name"] = json!("Porridge");
+        with_cards["strategyCards"] = cards;
+        let result = call(
+            &app,
+            "save_week",
+            save_args(45, revision.clone(), with_cards),
+        )
+        .await;
+        assert_eq!(result["isError"], true, "{result}");
+        assert_eq!(
+            result["structuredContent"]["error"]["code"],
+            "invalid_input"
+        );
+        assert!(
+            result["structuredContent"]["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("strategyCards")
+        );
+        assert_eq!(env.dump().await, before, "an invalid save changes nothing");
+        let current = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 45})).await;
+        assert_eq!(current, saved, "revision and document are unchanged");
+    }
+
+    // The same document without strategyCards saves.
+    let mut edited = week45();
+    edited["days"][0]["meals"][0]["name"] = json!("Porridge");
+    let revised = ok(&app, "save_week", save_args(45, revision, edited)).await;
+    assert_eq!(
+        revised["document"]["days"][0]["meals"][0]["name"],
+        "Porridge"
+    );
+    assert_ne!(revised["revision"], saved["revision"]);
+}
+
+// Revisions a pre-0004 server returned for weeks of the fixtures, as a client read them before the upgrade.
+/// Revision a pre-0004 server returned for 2026-W44 with `2026-w44.sql` and `2026-w44-weekly.sql` (strategy cards included).
+const PRE_UPGRADE_REVISION_W44: &str =
+    "7fa4dcb36ebf41ae6a452dda00149193d059dcd37836ea574a3cc76570ce81c0";
+/// Revision a pre-0004 server returned for 2026-W41 from `2026-history.sql` (a week without strategy cards).
+const PRE_UPGRADE_REVISION_W41: &str =
+    "eaf04f5a234fa72d7b34a04ed47d184c9913d510329112bd8104f6407b3b0ccd";
+
+/// Turns a `get_week` document into a `save_week` document by dropping the derived fields.
+fn to_input(document: &Value) -> Value {
+    let mut doc = document.clone();
+    let root = doc.as_object_mut().unwrap();
+    root.remove("schemaVersion");
+    let week = root["week"].as_object_mut().unwrap();
+    for key in ["isoYear", "isoWeek", "startDate", "endDate"] {
+        week.remove(key);
+    }
+    let days = root["days"].as_array_mut().unwrap();
+    days.retain(|d| !d["id"].is_null());
+    for day in days {
+        day.as_object_mut().unwrap().remove("date");
+    }
+    doc
+}
+
+#[tokio::test]
+async fn revisions_from_before_the_upgrade_conflict() {
+    let env = Env::upgraded_from_version_3().await;
+    let app = env.app(journey_clock());
+
+    for (week, old_revision) in [
+        (44, PRE_UPGRADE_REVISION_W44),
+        (41, PRE_UPGRADE_REVISION_W41),
+    ] {
+        let args = json!({"isoYear": 2026, "isoWeek": week});
+        let current = ok(&app, "get_week", args).await;
+        assert_ne!(current["revision"], old_revision, "W{week}");
+        let mut edited = to_input(&current["document"]);
+        edited["week"]["subtitle"] = json!("Edited after the upgrade");
+
+        let before = env.dump().await;
+        assert_conflict(
+            &app,
+            save_args(week, json!(old_revision), edited.clone()),
+            STALE,
+        )
+        .await;
+        assert_eq!(
+            env.dump().await,
+            before,
+            "W{week}: a conflict changes nothing"
+        );
+        let unchanged = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": week})).await;
+        assert_eq!(unchanged, current, "W{week}");
+
+        // The revision that get_week returns after the upgrade replaces the week.
+        let saved = ok(
+            &app,
+            "save_week",
+            save_args(week, current["revision"].clone(), edited),
+        )
+        .await;
+        assert_eq!(
+            saved["document"]["week"]["subtitle"],
+            "Edited after the upgrade"
+        );
+        assert_ne!(saved["revision"], current["revision"]);
+        let reread = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": week})).await;
+        assert_eq!(reread, saved, "W{week}");
+    }
 }
 
 // ---- AC9 ----
@@ -1758,7 +1926,7 @@ async fn save_week_example_round_trips() {
                 .any(|c| c["items"].as_array().unwrap().is_empty()))
     );
     assert!(!example["prepSessions"].as_array().unwrap().is_empty());
-    assert!(!example["strategyCards"].as_array().unwrap().is_empty());
+    assert!(example.get("strategyCards").is_none());
     let shared = example["shoppingLists"]
         .as_array()
         .unwrap()

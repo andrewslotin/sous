@@ -121,16 +121,5 @@
         }
       ]
     }
-  ],
-  "strategyCards": [
-    {
-      "id": "5a5a000b-0000-4000-8000-000000000001",
-      "title": "Batch cooking",
-      "icon": "🍲",
-      "theme": "green",
-      "items": [
-        { "id": "5a5a000c-0000-4000-8000-000000000001", "text": "Double the soup and freeze half." }
-      ]
-    }
   ]
 }

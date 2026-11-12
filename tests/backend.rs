@@ -12,6 +12,8 @@ use tower::ServiceExt;
 
 const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
 const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
+const STRATEGY_FIXTURE: &str = include_str!("fixtures/0003-strategy.sql");
+const HISTORY_FIXTURE: &str = include_str!("../fixtures/2026-history.sql");
 const U1: &str = "11111111-1111-4111-8111-111111111111";
 const U2: &str = "22222222-2222-4222-8222-222222222222";
 const U3: &str = "33333333-3333-4333-8333-333333333333";
@@ -792,6 +794,8 @@ async fn embedded_document_equals_the_api_body() {
         page["document"],
         serde_json::from_str::<Value>(&api_body).unwrap()
     );
+    assert!(page["document"].get("strategyCards").is_none());
+    assert_eq!(page["document"]["schemaVersion"], 2);
     assert!(page["document"].get("today").is_none());
     assert!(page["document"].get("plannedWeeks").is_none());
 }
@@ -1665,39 +1669,32 @@ async fn shopping_deletes_cascade() {
     }
 }
 
-// ---- Feature 4: prep, strategy, reminders ----
+// ---- Feature 4: prep and reminders (strategy cards were removed by feature 12) ----
 
 const SESSION_MON: &str = "00000008-0000-4000-8000-000000000035";
 const SESSION_WED: &str = "00000008-0000-4000-8000-000000000032";
-const CARD_GREEN: &str = "0000000a-0000-4000-8000-00000000003b";
 const WED: &str = "00000002-0000-4000-8000-000000000004";
 
 type Group = Vec<(String, Vec<String>)>;
 
-/// Prep and strategy content as `(title, [child text])` pairs in document order.
-fn weekly_order(doc: &Value) -> (Group, Group) {
-    let pick = |key: &str, children: &str, text: &str| -> Group {
-        doc[key]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|p| {
-                (
-                    p["title"].as_str().unwrap().to_string(),
-                    p[children]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|c| c[text].as_str().unwrap().to_string())
-                        .collect(),
-                )
-            })
-            .collect()
-    };
-    (
-        pick("prepSessions", "tasks", "name"),
-        pick("strategyCards", "items", "text"),
-    )
+/// Prep content as `(title, [task name])` pairs in document order.
+fn weekly_order(doc: &Value) -> Group {
+    doc["prepSessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p["title"].as_str().unwrap().to_string(),
+                p["tasks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|c| c["name"].as_str().unwrap().to_string())
+                    .collect(),
+            )
+        })
+        .collect()
 }
 
 fn strs(v: &Group) -> Vec<(&str, Vec<&str>)> {
@@ -1754,7 +1751,7 @@ async fn upgrade_from_version_2_keeps_data() {
 
     assert_eq!(upgraded["week"]["prepIntro"], Value::Null);
     assert_eq!(upgraded["prepSessions"], json!([]));
-    assert_eq!(upgraded["strategyCards"], json!([]));
+    assert!(upgraded.get("strategyCards").is_none());
     for d in upgraded["days"].as_array().unwrap() {
         assert_eq!(d["reminder"], Value::Null);
     }
@@ -1769,12 +1766,145 @@ async fn upgrade_from_version_2_keeps_data() {
     assert_eq!(doc["prepSessions"].as_array().unwrap().len(), 2);
 }
 
+/// Every row of `tables`, all columns, ordered by all columns, as text.
+async fn row_snapshot(c: &mut SqliteConnection, tables: &[&str]) -> Vec<String> {
+    use sqlx::Row;
+    let mut out = Vec::new();
+    for table in tables {
+        let columns: Vec<String> =
+            sqlx::query("SELECT name FROM pragma_table_info(?) ORDER BY cid")
+                .bind(table)
+                .fetch_all(&mut *c)
+                .await
+                .unwrap()
+                .iter()
+                .map(|row| row.get::<String, _>(0))
+                .collect();
+        assert!(!columns.is_empty(), "{table} exists");
+        let expr = columns
+            .iter()
+            .map(|c| format!("quote(\"{c}\")"))
+            .collect::<Vec<_>>()
+            .join(" || ',' || ");
+        let order = columns
+            .iter()
+            .map(|c| format!("\"{c}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("SELECT {expr} FROM \"{table}\" ORDER BY {order}");
+        let rows = sqlx::query(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut *c)
+            .await
+            .unwrap();
+        out.push(format!("== {table}: {} rows", rows.len()));
+        out.extend(rows.iter().map(|row| row.get::<String, _>(0)));
+    }
+    out
+}
+
+#[tokio::test]
+async fn upgrade_from_version_3_drops_strategy() {
+    const CONTENT_TABLES: [&str; 10] = [
+        "weeks",
+        "days",
+        "meals",
+        "meal_steps",
+        "shopping_lists",
+        "day_shopping_lists",
+        "shopping_categories",
+        "shopping_items",
+        "prep_sessions",
+        "prep_tasks",
+    ];
+    // A database migrated only through version 3, holding strategy cards and all other content.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let mut old = sqlx::migrate!();
+    old.migrations = old
+        .migrations
+        .iter()
+        .filter(|m| m.version <= 3)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    assert_eq!(old.migrations.len(), 3);
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    old.run(&mut c).await.unwrap();
+    for sql in [FIXTURE, WEEKLY_FIXTURE, STRATEGY_FIXTURE, HISTORY_FIXTURE] {
+        sqlx::raw_sql(sql).execute(&mut c).await.unwrap();
+    }
+    assert_eq!(count(&mut c, "strategy_cards").await, 4);
+    assert_eq!(count(&mut c, "strategy_items").await, 6);
+
+    let weeks: Vec<(i32, u32)> = {
+        use sqlx::Row;
+        sqlx::query("SELECT iso_year, iso_week FROM weeks ORDER BY iso_year, iso_week")
+            .fetch_all(&mut c)
+            .await
+            .unwrap()
+            .iter()
+            .map(|r| (r.get::<i32, _>(0), r.get::<u32, _>(1)))
+            .collect()
+    };
+    assert_eq!(weeks, [(2026, 38), (2026, 41), (2026, 44)]);
+    let before_rows = row_snapshot(&mut c, &CONTENT_TABLES).await;
+    drop(c);
+
+    // The documents as the 0003 database serves them (the queries no longer read strategy tables).
+    let mut before_docs = Vec::new();
+    {
+        let old_pool = db::open_read_pool(&path).await.unwrap();
+        for &(y, w) in &weeks {
+            before_docs.push(week_value(&old_pool, y, w).await);
+        }
+        old_pool.close().await;
+    }
+
+    db::migrate(&path).await.unwrap();
+
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    use sqlx::Row;
+    let tables: Vec<String> = sqlx::query("SELECT name FROM sqlite_master WHERE type = 'table'")
+        .fetch_all(&mut c)
+        .await
+        .unwrap()
+        .iter()
+        .map(|r| r.get::<String, _>(0))
+        .collect();
+    assert!(!tables.iter().any(|t| t.contains("strategy")), "{tables:?}");
+    assert_eq!(row_snapshot(&mut c, &CONTENT_TABLES).await, before_rows);
+
+    let pool = db::open_read_pool(&path).await.unwrap();
+    // The same fixtures in a database that never had strategy cards: the weeks must match it.
+    let fresh = TestDb::with_fixture().await;
+    sqlx::raw_sql(HISTORY_FIXTURE)
+        .execute(&mut fresh.writer().await)
+        .await
+        .unwrap();
+    let fresh_pool = fresh.reader().await;
+    for ((y, w), before) in weeks.into_iter().zip(before_docs) {
+        let doc = week_value(&pool, y, w).await;
+        assert_eq!(doc, before, "{y}-W{w} unchanged by the upgrade");
+        assert!(doc.get("strategyCards").is_none(), "{y}-W{w}");
+        assert_eq!(doc["schemaVersion"], 2, "{y}-W{w}");
+        assert_eq!(doc, week_value(&fresh_pool, y, w).await, "{y}-W{w}");
+    }
+    let doc = week_value(&pool, 2026, 44).await;
+    assert_eq!(doc["prepSessions"].as_array().unwrap().len(), 2);
+    assert_eq!(doc["days"][2]["reminder"]["title"], "Shop day");
+}
+
 #[tokio::test]
 async fn weekly_content_order_and_reorder() {
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
     let doc = week_value(&pool, 2026, 44).await;
-    let (prep, strategy) = weekly_order(&doc);
+    let prep = weekly_order(&doc);
     assert_eq!(
         strs(&prep),
         [
@@ -1795,31 +1925,6 @@ async fn weekly_content_order_and_reorder() {
             ),
         ]
     );
-    assert_eq!(
-        strs(&strategy),
-        [
-            (
-                "Weekly Variety",
-                vec![
-                    "Oily fish 3×",
-                    "Legumes daily",
-                    "Nuts daily — walnuts & almonds"
-                ]
-            ),
-            ("Air Fryer Features", vec!["Mon: crispy chickpeas"]),
-            ("The Salmon Plan", vec!["~300g → gravlax"]),
-            ("This Week's Notes", vec!["Monday + Thursday shop split"]),
-        ]
-    );
-    let themes: Vec<_> = doc["strategyCards"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|c| c["theme"].as_str().unwrap())
-        .collect();
-    assert_eq!(themes, ["green", "blue", "purple", "yellow"]);
-    assert_eq!(doc["strategyCards"][2]["icon"], Value::Null);
-    assert_eq!(doc["strategyCards"][0]["icon"], "🐟");
     assert_eq!(doc["prepSessions"][1]["covers"], Value::Null);
     assert_eq!(
         doc["prepSessions"][0]["covers"],
@@ -1827,17 +1932,11 @@ async fn weekly_content_order_and_reorder() {
     );
     assert_eq!(doc["prepSessions"][0]["id"], SESSION_MON);
     let session_ids = sorted_ids(&doc, "prepSessions");
-    let card_ids = sorted_ids(&doc, "strategyCards");
 
     // Reorder through a separate writer: shift every position out of the way, then set.
     let mut c = t.writer().await;
     let mut tx = c.begin().await.unwrap();
-    for table in [
-        "prep_sessions",
-        "prep_tasks",
-        "strategy_cards",
-        "strategy_items",
-    ] {
+    for table in ["prep_sessions", "prep_tasks"] {
         exec(
             &mut tx,
             &format!("UPDATE {table} SET position = position + 100"),
@@ -1853,13 +1952,6 @@ async fn weekly_content_order_and_reorder() {
         ("prep_tasks", "00000009-0000-4000-8000-000000000037", 2),
         ("prep_tasks", "00000009-0000-4000-8000-000000000033", 0),
         ("prep_tasks", "00000009-0000-4000-8000-000000000034", 1),
-        ("strategy_cards", "0000000a-0000-4000-8000-000000000039", 0),
-        ("strategy_cards", "0000000a-0000-4000-8000-00000000003f", 1),
-        ("strategy_cards", "0000000a-0000-4000-8000-000000000041", 2),
-        ("strategy_cards", CARD_GREEN, 3),
-        ("strategy_items", "0000000b-0000-4000-8000-00000000003e", 0),
-        ("strategy_items", "0000000b-0000-4000-8000-00000000003c", 1),
-        ("strategy_items", "0000000b-0000-4000-8000-00000000003d", 2),
     ] {
         exec(
             &mut tx,
@@ -1873,7 +1965,7 @@ async fn weekly_content_order_and_reorder() {
     let (s, _, body) = get(&pool, "/2026/44").await;
     assert_eq!(s, StatusCode::OK);
     let doc = page_json(&body)["document"].clone();
-    let (prep, strategy) = weekly_order(&doc);
+    let prep = weekly_order(&doc);
     assert_eq!(
         strs(&prep),
         [
@@ -1894,27 +1986,7 @@ async fn weekly_content_order_and_reorder() {
             ),
         ]
     );
-    let card_titles: Vec<_> = strategy.iter().map(|(t, _)| t.as_str()).collect();
-    assert_eq!(
-        card_titles,
-        [
-            "This Week's Notes",
-            "The Salmon Plan",
-            "Air Fryer Features",
-            "Weekly Variety"
-        ]
-    );
-    assert_eq!(
-        strategy[3].1,
-        [
-            "Nuts daily — walnuts & almonds",
-            "Legumes daily",
-            "Oily fish 3×"
-        ]
-    );
     assert_eq!(sorted_ids(&doc, "prepSessions"), session_ids);
-    assert_eq!(sorted_ids(&doc, "strategyCards"), card_ids);
-    assert_eq!(doc["strategyCards"][3]["id"], CARD_GREEN);
 }
 
 #[tokio::test]
@@ -1923,8 +1995,7 @@ async fn weekly_constraints_reject_bad_data() {
     let mut c = t.writer().await;
     let (wa, wb) = (sid(1, 1), sid(1, 2));
     let (s1, s2, s3) = (sid(8, 1), sid(8, 2), sid(8, 3));
-    let (k1, k2) = (sid(10, 1), sid(10, 2));
-    let (t1, i1) = (sid(9, 1), sid(11, 1));
+    let t1 = sid(9, 1);
     let missing = "99999999-9999-4999-8999-999999999999";
     exec(&mut c, &week_sql(&wa, 2026, 44)).await.unwrap();
     exec(&mut c, &week_sql(&wb, 2026, 45)).await.unwrap();
@@ -1939,50 +2010,25 @@ async fn weekly_constraints_reject_bad_data() {
             "INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALUES ('{id}', '{s}', {pos}, {name}, {time}, {ins})"
         )
     };
-    let card = |id: &str, week: &str, pos: i32, title: &str, theme: &str| {
-        format!(
-            "INSERT INTO strategy_cards (id, week_id, position, title, theme) VALUES ('{id}', '{week}', {pos}, {title}, {theme})"
-        )
-    };
-    let item = |id: &str, card: &str, pos: i32, text: &str| {
-        format!(
-            "INSERT INTO strategy_items (id, card_id, position, text) VALUES ('{id}', '{card}', {pos}, {text})"
-        )
-    };
 
     exec(&mut c, &session(&s1, &wa, 0, "'s'")).await.unwrap();
     exec(&mut c, &task(&t1, &s1, 0, "'n'", "'t'", "'i'"))
         .await
         .unwrap();
-    exec(&mut c, &card(&k1, &wa, 0, "'c'", "'green'"))
-        .await
-        .unwrap();
-    exec(&mut c, &item(&i1, &k1, 0, "'x'")).await.unwrap();
 
-    let (n, nt, nk, ni) = (sid(8, 9), sid(9, 9), sid(10, 9), sid(11, 9));
+    let (n, nt) = (sid(8, 9), sid(9, 9));
     let upper = "AAAAAAAA-0000-4000-8000-000000000000";
-    let mut bad: Vec<(String, String)> = Vec::new();
-    for theme in ["'red'", "'Green'", "''", "'#00ff00'", "NULL"] {
-        bad.push((format!("theme {theme}"), card(&nk, &wa, 5, "'c'", theme)));
-    }
-    bad.extend([
+    let bad: Vec<(String, String)> = vec![
         ("session dup position".into(), session(&n, &wa, 0, "'x'")),
-        (
-            "card dup position".into(),
-            card(&nk, &wa, 0, "'x'", "'blue'"),
-        ),
         (
             "task dup position".into(),
             task(&nt, &s1, 0, "'n'", "'t'", "'i'"),
         ),
-        ("item dup position".into(), item(&ni, &k1, 0, "'x'")),
         ("session negative".into(), session(&n, &wa, -1, "'x'")),
         (
             "task negative".into(),
             task(&nt, &s1, -1, "'n'", "'t'", "'i'"),
         ),
-        ("card negative".into(), card(&nk, &wa, -1, "'x'", "'blue'")),
-        ("item negative".into(), item(&ni, &k1, -1, "'x'")),
         ("session null title".into(), session(&n, &wa, 5, "NULL")),
         (
             "task null name".into(),
@@ -1997,11 +2043,6 @@ async fn weekly_constraints_reject_bad_data() {
             task(&nt, &s1, 5, "'n'", "'t'", "NULL"),
         ),
         (
-            "card null title".into(),
-            card(&nk, &wa, 5, "NULL", "'blue'"),
-        ),
-        ("item null text".into(), item(&ni, &k1, 5, "NULL")),
-        (
             "session bad id".into(),
             session("not-a-uuid", &wa, 5, "'x'"),
         ),
@@ -2010,13 +2051,9 @@ async fn weekly_constraints_reject_bad_data() {
             "task bad id".into(),
             task("nope", &s1, 5, "'n'", "'t'", "'i'"),
         ),
-        ("card bad id".into(), card("nope", &wa, 5, "'x'", "'blue'")),
-        ("item bad id".into(), item("nope", &k1, 5, "'x'")),
         ("session fk".into(), session(&n, missing, 5, "'x'")),
         ("task fk".into(), task(&nt, missing, 5, "'n'", "'t'", "'i'")),
-        ("card fk".into(), card(&nk, missing, 5, "'x'", "'blue'")),
-        ("item fk".into(), item(&ni, missing, 5, "'x'")),
-    ]);
+    ];
     for (what, sql) in &bad {
         assert!(
             exec(&mut c, sql).await.is_err(),
@@ -2026,29 +2063,14 @@ async fn weekly_constraints_reject_bad_data() {
     // Rejected rows left nothing behind.
     assert_eq!(count(&mut c, "prep_sessions").await, 1);
     assert_eq!(count(&mut c, "prep_tasks").await, 1);
-    assert_eq!(count(&mut c, "strategy_cards").await, 1);
-    assert_eq!(count(&mut c, "strategy_items").await, 1);
 
-    for (i, theme) in ["green", "blue", "purple", "yellow"].iter().enumerate() {
-        let sql = card(
-            &sid(10, 20 + i as u32),
-            &wb,
-            i as i32,
-            "'c'",
-            &format!("'{theme}'"),
-        );
-        exec(&mut c, &sql).await.unwrap();
-    }
     // The same position under a different parent is fine.
     exec(&mut c, &session(&s2, &wb, 0, "'s'")).await.unwrap();
     exec(&mut c, &task(&sid(9, 2), &s2, 0, "'n'", "'t'", "'i'"))
         .await
         .unwrap();
-    exec(&mut c, &item(&sid(11, 2), &sid(10, 20), 0, "'x'"))
-        .await
-        .unwrap();
 
-    // Cascades: session -> tasks, card -> items, week -> everything.
+    // Cascades: session -> tasks, week -> everything.
     exec(&mut c, &session(&s3, &wa, 1, "'s3'")).await.unwrap();
     exec(&mut c, &task(&sid(9, 3), &s3, 0, "'n'", "'t'", "'i'"))
         .await
@@ -2060,35 +2082,15 @@ async fn weekly_constraints_reject_bad_data() {
     .await
     .unwrap();
     assert_eq!(count(&mut c, "prep_tasks").await, 2);
-    exec(&mut c, &card(&k2, &wa, 1, "'k2'", "'blue'"))
-        .await
-        .unwrap();
-    exec(&mut c, &item(&sid(11, 3), &k2, 0, "'x'"))
-        .await
-        .unwrap();
-    exec(
-        &mut c,
-        &format!("DELETE FROM strategy_cards WHERE id = '{k2}'"),
-    )
-    .await
-    .unwrap();
-    assert_eq!(count(&mut c, "strategy_items").await, 2);
     exec(&mut c, &format!("DELETE FROM weeks WHERE id = '{wa}'"))
         .await
         .unwrap();
     assert_eq!(count(&mut c, "prep_sessions").await, 1);
     assert_eq!(count(&mut c, "prep_tasks").await, 1);
-    assert_eq!(count(&mut c, "strategy_cards").await, 4);
-    assert_eq!(count(&mut c, "strategy_items").await, 1);
     exec(&mut c, &format!("DELETE FROM weeks WHERE id = '{wb}'"))
         .await
         .unwrap();
-    for table in [
-        "prep_sessions",
-        "prep_tasks",
-        "strategy_cards",
-        "strategy_items",
-    ] {
+    for table in ["prep_sessions", "prep_tasks"] {
         assert_eq!(count(&mut c, table).await, 0, "{table}");
     }
 }
@@ -2142,8 +2144,8 @@ async fn week_without_weekly_content_has_empty_collections() {
     let doc = week_value(&t.reader().await, 2026, 44).await;
     assert_eq!(doc["week"]["prepIntro"], Value::Null);
     assert_eq!(doc["prepSessions"], json!([]));
-    assert_eq!(doc["strategyCards"], json!([]));
-    assert_eq!(doc["schemaVersion"], 1);
+    assert!(doc.get("strategyCards").is_none());
+    assert_eq!(doc["schemaVersion"], 2);
     for d in doc["days"].as_array().unwrap() {
         assert_eq!(d["reminder"], Value::Null);
     }
@@ -2157,10 +2159,9 @@ async fn weekly_content_freshness() {
     let edits = [
         "UPDATE weeks SET prep_intro = 'Fresh intro'",
         "UPDATE prep_tasks SET name = 'Fresh task' WHERE name = 'Cook Brown Rice'",
-        "UPDATE strategy_items SET text = 'Fresh item' WHERE text = 'Legumes daily'",
         "UPDATE days SET reminder_title = 'Fresh reminder' WHERE reminder_title = 'Shop day'",
     ];
-    let fresh = ["Fresh intro", "Fresh task", "Fresh item", "Fresh reminder"];
+    let fresh = ["Fresh intro", "Fresh task", "Fresh reminder"];
 
     let mut tx = c.begin().await.unwrap();
     for sql in edits {
@@ -2191,10 +2192,6 @@ async fn weekly_content_script_safety() {
             "UPDATE prep_tasks SET name = '{evil}', time = '{evil}', instructions = '{evil}' WHERE name = 'Cook Brown Rice'"
         ),
         format!(
-            "UPDATE strategy_cards SET title = '{evil}', icon = '{evil}' WHERE id = '{CARD_GREEN}'"
-        ),
-        format!("UPDATE strategy_items SET text = '{evil}' WHERE text = 'Legumes daily'"),
-        format!(
             "UPDATE days SET reminder_title = '{evil}', reminder_body = '{evil}', reminder_icon = '{evil}' WHERE id = '{WED}'"
         ),
     ] {
@@ -2204,11 +2201,11 @@ async fn weekly_content_script_safety() {
     assert_eq!(s, StatusCode::OK);
     assert!(!body.contains("alert(7)</script>"));
     assert!(!body.contains("<script>alert(7)"));
-    // Intro, session x2, task x3, card x2, item, reminder x3.
+    // Intro, session x2, task x3, reminder x3.
     assert_eq!(
         body.matches("\\u003c/script\\u003e\\u003cscript\\u003ealert(7)")
             .count(),
-        12
+        9
     );
     let page = page_json(&body);
     assert_eq!(page["document"]["week"]["prepIntro"], evil);
@@ -2313,7 +2310,8 @@ async fn api_matches_page_bootstrap() {
     // Null and empty values are explicit keys.
     let t = TestDb::with_fixture().await;
     let doc = api_json(&t.reader().await, "/api/2026/44").await;
-    assert_eq!(doc["schemaVersion"], 1);
+    assert_eq!(doc["schemaVersion"], 2);
+    assert!(doc.get("strategyCards").is_none());
     let thursday = doc["days"][3].as_object().unwrap();
     assert_eq!(thursday["id"], Value::Null);
     assert_eq!(thursday["reminder"], Value::Null);
@@ -2336,7 +2334,7 @@ async fn api_matches_page_bootstrap() {
         );
         assert!(d["id"].is_null() || d["id"].is_string());
     }
-    for key in ["shoppingLists", "prepSessions", "strategyCards"] {
+    for key in ["shoppingLists", "prepSessions"] {
         for item in doc[key].as_array().unwrap() {
             assert!(item["id"].is_string(), "{key}");
         }
@@ -2346,7 +2344,6 @@ async fn api_matches_page_bootstrap() {
     let t = TestDb::with_base_fixture().await;
     let doc = api_json(&t.reader().await, "/api/2026/44").await;
     assert_eq!(doc["prepSessions"], json!([]));
-    assert_eq!(doc["strategyCards"], json!([]));
     assert_eq!(doc["week"]["prepIntro"], Value::Null);
 }
 
@@ -2451,8 +2448,7 @@ async fn api_snapshot_is_atomic_under_concurrent_commit() {
             day_sql(THU, FIXTURE_WEEK, 4),
             meal_sql(THU_MEAL, THU, 0, "Dinner", "100"),
             "UPDATE shopping_items SET position = 20 WHERE text = '2L oat milk'".to_string(),
-            "UPDATE strategy_cards SET theme = 'green' WHERE title = 'This Week''s Notes'"
-                .to_string(),
+            format!("UPDATE prep_sessions SET title = 'Changed prep' WHERE id = '{SESSION_MON}'"),
         ] {
             exec(&mut tx, &sql).await.unwrap();
         }
@@ -2505,19 +2501,19 @@ async fn api_snapshot_is_atomic_under_concurrent_commit() {
     };
     assert_ne!(texts(&before), texts(&after));
     assert_eq!(texts(&after).last().unwrap(), "2L oat milk");
-    let theme = |doc: &Value| -> String {
-        doc["strategyCards"]
+    let session = |doc: &Value| -> String {
+        doc["prepSessions"]
             .as_array()
             .unwrap()
             .iter()
-            .find(|c| c["title"] == "This Week's Notes")
-            .unwrap()["theme"]
+            .find(|s| s["id"] == SESSION_MON)
+            .unwrap()["title"]
             .as_str()
             .unwrap()
             .to_string()
     };
-    assert_eq!(theme(&before), "yellow");
-    assert_eq!(theme(&after), "green");
+    assert_eq!(session(&before), "Monday Prep Session (~1.5 hours)");
+    assert_eq!(session(&after), "Changed prep");
 }
 
 #[tokio::test]
@@ -3032,14 +3028,23 @@ async fn openapi_matches_api() {
         "ShoppingItem",
         "PrepSession",
         "PrepTask",
-        "StrategyCard",
-        "StrategyItem",
         "YearDocument",
         "WeekSummary",
         "Error",
     ] {
         assert!(schemas.contains_key(name), "{name}");
     }
+    for name in ["StrategyCard", "StrategyItem"] {
+        assert!(!schemas.contains_key(name), "{name}");
+    }
+    assert_eq!(
+        schemas["WeekDocument"]["properties"]["schemaVersion"]["const"],
+        2
+    );
+    assert_eq!(
+        schemas["YearDocument"]["properties"]["schemaVersion"]["const"],
+        1
+    );
 
     // (c) Every error example is what the server returns, and each route has no others.
     let (_dir, tableless) = tableless_pool().await;

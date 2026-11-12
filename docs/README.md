@@ -17,5 +17,5 @@ Implement features in the order below. Each iteration includes its own verificat
 | 9 | [Docker image and CI](features/009-docker-image.md) | In progress | — |
 | 10 | [Create weeks without a null revision](features/010-save-week-optional-revision.md) | Done | 6 |
 | 11 | [Calendar sidebar](features/011-calendar-sidebar.md) | Done | 7 |
-| 12 | [Remove strategy cards](features/012-drop-strategy.md) | Planned | 6 |
+| 12 | [Remove strategy cards](features/012-drop-strategy.md) | Done | 6 |
 | 13 | [Day view](features/013-day-view.md) | Planned | 11, 12 |

@@ -57,7 +57,7 @@
                   "$ref": "#/components/schemas/WeekDocument"
                 },
                 "example": {
-                  "schemaVersion": 1,
+                  "schemaVersion": 2,
                   "week": {
                     "id": "00000001-0000-4000-8000-000000000001",
                     "isoYear": 2026,
@@ -475,64 +475,6 @@
                         }
                       ]
                     }
-                  ],
-                  "strategyCards": [
-                    {
-                      "id": "0000000a-0000-4000-8000-00000000003b",
-                      "title": "Weekly Variety",
-                      "icon": "🐟",
-                      "theme": "green",
-                      "items": [
-                        {
-                          "id": "0000000b-0000-4000-8000-00000000003d",
-                          "text": "Oily fish 3×"
-                        },
-                        {
-                          "id": "0000000b-0000-4000-8000-00000000003c",
-                          "text": "Legumes daily"
-                        },
-                        {
-                          "id": "0000000b-0000-4000-8000-00000000003e",
-                          "text": "Nuts daily — walnuts & almonds"
-                        }
-                      ]
-                    },
-                    {
-                      "id": "0000000a-0000-4000-8000-000000000041",
-                      "title": "Air Fryer Features",
-                      "icon": "🍳",
-                      "theme": "blue",
-                      "items": [
-                        {
-                          "id": "0000000b-0000-4000-8000-000000000042",
-                          "text": "Mon: crispy chickpeas"
-                        }
-                      ]
-                    },
-                    {
-                      "id": "0000000a-0000-4000-8000-00000000003f",
-                      "title": "The Salmon Plan",
-                      "icon": null,
-                      "theme": "purple",
-                      "items": [
-                        {
-                          "id": "0000000b-0000-4000-8000-000000000040",
-                          "text": "~300g → gravlax"
-                        }
-                      ]
-                    },
-                    {
-                      "id": "0000000a-0000-4000-8000-000000000039",
-                      "title": "This Week's Notes",
-                      "icon": "📝",
-                      "theme": "yellow",
-                      "items": [
-                        {
-                          "id": "0000000b-0000-4000-8000-00000000003a",
-                          "text": "Monday + Thursday shop split"
-                        }
-                      ]
-                    }
                   ]
                 }
               }
@@ -787,7 +729,7 @@
         "description": "The complete meal plan of one ISO week. Identical to the document embedded in the HTML page.",
         "properties": {
           "schemaVersion": {
-            "const": 1,
+            "const": 2,
             "type": "integer",
             "description": "API format version; independent of SQL migration versions."
           },
@@ -814,13 +756,6 @@
               "$ref": "#/components/schemas/PrepSession"
             },
             "description": "Prep sessions in stored order; empty when the week has none."
-          },
-          "strategyCards": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StrategyCard"
-            },
-            "description": "Strategy cards in stored order; empty when the week has none."
           }
         },
         "required": [
@@ -828,8 +763,7 @@
           "week",
           "days",
           "shoppingLists",
-          "prepSessions",
-          "strategyCards"
+          "prepSessions"
         ],
         "additionalProperties": false
       },
@@ -1251,73 +1185,6 @@
           "name",
           "time",
           "instructions"
-        ],
-        "additionalProperties": false
-      },
-      "StrategyCard": {
-        "type": "object",
-        "description": "A strategy card.",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Stable card ID."
-          },
-          "title": {
-            "type": "string",
-            "description": "Card title."
-          },
-          "icon": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Optional icon, display text."
-          },
-          "theme": {
-            "type": "string",
-            "description": "Colour theme.",
-            "enum": [
-              "green",
-              "blue",
-              "purple",
-              "yellow"
-            ]
-          },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/StrategyItem"
-            },
-            "description": "Items in stored order."
-          }
-        },
-        "required": [
-          "id",
-          "title",
-          "icon",
-          "theme",
-          "items"
-        ],
-        "additionalProperties": false
-      },
-      "StrategyItem": {
-        "type": "object",
-        "description": "One strategy item.",
-        "properties": {
-          "id": {
-            "type": "string",
-            "format": "uuid",
-            "description": "Stable item ID."
-          },
-          "text": {
-            "type": "string",
-            "description": "Item text."
-          }
-        },
-        "required": [
-          "id",
-          "text"
         ],
         "additionalProperties": false
       },

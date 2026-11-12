@@ -189,7 +189,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Returns the complete saved document of one ISO week (days, meals with steps, shopping lists, prep sessions, strategy cards) plus its revision. Give isoYear and isoWeek together, or neither for the current week. Pass the revision back as expectedRevision to save_week. A week with no saved plan is week_not_found. For one day's shopping lists, use get_shopping_lists instead.",
+    "description": "Returns the complete saved document of one ISO week (days, meals with steps, shopping lists, prep sessions) plus its revision. Give isoYear and isoWeek together, or neither for the current week. Pass the revision back as expectedRevision to save_week. A week with no saved plan is week_not_found. For one day's shopping lists, use get_shopping_lists instead.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -500,55 +500,6 @@
           ],
           "type": "object"
         },
-        "StrategyCard": {
-          "properties": {
-            "icon": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "items": {
-              "description": "By `strategy_items.position`.",
-              "items": {
-                "$ref": "#/$defs/StrategyItem"
-              },
-              "type": "array"
-            },
-            "theme": {
-              "description": "One of `green`, `blue`, `purple`, `yellow` (enforced by the database).",
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "title",
-            "theme",
-            "items"
-          ],
-          "type": "object"
-        },
-        "StrategyItem": {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "text"
-          ],
-          "type": "object"
-        },
         "Week": {
           "properties": {
             "endDate": {
@@ -618,13 +569,6 @@
               },
               "type": "array"
             },
-            "strategyCards": {
-              "description": "By `strategy_cards.position`.",
-              "items": {
-                "$ref": "#/$defs/StrategyCard"
-              },
-              "type": "array"
-            },
             "week": {
               "$ref": "#/$defs/Week"
             }
@@ -634,8 +578,7 @@
             "week",
             "days",
             "shoppingLists",
-            "prepSessions",
-            "strategyCards"
+            "prepSessions"
           ],
           "type": "object"
         }
@@ -1072,7 +1015,7 @@
       "openWorldHint": false,
       "readOnlyHint": false
     },
-    "description": "Creates or replaces ONE ISO week. This is a full replacement within that week: any existing day, meal, step, shopping list, category, item, prep session or strategy card that is not in the submitted document is deleted. To change one thing, call get_week, edit the document, and submit all of it. Other weeks are never touched. Use client-generated lowercase UUIDs for new records and keep existing ids to preserve them. Optional values must be explicit nulls; array order is stored order. To create a week that has no saved plan yet, omit expectedRevision; if a plan is already saved, this returns revision_conflict. To replace a saved week, pass the revision from get_week as expectedRevision; a mismatch returns revision_conflict, after which you must fetch the week again and reconcile. There is no force option. The whole save is one transaction: an invalid document changes nothing. Returns the committed week and its new revision.",
+    "description": "Creates or replaces ONE ISO week. This is a full replacement within that week: any existing day, meal, step, shopping list, category, item or prep session that is not in the submitted document is deleted. To change one thing, call get_week, edit the document, and submit all of it. Other weeks are never touched. Use client-generated lowercase UUIDs for new records and keep existing ids to preserve them. Optional values must be explicit nulls; array order is stored order. To create a week that has no saved plan yet, omit expectedRevision; if a plan is already saved, this returns revision_conflict. To replace a saved week, pass the revision from get_week as expectedRevision; a mismatch returns revision_conflict, after which you must fetch the week again and reconcile. There is no force option. The whole save is one transaction: an invalid document changes nothing. Returns the committed week and its new revision.",
     "inputSchema": {
       "$defs": {
         "DayInput": {
@@ -1356,44 +1299,9 @@
           ],
           "type": "object"
         },
-        "StrategyCardInput": {
-          "additionalProperties": false,
-          "properties": {
-            "icon": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "id": {
-              "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
-              "type": "string"
-            },
-            "items": {
-              "items": {
-                "$ref": "#/$defs/TextInput"
-              },
-              "type": "array"
-            },
-            "theme": {
-              "$ref": "#/$defs/Theme"
-            },
-            "title": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "title",
-            "icon",
-            "theme",
-            "items"
-          ],
-          "type": "object"
-        },
         "TextInput": {
           "additionalProperties": false,
-          "description": "A step, shopping item or strategy item.",
+          "description": "A step or shopping item.",
           "properties": {
             "id": {
               "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
@@ -1408,15 +1316,6 @@
             "text"
           ],
           "type": "object"
-        },
-        "Theme": {
-          "enum": [
-            "green",
-            "blue",
-            "purple",
-            "yellow"
-          ],
-          "type": "string"
         },
         "WeekFieldsInput": {
           "additionalProperties": false,
@@ -1468,12 +1367,6 @@
               },
               "type": "array"
             },
-            "strategyCards": {
-              "items": {
-                "$ref": "#/$defs/StrategyCardInput"
-              },
-              "type": "array"
-            },
             "week": {
               "$ref": "#/$defs/WeekFieldsInput"
             }
@@ -1482,8 +1375,7 @@
             "week",
             "days",
             "shoppingLists",
-            "prepSessions",
-            "strategyCards"
+            "prepSessions"
           ],
           "type": "object"
         }
@@ -1808,55 +1700,6 @@
           ],
           "type": "object"
         },
-        "StrategyCard": {
-          "properties": {
-            "icon": {
-              "type": [
-                "string",
-                "null"
-              ]
-            },
-            "id": {
-              "type": "string"
-            },
-            "items": {
-              "description": "By `strategy_items.position`.",
-              "items": {
-                "$ref": "#/$defs/StrategyItem"
-              },
-              "type": "array"
-            },
-            "theme": {
-              "description": "One of `green`, `blue`, `purple`, `yellow` (enforced by the database).",
-              "type": "string"
-            },
-            "title": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "title",
-            "theme",
-            "items"
-          ],
-          "type": "object"
-        },
-        "StrategyItem": {
-          "properties": {
-            "id": {
-              "type": "string"
-            },
-            "text": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "id",
-            "text"
-          ],
-          "type": "object"
-        },
         "Week": {
           "properties": {
             "endDate": {
@@ -1926,13 +1769,6 @@
               },
               "type": "array"
             },
-            "strategyCards": {
-              "description": "By `strategy_cards.position`.",
-              "items": {
-                "$ref": "#/$defs/StrategyCard"
-              },
-              "type": "array"
-            },
             "week": {
               "$ref": "#/$defs/Week"
             }
@@ -1942,8 +1778,7 @@
             "week",
             "days",
             "shoppingLists",
-            "prepSessions",
-            "strategyCards"
+            "prepSessions"
           ],
           "type": "object"
         }

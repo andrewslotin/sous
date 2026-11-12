@@ -1742,7 +1742,7 @@ fn shopping_layout_at_1280px() {
     assert_shop_layout(1280);
 }
 
-// ---- Feature 4: prep, strategy, reminders --------------------------------------------------
+// ---- Feature 4: prep, reminders --------------------------------------------------
 
 /// Content for a crafted week (ISO 2026-W`week`) whose Monday carries a reminder.
 struct Content<'a> {
@@ -1752,8 +1752,6 @@ struct Content<'a> {
     reminder: Option<(&'a str, Option<&'a str>, Option<&'a str>)>,
     /// (title, covers, [(name, time, instructions)])
     session: Option<(&'a str, Option<&'a str>, [&'a str; 3])>,
-    /// (title, icon, theme, item)
-    card: Option<(&'a str, Option<&'a str>, &'a str, &'a str)>,
 }
 
 fn content_week(week: u32, c: &Content) -> String {
@@ -1795,24 +1793,11 @@ fn content_week(week: u32, c: &Content) -> String {
             lit(Some(instructions)),
         );
     }
-    if let Some((title, icon, theme, item)) = c.card {
-        sql += &format!(
-            "INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('{}', '{}', 0, {}, {}, '{theme}');\n\
-             INSERT INTO strategy_items (id, card_id, position, text) VALUES ('{}', '{}', 0, {});\n",
-            id(0xd3, base),
-            id(0xa1, base),
-            lit(Some(title)),
-            lit(icon),
-            id(0xd4, base),
-            id(0xd3, base),
-            lit(Some(item)),
-        );
-    }
     sql
 }
 
 impl Harness {
-    /// Activate a tab (0 = Daily Plan, 1 = Prep Sessions, 2 = Strategy) by clicking its button.
+    /// Activate a tab (0 = Daily Plan, 1 = Prep Sessions) by clicking its button.
     fn select_tab(&self, index: usize) {
         self.click(&format!(".tab-button:nth-child({})", index + 1));
         self.wait_for(&format!(
@@ -1860,11 +1845,8 @@ fn app_jsx_has_no_sample_content() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn tabs_switch_and_keep_selected_day() {
     let h = Harness::start("", 1280);
-    assert_eq!(
-        h.texts(".tab-button"),
-        ["Daily Plan", "Prep Sessions", "Strategy"]
-    );
-    assert_eq!(h.pressed_tabs(), [true, false, false]);
+    assert_eq!(h.texts(".tab-button"), ["Daily Plan", "Prep Sessions"]);
+    assert_eq!(h.pressed_tabs(), [true, false]);
     let props = [
         "backgroundImage",
         "backgroundColor",
@@ -1898,7 +1880,7 @@ fn tabs_switch_and_keep_selected_day() {
 
     h.select_day(2);
     h.select_tab(1);
-    assert_eq!(h.pressed_tabs(), [false, true, false]);
+    assert_eq!(h.pressed_tabs(), [false, true]);
     assert_eq!(h.count(".days"), 0);
     assert_eq!(h.count(".day-button"), 0);
     assert_eq!(h.count(".prep"), 2);
@@ -1907,14 +1889,9 @@ fn tabs_switch_and_keep_selected_day() {
         "Monday covers Mon–Wed. Wednesday is a smaller session for Thu–Sun."
     );
 
-    h.select_tab(2);
-    assert_eq!(h.pressed_tabs(), [false, false, true]);
-    assert_eq!(h.count(".prep"), 0);
-    assert_eq!(h.count(".strategy"), 4);
-
     h.select_tab(0);
-    assert_eq!(h.pressed_tabs(), [true, false, false]);
-    assert_eq!(h.count(".strategy"), 0);
+    assert_eq!(h.pressed_tabs(), [true, false]);
+    assert_eq!(h.count(".prep"), 0);
     assert_eq!(
         h.pressed(),
         vec![false, false, true, false, false, false, false]
@@ -2059,99 +2036,50 @@ fn prep_card_keyboard_toggle() {
 }
 
 #[test]
-#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn strategy_cards_use_theme_colors_in_order() {
-    let h = Harness::start("", 1280);
-    h.select_tab(2);
-    assert_eq!(
-        h.texts(".strategy-title"),
-        [
-            "🐟 Weekly Variety",
-            "🍳 Air Fryer Features",
-            "The Salmon Plan",
-            "📝 This Week's Notes"
-        ]
-    );
-    assert_eq!(
-        h.texts(".strategy:nth-child(1) li"),
-        [
-            "Oily fish 3×",
-            "Legumes daily",
-            "Nuts daily — walnuts & almonds"
-        ]
-    );
-    let expected = [
-        (
-            "green",
-            "rgb(187, 247, 208)",
-            "rgb(22, 101, 52)",
-            "rgb(21, 128, 61)",
-        ),
-        (
-            "blue",
-            "rgb(191, 219, 254)",
-            "rgb(30, 64, 175)",
-            "rgb(30, 64, 175)",
-        ),
-        (
-            "purple",
-            "rgb(233, 213, 255)",
-            "rgb(126, 34, 206)",
-            "rgb(126, 34, 206)",
-        ),
-        (
-            "yellow",
-            "rgb(253, 230, 138)",
-            "rgb(146, 64, 14)",
-            "rgb(146, 64, 14)",
-        ),
-    ];
-    for (i, (theme, border, title, list)) in expected.iter().enumerate() {
-        let n = i + 1;
+fn app_sources_have_no_strategy_text() {
+    for (name, src) in [
+        ("app.jsx", include_str!("../web/app.jsx")),
+        ("styles.css", include_str!("../web/styles.css")),
+    ] {
         assert!(
-            h.js(&format!(
-                "document.querySelector('.strategy:nth-child({n})').className"
-            ))
-            .as_str()
-            .unwrap()
-            .contains(&format!("strategy-{theme}"))
+            !src.to_lowercase().contains("strateg"),
+            "{name} still mentions strategy"
         );
-        let card = h.styles(
-            &format!(".strategy:nth-child({n})"),
-            &[
-                "backgroundColor",
-                "backgroundImage",
-                "borderTopColor",
-                "borderRadius",
-                "padding",
-            ],
-        );
-        match *theme {
-            "green" => assert_eq!(
-                card[1],
-                "linear-gradient(135deg, rgb(236, 253, 245), rgb(240, 253, 244))"
-            ),
-            "blue" => assert_eq!(card[0], "rgb(239, 246, 255)"),
-            "purple" => assert_eq!(card[0], "rgb(253, 244, 255)"),
-            _ => assert_eq!(card[0], "rgb(254, 252, 232)"),
-        }
-        assert_eq!(card[2], *border);
-        assert_eq!(card[3], "10px");
-        assert_eq!(card[4], "14px 16px");
-        assert_eq!(
-            h.styles(
-                &format!(".strategy:nth-child({n}) .strategy-title"),
-                &["color", "fontSize", "fontWeight"]
-            ),
-            [title, "13px", "600"]
-        );
-        assert_eq!(
-            h.styles(
-                &format!(".strategy:nth-child({n}) .strategy-items"),
-                &["color", "fontSize", "paddingLeft"]
-            ),
-            [list, "12px", "16px"]
-        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn page_has_no_strategy_remnants() {
+    let h = Harness::start("", 1280);
+    let check = |h: &Harness, what: &str| {
+        assert_eq!(h.count("[class*=strategy]"), 0, "{what}: strategy element");
+        let text = h.text(".app");
+        assert!(!text.to_lowercase().contains("strategy"), "{what}: {text}");
+    };
+    for index in 0..2 {
+        h.select_tab(index);
+        check(&h, &format!("tab {index}"));
+    }
+    assert_eq!(h.count(".tab-button"), 2);
+    let page = "JSON.parse(document.getElementById('sous-page').textContent).document";
+    assert_eq!(h.js(&format!("'strategyCards' in {page}")), false);
+    assert_eq!(h.js(&format!("{page}.schemaVersion")), 2);
+    let selectors = h.js(
+        "[...document.styleSheets].flatMap(s => [...s.cssRules]).map(r => r.selectorText || '')\
+         .filter(s => s.toLowerCase().includes('strategy'))",
+    );
+    assert_eq!(selectors, serde_json::json!([]));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_012() {
+    for w in [375, 1280] {
+        let h = Harness::start("", w);
+        h.capture_file(&format!("012-plan-{w}.png"));
+        h.select_tab(1);
+        h.capture_file(&format!("012-prep-{w}.png"));
     }
 }
 
@@ -2231,7 +2159,6 @@ fn optional_text_is_omitted_when_null() {
             intro: None,
             reminder: Some(("Only a title", None, None)),
             session: Some(("Bare session", None, ["Task", "5 min", "Do it."])),
-            card: Some(("Bare card", None, "blue", "Item")),
         },
     );
     let h = Harness::start(&sql, 1280);
@@ -2243,9 +2170,6 @@ fn optional_text_is_omitted_when_null() {
     assert_eq!(h.count(".prep-intro"), 0);
     assert_eq!(h.count(".prep-covers"), 0);
     assert_eq!(h.text(".prep-title"), "🔪 Bare session");
-    h.select_tab(2);
-    // No icon: no leading space or placeholder.
-    assert_eq!(h.text(".strategy-title"), "Bare card");
 }
 
 /// SQL adding prep sessions (title, has_task) at positions 0.. to the week made by `crafted_week(week, ..)`.
@@ -2301,17 +2225,14 @@ fn prep_sessions_without_tasks_are_hidden() {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn empty_prep_and_strategy_show_messages() {
+fn empty_prep_shows_message() {
     let h = Harness::start(&crafted_week(49, &[]), 1280);
     h.goto("/2026/49");
-    assert_eq!(h.texts(".tab-button").len(), 3);
+    assert_eq!(h.texts(".tab-button").len(), 2);
     h.select_tab(1);
     assert_eq!(h.text(".empty"), "No prep sessions planned.");
     assert_eq!(h.count(".prep-intro"), 0);
     assert_eq!(h.count(".prep"), 0);
-    h.select_tab(2);
-    assert_eq!(h.text(".empty"), "No strategy notes for this week.");
-    assert_eq!(h.count(".strategy"), 0);
 }
 
 #[test]
@@ -2328,7 +2249,6 @@ fn crafted_week_content_is_what_renders() {
                 Some("Crafted covers"),
                 ["Crafted task", "9 min", "Crafted steps."],
             )),
-            card: Some(("Crafted card", Some("🌱"), "purple", "Crafted item")),
         },
     );
     let h = Harness::start(&sql, 1280);
@@ -2346,9 +2266,6 @@ fn crafted_week_content_is_what_renders() {
     assert_eq!(h.text(".prep-task-name"), "Crafted task");
     assert_eq!(h.text(".prep-task-time"), "9 min");
     assert_eq!(h.text(".prep-task-instructions"), "Crafted steps.");
-    h.select_tab(2);
-    assert_eq!(h.text(".strategy-title"), "🌱 Crafted card");
-    assert_eq!(h.text(".strategy li"), "Crafted item");
     let body = h.text(".app");
     for sample in ["Sunday covers", "Weekly Variety", "Salmon"] {
         assert!(!body.contains(sample), "{sample}");
@@ -2362,7 +2279,6 @@ fn weekly_content_reloads_committed_changes() {
     h.exec(
         "UPDATE weeks SET prep_intro = 'Changed intro' WHERE iso_week = 44;\n\
          UPDATE prep_tasks SET name = 'Start the Gravlax today' WHERE name = 'Start the Gravlax';\n\
-         UPDATE strategy_items SET text = 'Oily fish 4×' WHERE text = 'Oily fish 3×';\n\
          UPDATE days SET reminder_title = 'Changed reminder' WHERE reminder_title = 'Shop day';",
     );
     h.goto("/2026/44");
@@ -2373,8 +2289,6 @@ fn weekly_content_reloads_committed_changes() {
     h.click(".prep-toggle");
     h.wait_for("document.querySelector('.prep-body') !== null");
     assert_eq!(h.texts(".prep-task-name")[0], "Start the Gravlax today");
-    h.select_tab(2);
-    assert_eq!(h.texts(".strategy li")[0], "Oily fish 4×");
 }
 
 #[test]
@@ -2388,7 +2302,6 @@ fn weekly_text_renders_literally() {
             intro: Some(x),
             reminder: Some((x, Some(x), Some(x))),
             session: Some((x, Some(x), [x, x, x])),
-            card: Some((x, Some(x), "green", x)),
         },
     );
     let h = Harness::start(&sql, 1280);
@@ -2405,9 +2318,6 @@ fn weekly_text_renders_literally() {
     assert_eq!(h.text(".prep-task-name"), x);
     assert_eq!(h.text(".prep-task-time"), x);
     assert_eq!(h.text(".prep-task-instructions"), x);
-    h.select_tab(2);
-    assert_eq!(h.text(".strategy-title"), format!("{x} {x}"));
-    assert_eq!(h.text(".strategy li"), x);
     assert_eq!(h.js("typeof window.pwned"), "undefined");
     assert_eq!(h.count(".app b"), 0);
     h.select_tab(0);
@@ -2430,20 +2340,14 @@ fn tabs_work_by_keyboard() {
         "document.querySelectorAll('.tab-button')[1].getAttribute('aria-pressed') === 'true'",
     );
     assert_eq!(h.count(".prep"), 2);
-    h.press("Tab");
-    h.press(" ");
-    h.wait_for(
-        "document.querySelectorAll('.tab-button')[2].getAttribute('aria-pressed') === 'true'",
-    );
-    assert_eq!(h.count(".strategy"), 4);
+    assert_eq!(h.count(".tab-button"), 2);
 }
 
 fn assert_weekly_layout(width: u32) {
     let h = Harness::start("", width);
     let long = "x".repeat(120);
     h.exec(&format!(
-        "UPDATE prep_tasks SET time = '{long}', name = '{long}', instructions = '{long}';\n\
-         UPDATE strategy_items SET text = '{long}';"
+        "UPDATE prep_tasks SET time = '{long}', name = '{long}', instructions = '{long}';"
     ));
     h.goto("/2026/44");
     let fits = "document.documentElement.scrollWidth <= window.innerWidth";
@@ -2452,15 +2356,13 @@ fn assert_weekly_layout(width: u32) {
     let one_row = h.js(
         "(() => { const b = [...document.querySelectorAll('.tab-button')]; \
           const app = document.querySelector('.app').getBoundingClientRect(); \
-          return b.every(x => x.offsetTop === b[0].offsetTop) && b[2].getBoundingClientRect().right <= app.right; })()",
+          return b.every(x => x.offsetTop === b[0].offsetTop) && b[1].getBoundingClientRect().right <= app.right; })()",
     );
     assert_eq!(one_row, true, "tab bar on one row");
     h.select_tab(1);
     h.js("document.querySelectorAll('.prep-toggle').forEach(b => b.click())");
     h.wait_for("document.querySelectorAll('.prep-body').length === 2");
     assert_eq!(h.js(fits), true, "prep tab");
-    h.select_tab(2);
-    assert_eq!(h.js(fits), true, "strategy tab");
 }
 
 #[test]
@@ -2521,6 +2423,11 @@ impl Harness {
 
     /// Wait for fonts, then write a full-page PNG to `target/visual/<width>-<name>.png`.
     fn capture(&self, width: u32, name: &str) {
+        self.capture_file(&format!("{width}-{name}.png"));
+    }
+
+    /// Wait for fonts, then write a full-page PNG to `target/visual/<file>`.
+    fn capture_file(&self, file: &str) {
         use headless_chrome::protocol::cdp::Page::{
             CaptureScreenshot, CaptureScreenshotFormatOption,
         };
@@ -2541,9 +2448,9 @@ impl Harness {
             .data;
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/visual");
         std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join(format!("{width}-{name}.png"));
-        std::fs::write(&file, base64_decode(&data)).unwrap();
-        assert!(std::fs::metadata(&file).unwrap().len() > 0, "{name}");
+        let path = dir.join(file);
+        std::fs::write(&path, base64_decode(&data)).unwrap();
+        assert!(std::fs::metadata(&path).unwrap().len() > 0, "{file}");
     }
 }
 
@@ -2586,7 +2493,6 @@ fn no_third_party_requests_on_any_page() {
     }
     h.select_tab(1);
     h.expand_all(".prep-toggle");
-    h.select_tab(2);
     h.select_tab(0);
     h.wait_for("[...document.fonts].some(f => f.status === 'loaded')");
     let urls = h.requested_urls();
@@ -2661,18 +2567,11 @@ fn visual_capture(w: u32) {
     h.wait_for("document.querySelector('.prep-body') !== null");
     h.capture(w, "prep-expanded");
 
-    h.select_tab(2);
-    assert_eq!(h.count(".strategy"), 4);
-    h.capture(w, "strategy-tab");
-
     // A week without weekly content.
     h.goto("/2026/49");
     h.select_tab(1);
     assert_eq!(h.text(".empty"), "No prep sessions planned.");
     h.capture(w, "prep-empty");
-    h.select_tab(2);
-    assert_eq!(h.text(".empty"), "No strategy notes for this week.");
-    h.capture(w, "strategy-empty");
 
     // A year page with both adjacent-year links.
     h.exec(&bare_weeks(&[(2025, 52), (2027, 1)]));
@@ -2804,10 +2703,6 @@ fn week_saved_through_mcp_renders_in_the_browser() {
             ]}],
         }],
         "prepSessions": [],
-        "strategyCards": [{
-            "id": u(50), "title": "Batch cooking", "icon": null, "theme": "green",
-            "items": [{"id": u(51), "text": "Double the soup."}],
-        }],
     });
 
     let h = Opts::new().db(Db::Empty).mcp().path("/").launch();
@@ -2839,9 +2734,4 @@ fn week_saved_through_mcp_renders_in_the_browser() {
     h.wait_for("document.querySelector('.shop-items') !== null");
     assert_eq!(h.texts(".shop-cat-name"), ["Produce"]);
     assert_eq!(h.texts(".shop-items li"), ["2 onions", "1 lemon"]);
-
-    h.js("(() => { document.querySelectorAll('.tab-button')[2].click(); return true; })()");
-    h.wait_for("document.querySelector('.strategy-title') !== null");
-    assert_eq!(h.texts(".strategy-title"), ["Batch cooking"]);
-    assert_eq!(h.texts(".strategy-items li"), ["Double the soup."]);
 }

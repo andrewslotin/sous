@@ -13,7 +13,7 @@ V1 serves existing data. Another tool or process populates the database, outside
 Included:
 
 - Current-week and permanent week pages.
-- Daily meals and nutrition summaries, shopping lists, prep sessions, and strategy cards.
+- Daily meals and nutrition summaries, shopping lists, and prep sessions.
 - Year archive pages listing available weeks, and useful missing-plan pages.
 - A documented SQLite schema and read-only HTTP contract.
 
@@ -69,7 +69,7 @@ A plan exists when a `weeks` record exists. An empty database is a supported fir
 - Invalid year/week route: HTTP 404 with “Invalid week.”, a link to the current week and the month calendar of week links. If the invalid page cannot read `plannedWeeks`, the database failure rule below applies (HTTP 503).
 - Year without plans: show “No meal plans available yet.” and the year links instead of an empty list. HTTP 200 for the current year, including an empty database; HTTP 404 for any other year.
 - Existing week with no meals for a day: show “No meals planned for this day.” and omit the nutrition summary. Do not invent zero-valued meals.
-- No prep sessions or strategy cards: show a short empty message in the respective existing tab.
+- No prep sessions: show a short empty message in the Prep Sessions tab.
 - Database failure: HTTP 503 and a generic availability message. Never present a database failure as a missing plan; log details on the server.
 
 The HTML response itself has the correct status; do not serve HTTP 200 for every path and defer missing-plan detection entirely to the browser.
@@ -80,12 +80,11 @@ The HTML response itself has the correct status; do not serve HTTP 200 for every
 
 Retain:
 
-- Daily Plan, Prep Sessions, and Strategy tabs.
+- Daily Plan and Prep Sessions tabs.
 - Day selector and expandable meal, prep, and shopping cards.
 - Meal descriptions, nutrition values, ordered instructions, and tip callouts.
 - Daily nutrition totals and the existing meal-type colors and icons.
 - Shopping-list categories and notes; multiple lists can appear on a day in stored order.
-- Strategy card appearance using four predefined themes: green, blue, purple, and yellow.
 
 Intentional changes:
 
@@ -94,8 +93,9 @@ Intentional changes:
 - Add year and missing-plan pages using the existing typography and container.
 - Week, missing-plan and invalid week pages show a month calendar of week links: a sidebar beside the 540px content column at 900px and wider, and a “Calendar” toggle below that.
 - Select today only when viewing the actual current week; the sample selects by weekday even for old plans.
+- The reference page's Strategy tab is removed. The page has only the Daily Plan and Prep Sessions tabs.
 
-Move all week-specific text into the database, including the header subtitle, prep introduction, strategy cards, and optional day reminder. Keep “Meal Plan”, tab names, empty-state messages, and nutrition labels as UI text.
+Move all week-specific text into the database, including the header subtitle, prep introduction, and optional day reminder. Keep “Meal Plan”, tab names, empty-state messages, and nutrition labels as UI text.
 
 Continue using the existing React component structure and styles. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. Match the existing body font fallback behavior rather than introducing a new font.
 
@@ -120,8 +120,6 @@ Ordered child collections have an integer `position >= 0`, unique within their p
 | `shopping_items` | `id` PK, `category_id` FK, `position`, `text`. |
 | `prep_sessions` | `id` PK, `week_id` FK, `position`, `title`, optional `covers`. |
 | `prep_tasks` | `id` PK, `session_id` FK, `position`, `name`, `time`, `instructions`. |
-| `strategy_cards` | `id` PK, `week_id` FK, `position`, `title`, optional `icon`, `theme` enum green/blue/purple/yellow. |
-| `strategy_items` | `id` PK, `card_id` FK, `position`, `text`. |
 
 Parent deletion cascades to owned children and association records. Index foreign keys used to assemble a week. Enforce cross-week shopping associations with insert/update triggers, including attempts to move referenced records between weeks.
 
@@ -133,7 +131,7 @@ Times remain display text, such as “35 min (mostly air fryer + simmer)”. Sho
 
 ### Data consistency
 
-The schema is a documented integration contract; implementing data entry is outside scope. IDs remain stable across edits. Related changes must commit atomically, so readers see either the previous or committed state, never a partially written plan. Foreign-key and semantic constraints, including valid ISO weeks and supported types/themes, apply to all stored content.
+The schema is a documented integration contract; implementing data entry is outside scope. IDs remain stable across edits. Related changes must commit atomically, so readers see either the previous or committed state, never a partially written plan. Foreign-key and semantic constraints, including valid ISO weeks and supported types, apply to all stored content.
 
 ## Read API and rendering
 
@@ -149,7 +147,6 @@ week: { id, isoYear, isoWeek, startDate, endDate, subtitle, prepIntro }
 days: [ { id|null, date, weekday, meals: [...], shoppingListIds: [...], reminder|null } ]
 shoppingLists: [ { id, label, note, categories: [ { id, name, items: [...] } ] } ]
 prepSessions: [ { id, title, covers, tasks: [...] } ]
-strategyCards: [ { id, title, icon, theme, items: [...] } ]
 ```
 
 Nested meals and tasks carry their stored display fields and IDs. Arrays are ordered. Nullable fields are explicit; absent collections are empty arrays. The API document does not expose internal migration tables or filesystem paths. Missing/invalid weeks return 404 with a stable JSON error code; database failures return 503.
@@ -162,7 +159,7 @@ Request handlers use read-only database connections. Mutation requests to define
 
 ## Verification and acceptance criteria
 
-1. A populated fixture renders all tabs, cards, text, badges, instructions, and strategy themes with the reference styling. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
+1. A populated fixture renders all tabs, cards, text, badges, and instructions with the reference styling. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
 2. `/` resolves the current ISO week in the configured timezone; `/2026/44` shows October 26–November 1, 2026.
 3. Test ISO year boundaries, valid/invalid week 53, timezone midnight boundaries, canonical redirects, and old/future week selection.
 4. Missing current plans, missing explicit weeks, empty archives, missing days, and unavailable databases produce their specified messages and HTTP statuses.

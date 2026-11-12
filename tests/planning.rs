@@ -17,7 +17,7 @@ const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
 const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
 const HISTORY_FIXTURE: &str = include_str!("../fixtures/2026-history.sql");
 
-const TABLES: [&str; 12] = [
+const TABLES: [&str; 10] = [
     "weeks",
     "days",
     "meals",
@@ -28,8 +28,6 @@ const TABLES: [&str; 12] = [
     "shopping_items",
     "prep_sessions",
     "prep_tasks",
-    "strategy_cards",
-    "strategy_items",
 ];
 
 const W44_ID: &str = "00000001-0000-4000-8000-000000000001";
@@ -254,10 +252,6 @@ fn sample() -> Value {
                 {"id": uid(0xa8, 2), "name": "Cook", "time": "20 min", "instructions": "Cook all"},
             ],
         }],
-        "strategyCards": [{
-            "id": uid(0xa9, 1), "title": "Light", "icon": "🥣", "theme": "blue",
-            "items": [{"id": uid(0xaa, 1), "text": "Soup first"}, {"id": uid(0xaa, 2), "text": "Walk"}],
-        }],
     })
 }
 
@@ -296,7 +290,7 @@ fn expected_document(input: &Value, iso_year: i32, iso_week: u32) -> Value {
         })
         .collect();
     json!({
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "week": {
             "id": input["week"]["id"], "isoYear": iso_year, "isoWeek": iso_week,
             "startDate": date(0), "endDate": date(6),
@@ -305,7 +299,6 @@ fn expected_document(input: &Value, iso_year: i32, iso_week: u32) -> Value {
         "days": days,
         "shoppingLists": input["shoppingLists"],
         "prepSessions": input["prepSessions"],
-        "strategyCards": input["strategyCards"],
     })
 }
 
@@ -333,11 +326,6 @@ fn input_counts(value: &Value) -> Vec<i64> {
         .iter()
         .map(|s| arr(&s["tasks"]).len() as i64)
         .sum::<i64>();
-    let cards = arr(&value["strategyCards"]);
-    let card_items = cards
-        .iter()
-        .map(|c| arr(&c["items"]).len() as i64)
-        .sum::<i64>();
     vec![
         1,
         days.len() as i64,
@@ -349,8 +337,6 @@ fn input_counts(value: &Value) -> Vec<i64> {
         items,
         sessions.len() as i64,
         tasks,
-        cards.len() as i64,
-        card_items,
     ]
 }
 
@@ -1386,15 +1372,11 @@ async fn save_revises_with_reordering_drops_and_additions() {
             .as_array_mut()
             .unwrap()
             .push(json!({"id": uid(0xa5, 9), "name": "Pantry", "items": []}));
-        // Drop a task, add a card item.
+        // Drop a task.
         v["prepSessions"][0]["tasks"]
             .as_array_mut()
             .unwrap()
             .remove(0);
-        v["strategyCards"][0]["items"]
-            .as_array_mut()
-            .unwrap()
-            .insert(0, json!({"id": uid(0xaa, 9), "text": "Plan ahead"}));
     });
     let saved = save_w45(&wp, Some(&created.revision), revised.clone())
         .await
@@ -1415,7 +1397,6 @@ async fn save_revises_with_reordering_drops_and_additions() {
     assert!(!exists(&rp, "prep_tasks", &uid(0xa8, 1)).await);
     assert!(exists(&rp, "prep_tasks", &uid(0xa8, 2)).await);
     assert!(exists(&rp, "shopping_items", &uid(0xa6, 9)).await);
-    assert!(exists(&rp, "strategy_items", &uid(0xaa, 9)).await);
 
     // The request that already succeeded cannot be replayed.
     let after = dump(&rp).await;
@@ -1444,7 +1425,7 @@ async fn save_replaces_with_an_empty_week() {
     let created = save_w45(&wp, None, sample()).await.unwrap();
     let empty = json!({
         "week": {"id": uid(0xa0, 1), "subtitle": null, "prepIntro": null},
-        "days": [], "shoppingLists": [], "prepSessions": [], "strategyCards": [],
+        "days": [], "shoppingLists": [], "prepSessions": [],
     });
     let saved = save_w45(&wp, Some(&created.revision), empty.clone())
         .await
@@ -1610,13 +1591,6 @@ async fn save_rejects_invalid_documents_and_leaves_the_database_unchanged() {
                     json!("00000007-0000-4000-8000-000000000028")
             }),
         ),
-        (
-            "W44 strategy item id",
-            Box::new(|v: &mut Value| {
-                v["strategyCards"][0]["items"][0]["id"] =
-                    json!("0000000b-0000-4000-8000-00000000003a")
-            }),
-        ),
     ] {
         let mut value = sample();
         edit(&mut value);
@@ -1702,8 +1676,13 @@ fn input_rejects_malformed_documents() {
         ))
         .is_err()
     );
-    assert!(parse(edited(|v| v["strategyCards"][0]["theme"] = json!("red"))).is_err());
-    assert!(parse(edited(|v| v["strategyCards"][0]["theme"] = json!("Blue"))).is_err());
+    // Strategy cards were removed by feature 12: the field is unknown.
+    for cards in [json!([]), json!([{"id": uid(0xa9, 1)}])] {
+        let err = parse(edited(|v| v["strategyCards"] = cards.clone()))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("unknown field `strategyCards`"), "{err}");
+    }
 
     // A missing nullable key is an error; an explicit null is required.
     let err = parse(edited(|v| {
@@ -1725,7 +1704,6 @@ fn input_rejects_malformed_documents() {
         ("/days/0/meals/0", "cookTime"),
         ("/shoppingLists/0", "note"),
         ("/prepSessions/0", "covers"),
-        ("/strategyCards/0", "icon"),
     ] {
         let result = parse(edited(|v| {
             v.pointer_mut(pointer)
@@ -1739,7 +1717,7 @@ fn input_rejects_malformed_documents() {
     // Other required keys too.
     assert!(
         parse(edited(|v| {
-            v.as_object_mut().unwrap().remove("strategyCards");
+            v.as_object_mut().unwrap().remove("prepSessions");
         }))
         .is_err()
     );
@@ -1996,7 +1974,6 @@ fn week_input_schema_is_strict() {
         "ShoppingCategoryInput",
         "PrepSessionInput",
         "PrepTaskInput",
-        "StrategyCardInput",
     ];
 
     let mut objects: Vec<(&str, &Value)> = vec![("WeekInput", &schema)];
@@ -2046,7 +2023,6 @@ fn week_input_schema_is_strict() {
         ("MealInput", "tip"),
         ("ShoppingListInput", "note"),
         ("PrepSessionInput", "covers"),
-        ("StrategyCardInput", "icon"),
     ] {
         nullable(name, field);
     }
@@ -2071,27 +2047,17 @@ fn week_input_schema_is_strict() {
     }
     let enum_values = |def: &Value| -> Vec<String> {
         let text = def.to_string();
-        [
-            "Breakfast",
-            "Lunch",
-            "Dinner",
-            "Snack",
-            "green",
-            "blue",
-            "purple",
-            "yellow",
-        ]
-        .iter()
-        .filter(|v| text.contains(&format!("\"{v}\"")))
-        .map(|v| v.to_string())
-        .collect()
+        ["Breakfast", "Lunch", "Dinner", "Snack"]
+            .iter()
+            .filter(|v| text.contains(&format!("\"{v}\"")))
+            .map(|v| v.to_string())
+            .collect()
     };
     assert_eq!(
         enum_values(&defs["MealType"]),
         ["Breakfast", "Lunch", "Dinner", "Snack"]
     );
-    assert_eq!(
-        enum_values(&defs["Theme"]),
-        ["green", "blue", "purple", "yellow"]
-    );
+    assert!(!defs.contains_key("Theme"));
+    assert!(!defs.contains_key("StrategyCardInput"));
+    assert!(schema["properties"].get("strategyCards").is_none());
 }

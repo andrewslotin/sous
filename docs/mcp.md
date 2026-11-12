@@ -160,11 +160,10 @@ different filters, is `invalid_input`. Pages do not skip or repeat results when 
 ## Saving a week
 
 `save_week` creates or replaces one ISO week. Study the complete [example document](examples/save-week.json); it
-uses every field, including a reminder, an empty category, shopping lists shared by two days, a prep session and a
-strategy card.
+uses every field, including a reminder, an empty category, shopping lists shared by two days and a prep session.
 
 **It is a full replacement.** Anything in the stored week that is not in the submitted `document` is deleted: days,
-meals, steps, shopping lists, categories, items, prep sessions and strategy cards. Other weeks are never touched.
+meals, steps, shopping lists, categories, items and prep sessions. Other weeks are never touched.
 To change one thing, such as one shopping list, call `get_week`, edit that part of the returned `document`
 (dropping the derived fields described below), and submit the whole document. The save is one transaction: an
 invalid document changes nothing. There is no force option, no partial update and no delete tool.
@@ -177,14 +176,13 @@ Rules for the document:
 - Ids are lowercase UUIDs, for example `5a5a0001-0000-4000-8000-000000000001`. Generate a new one for
   every new record and keep the existing one for every record you retain. `week.id` must equal the stored id when
   replacing a week.
-- Array order is the stored display order, for days, meals, steps, lists, categories, items, tasks and cards.
+- Array order is the stored display order, for days, meals, steps, lists, categories, items, prep sessions and tasks.
 - `days` holds at most one record per `weekday` (1 for Monday to 7 for Sunday). A weekday you leave out has no day
   record, which `get_week` returns as a day with `id: null` and no content. When editing a `get_week` result, drop
   the days whose `id` is `null`, or give them a new id if you add content.
 - `shoppingListIds` on a day refer to `shoppingLists` in the same document. One list may be assigned to several
   days. A list assigned to none is kept but not shown on any day.
-- Meal `type` is one of `Breakfast`, `Lunch`, `Dinner`, `Snack`. Strategy card `theme` is one of `green`, `blue`,
-  `purple`, `yellow`. Nutrition values are non-negative numbers.
+- Meal `type` is one of `Breakfast`, `Lunch`, `Dinner`, `Snack`. Nutrition values are non-negative numbers.
 - The document has no dates: the week's dates come from `isoYear` and `isoWeek`. When editing a `get_week`
   result, remove `schemaVersion`, `week.isoYear`, `week.isoWeek`, `week.startDate`, `week.endDate` and every day's
   `date`; a day's `id` stays.
@@ -237,7 +235,7 @@ Save next week (the document is abbreviated here; use the [example](examples/sav
 { "name": "save_week",
   "arguments": { "isoYear": 2026, "isoWeek": 45,
                  "document": { "week": { "id": "...", "subtitle": null, "prepIntro": null },
-                               "days": [], "shoppingLists": [], "prepSessions": [], "strategyCards": [] } } }
+                               "days": [], "shoppingLists": [], "prepSessions": [] } } }
 ```
 
 The result holds the saved `document` (with all seven days) and a `revision`. Open `http://127.0.0.1:3000/2026/45`

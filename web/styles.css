@@ -219,12 +219,3 @@ a.cal-row:hover { background: #f1f5f9; }
   font-family: 'JetBrains Mono', monospace; max-width: 50%; overflow-wrap: anywhere;
 }
 .prep-task-instructions { font-size: 12px; color: #475569; line-height: 1.6; margin: 0; overflow-wrap: anywhere; }
-
-.strategy-list { display: flex; flex-direction: column; gap: 12px; }
-.strategy { padding: 14px 16px; border-radius: 10px; border: 1px solid #e2e8f0; background: #fff; --title: #1e293b; --list: #334155; }
-.strategy-green { background: linear-gradient(135deg, #ecfdf5, #f0fdf4); border-color: #bbf7d0; --title: #166534; --list: #15803d; }
-.strategy-blue { background: #eff6ff; border-color: #bfdbfe; --title: #1e40af; --list: #1e40af; }
-.strategy-purple { background: #fdf4ff; border-color: #e9d5ff; --title: #7e22ce; --list: #7e22ce; }
-.strategy-yellow { background: #fefce8; border-color: #fde68a; --title: #92400e; --list: #92400e; }
-.strategy-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--title); overflow-wrap: anywhere; }
-.strategy-items { font-size: 12px; color: var(--list); margin: 0; padding-left: 16px; line-height: 1.7; overflow-wrap: anywhere; }

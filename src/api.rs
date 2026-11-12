@@ -130,7 +130,7 @@ async fn year_handler(
     json(
         StatusCode::OK,
         &YearDocument {
-            schema_version: model::SCHEMA_VERSION,
+            schema_version: model::YEAR_SCHEMA_VERSION,
             year,
             previous_year: listing.previous_year,
             next_year: listing.next_year,

@@ -1,6 +1,6 @@
 //! Transactional full-week replacement for the MCP `save_week` tool.
 use crate::calendar::week_dates;
-use crate::model::{DayInput, MealType, RevisedWeek, Theme, WeekInput};
+use crate::model::{DayInput, MealType, RevisedWeek, WeekInput};
 use crate::queries::{Conflict, QueryError, is_canonical_uuid, load_week_in, week_revision};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashSet;
@@ -166,16 +166,6 @@ fn validate(
             )?;
         }
     }
-    for (c, card) in input.strategy_cards.iter().enumerate() {
-        ids.add("strategy_cards", format!("strategyCards[{c}].id"), &card.id)?;
-        for (i, item) in card.items.iter().enumerate() {
-            ids.add(
-                "strategy_items",
-                format!("strategyCards[{c}].items[{i}].id"),
-                &item.id,
-            )?;
-        }
-    }
 
     let list_ids: HashSet<&str> = input.shopping_lists.iter().map(|l| l.id.as_str()).collect();
     for (d, day) in input.days.iter().enumerate() {
@@ -228,7 +218,7 @@ async fn replace_week(
                 .bind(&input.week.id)
                 .execute(&mut *conn)
                 .await?;
-            for table in ["days", "shopping_lists", "prep_sessions", "strategy_cards"] {
+            for table in ["days", "shopping_lists", "prep_sessions"] {
                 sqlx::query(sqlx::AssertSqlSafe(format!(
                     "DELETE FROM {table} WHERE week_id = ?"
                 )))
@@ -295,15 +285,6 @@ fn meal_type(kind: MealType) -> &'static str {
         MealType::Lunch => "Lunch",
         MealType::Dinner => "Dinner",
         MealType::Snack => "Snack",
-    }
-}
-
-fn theme(theme: Theme) -> &'static str {
-    match theme {
-        Theme::Green => "green",
-        Theme::Blue => "blue",
-        Theme::Purple => "purple",
-        Theme::Yellow => "yellow",
     }
 }
 
@@ -439,31 +420,6 @@ async fn insert_content(conn: &mut SqliteConnection, input: &WeekInput) -> Resul
             .bind(&task.name)
             .bind(&task.time)
             .bind(&task.instructions)
-            .execute(&mut *conn)
-            .await?;
-        }
-    }
-    for (c, card) in input.strategy_cards.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) \
-             VALUES (?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&card.id)
-        .bind(week_id)
-        .bind(c as i64)
-        .bind(&card.title)
-        .bind(&card.icon)
-        .bind(theme(card.theme))
-        .execute(&mut *conn)
-        .await?;
-        for (i, item) in card.items.iter().enumerate() {
-            sqlx::query(
-                "INSERT INTO strategy_items (id, card_id, position, text) VALUES (?, ?, ?, ?)",
-            )
-            .bind(&item.id)
-            .bind(&card.id)
-            .bind(i as i64)
-            .bind(&item.text)
             .execute(&mut *conn)
             .await?;
         }

@@ -12,8 +12,6 @@ pub struct WeekDocument {
     pub shopping_lists: Vec<ShoppingList>,
     /// By `prep_sessions.position`.
     pub prep_sessions: Vec<PrepSession>,
-    /// By `strategy_cards.position`.
-    pub strategy_cards: Vec<StrategyCard>,
 }
 
 #[derive(Debug, Serialize, JsonSchema)]
@@ -113,23 +111,6 @@ pub struct PrepTask {
     pub instructions: String,
 }
 
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct StrategyCard {
-    pub id: String,
-    pub title: String,
-    pub icon: Option<String>,
-    /// One of `green`, `blue`, `purple`, `yellow` (enforced by the database).
-    pub theme: String,
-    /// By `strategy_items.position`.
-    pub items: Vec<StrategyItem>,
-}
-
-#[derive(Debug, Serialize, JsonSchema)]
-pub struct StrategyItem {
-    pub id: String,
-    pub text: String,
-}
-
 /// One archive entry / available-week link.
 #[derive(Debug, Serialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
@@ -142,8 +123,11 @@ pub struct WeekSummary {
     pub path: String,
 }
 
-/// Version of the JSON document format (`schemaVersion`).
-pub const SCHEMA_VERSION: u32 = 1;
+/// `schemaVersion` of the week document (page data, `/api/<year>/<week>`, `get_week`).
+pub const WEEK_SCHEMA_VERSION: u32 = 2;
+
+/// `schemaVersion` of the year document (`/api/<year>`).
+pub const YEAR_SCHEMA_VERSION: u32 = 1;
 
 /// `GET /api/<year>`: the year page's data as JSON.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -345,7 +329,6 @@ pub struct WeekInput {
     pub days: Vec<DayInput>,
     pub shopping_lists: Vec<ShoppingListInput>,
     pub prep_sessions: Vec<PrepSessionInput>,
-    pub strategy_cards: Vec<StrategyCardInput>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -439,7 +422,7 @@ pub struct MealInput {
     pub steps: Vec<TextInput>,
 }
 
-/// A step, shopping item or strategy item.
+/// A step or shopping item.
 #[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TextInput {
@@ -499,28 +482,4 @@ pub struct PrepTaskInput {
     pub name: String,
     pub time: String,
     pub instructions: String,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
-pub enum Theme {
-    Green,
-    Blue,
-    Purple,
-    Yellow,
-}
-
-#[derive(Debug, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct StrategyCardInput {
-    #[schemars(regex(
-        pattern = r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
-    ))]
-    pub id: String,
-    pub title: String,
-    #[serde(deserialize_with = "Option::deserialize")]
-    #[schemars(required, schema_with = "nullable::<String>")]
-    pub icon: Option<String>,
-    pub theme: Theme,
-    pub items: Vec<TextInput>,
 }

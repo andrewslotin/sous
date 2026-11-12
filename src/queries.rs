@@ -2,8 +2,8 @@
 use crate::calendar::{iso_week_of, week_dates, week_path};
 use crate::model::{
     Day, Meal, MealHit, MealPage, MealRecord, PlannedWeek, PrepSession, PrepTask, Reminder,
-    RevisedWeek, ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek,
-    StrategyCard, StrategyItem, Week, WeekDocument, WeekPage, WeekSummary, YearListing,
+    RevisedWeek, ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek, Week,
+    WeekDocument, WeekPage, WeekSummary, YearListing,
 };
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -105,7 +105,7 @@ pub async fn load_week_in(
 }
 
 /// Every table that holds a week's content, with the rows that belong to week `?1` (a `weeks.id`).
-const WEEK_ROWS: [(&str, &str); 12] = [
+const WEEK_ROWS: [(&str, &str); 10] = [
     ("weeks", "SELECT * FROM weeks WHERE id = ?1"),
     ("days", "SELECT * FROM days WHERE week_id = ?1"),
     (
@@ -142,14 +142,6 @@ const WEEK_ROWS: [(&str, &str); 12] = [
     (
         "prep_tasks",
         "SELECT * FROM prep_tasks WHERE session_id IN (SELECT id FROM prep_sessions WHERE week_id = ?1)",
-    ),
-    (
-        "strategy_cards",
-        "SELECT * FROM strategy_cards WHERE week_id = ?1",
-    ),
-    (
-        "strategy_items",
-        "SELECT * FROM strategy_items WHERE card_id IN (SELECT id FROM strategy_cards WHERE week_id = ?1)",
     ),
 ];
 
@@ -782,22 +774,6 @@ async fn load_week_paused(
     .fetch_all(&mut *conn)
     .await?;
 
-    let card_rows = sqlx::query(
-        "SELECT id, title, icon, theme FROM strategy_cards WHERE week_id = ? ORDER BY position",
-    )
-    .bind(&week_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
-    let card_item_rows = sqlx::query(
-        "SELECT i.id, i.card_id, i.text FROM strategy_items i \
-         JOIN strategy_cards c ON c.id = i.card_id \
-         WHERE c.week_id = ? ORDER BY i.card_id, i.position",
-    )
-    .bind(&week_id)
-    .fetch_all(&mut *conn)
-    .await?;
-
     let mut tasks: std::collections::HashMap<String, Vec<PrepTask>> = Default::default();
     for row in task_rows {
         tasks
@@ -819,30 +795,6 @@ async fn load_week_paused(
                 id,
                 title: row.get("title"),
                 covers: row.get("covers"),
-            }
-        })
-        .collect();
-
-    let mut card_items: std::collections::HashMap<String, Vec<StrategyItem>> = Default::default();
-    for row in card_item_rows {
-        card_items
-            .entry(row.get("card_id"))
-            .or_default()
-            .push(StrategyItem {
-                id: row.get("id"),
-                text: row.get("text"),
-            });
-    }
-    let strategy_cards: Vec<StrategyCard> = card_rows
-        .into_iter()
-        .map(|row| {
-            let id: String = row.get("id");
-            StrategyCard {
-                items: card_items.remove(&id).unwrap_or_default(),
-                id,
-                title: row.get("title"),
-                icon: row.get("icon"),
-                theme: row.get("theme"),
             }
         })
         .collect();
@@ -920,7 +872,7 @@ async fn load_week_paused(
     }
 
     Ok(Some(WeekDocument {
-        schema_version: crate::model::SCHEMA_VERSION,
+        schema_version: crate::model::WEEK_SCHEMA_VERSION,
         week: Week {
             id: week_id,
             iso_year,
@@ -933,7 +885,6 @@ async fn load_week_paused(
         days,
         shopping_lists,
         prep_sessions,
-        strategy_cards,
     }))
 }
 

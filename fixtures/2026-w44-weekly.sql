@@ -1,4 +1,4 @@
--- Development/test fixture: weekly content (prep, strategy, reminders) for ISO week 2026-W44.
+-- Development/test fixture: weekly content (prep and reminders) for ISO week 2026-W44.
 -- Load AFTER fixtures/2026-w44.sql into a migrated database:
 --   sous migrate && sqlite3 sous.db < fixtures/2026-w44.sql && sqlite3 sous.db < fixtures/2026-w44-weekly.sql
 -- Rows are inserted out of order on purpose; positions decide the order.
@@ -20,17 +20,5 @@ INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALU
 INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALUES ('00000009-0000-4000-8000-000000000036', '00000008-0000-4000-8000-000000000035', 20, 'Cook Brown Rice', '25 min', 'Cook 200g dry brown rice; store.');
 INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALUES ('00000009-0000-4000-8000-000000000037', '00000008-0000-4000-8000-000000000035', 0, 'Start the Gravlax', '15 min', 'Pack the cure over the salmon, wrap tightly and weight it. Flip once a day.');
 INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) VALUES ('00000009-0000-4000-8000-000000000038', '00000008-0000-4000-8000-000000000035', 10, 'Air-Fryer Roasted Chickpeas', '20 min', 'Toss chickpeas with oil and paprika; air-fry at 200°C for 12–15 min.');
-
-INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('0000000a-0000-4000-8000-000000000039', '00000001-0000-4000-8000-000000000001', 30, 'This Week''s Notes', '📝', 'yellow');
-INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('0000000a-0000-4000-8000-00000000003b', '00000001-0000-4000-8000-000000000001', 0, 'Weekly Variety', '🐟', 'green');
-INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('0000000a-0000-4000-8000-00000000003f', '00000001-0000-4000-8000-000000000001', 20, 'The Salmon Plan', NULL, 'purple');
-INSERT INTO strategy_cards (id, week_id, position, title, icon, theme) VALUES ('0000000a-0000-4000-8000-000000000041', '00000001-0000-4000-8000-000000000001', 10, 'Air Fryer Features', '🍳', 'blue');
-
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-00000000003a', '0000000a-0000-4000-8000-000000000039', 0, 'Monday + Thursday shop split');
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-00000000003c', '0000000a-0000-4000-8000-00000000003b', 10, 'Legumes daily');
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-00000000003d', '0000000a-0000-4000-8000-00000000003b', 0, 'Oily fish 3×');
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-00000000003e', '0000000a-0000-4000-8000-00000000003b', 20, 'Nuts daily — walnuts & almonds');
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-000000000040', '0000000a-0000-4000-8000-00000000003f', 0, '~300g → gravlax');
-INSERT INTO strategy_items (id, card_id, position, text) VALUES ('0000000b-0000-4000-8000-000000000042', '0000000a-0000-4000-8000-000000000041', 0, 'Mon: crispy chickpeas');
 
 COMMIT;
