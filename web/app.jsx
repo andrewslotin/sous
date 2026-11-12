@@ -244,24 +244,21 @@ function Reminder({ reminder }) {
   );
 }
 
-function MealPlan({ data, selectedWeekday }) {
+function MealPlan({ page }) {
+  const data = page.document;
   const [activeTab, setActiveTab] = useState("plan");
-  const [selectedDay, setSelectedDay] = useState(selectedWeekday - 1);
+  const [selectedDay, setSelectedDay] = useState(page.selectedWeekday - 1);
   const day = data.days[selectedDay];
   // A session without tasks has nothing to show, so it is not displayed.
   const prepSessions = data.prepSessions.filter((s) => s.tasks.length > 0);
   const listsById =new Map(data.shoppingLists.map((l) => [l.id, l]));
   return (
-    <div className="app">
-      <div className="header">
-        <h1 className="title">Meal Plan: {formatDateRange(data.week)}</h1>
-        <div className="header-meta">
-          {data.week.subtitle && <p className="subtitle">{data.week.subtitle}</p>}
-          <a className="all-weeks" href={yearPath(data.week.isoYear)}>
-            All weeks
-          </a>
-        </div>
-      </div>
+    <CalendarShell
+      page={page}
+      week={data.week}
+      heading={`Meal Plan: ${formatDateRange(data.week)}`}
+      subtitle={data.week.subtitle}
+    >
       <div className="tabs">
         {TABS.map((tab) => (
           <button
@@ -326,7 +323,7 @@ function MealPlan({ data, selectedWeekday }) {
             ))}
           </div>
         ))}
-    </div>
+    </CalendarShell>
   );
 }
 
@@ -339,18 +336,195 @@ function Shell({ title, children }) {
   );
 }
 
-function PageTitle({ children, link }) {
+function PageTitle({ children }) {
+  return <h1 className="title">{children}</h1>;
+}
+
+// Proleptic Gregorian dates as day numbers (0 = 1970-01-01), integer arithmetic only: no Date, so the browser's
+// timezone does not matter and years 0-99 are not mapped to 1900-1999.
+function daysFromCivil(year, month, day) {
+  const y = month <= 2 ? year - 1 : year;
+  const era = Math.floor(y / 400);
+  const yoe = y - era * 400;
+  const doy = Math.floor((153 * (month > 2 ? month - 3 : month + 9) + 2) / 5) + day - 1;
+  const doe = yoe * 365 + Math.floor(yoe / 4) - Math.floor(yoe / 100) + doy;
+  return era * 146097 + doe - 719468;
+}
+
+function civilFromDays(days) {
+  const z = days + 719468;
+  const era = Math.floor(z / 146097);
+  const doe = z - era * 146097;
+  const yoe = Math.floor((doe - Math.floor(doe / 1460) + Math.floor(doe / 36524) - Math.floor(doe / 146096)) / 365);
+  const doy = doe - (365 * yoe + Math.floor(yoe / 4) - Math.floor(yoe / 100));
+  const mp = Math.floor((5 * doy + 2) / 153);
+  const day = doy - Math.floor((153 * mp + 2) / 5) + 1;
+  const month = mp < 10 ? mp + 3 : mp - 9;
+  return [yoe + era * 400 + (month <= 2 ? 1 : 0), month, day];
+}
+
+function dayNumber(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  return daysFromCivil(y, m, d);
+}
+
+// 0 = Monday (1970-01-01 was a Thursday).
+function weekdayIndex(days) {
+  return (((days + 3) % 7) + 7) % 7;
+}
+
+const MIN_DAY = daysFromCivil(1, 1, 1);
+const MAX_DAY = daysFromCivil(9999, 12, 31);
+
+const MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+function paddedYear(year) {
+  return String(year).padStart(4, "0");
+}
+
+// The Monday-first ISO week that starts on `monday`: its ISO year and number (the Thursday decides the year).
+function isoWeekOf(monday) {
+  const [isoYear] = civilFromDays(monday + 3);
+  return { isoYear, isoWeek: Math.floor((monday + 3 - daysFromCivil(isoYear, 1, 1)) / 7) + 1 };
+}
+
+// "November 9–15, 2026", "October 26–November 1, 2026", "December 29, 2025–January 4, 2026".
+function formatWeekRange(monday) {
+  const [y1, m1, d1] = civilFromDays(monday);
+  const [y2, m2, d2] = civilFromDays(monday + 6);
+  const start = `${MONTH_NAMES[m1 - 1]} ${d1}`;
+  const end = `${MONTH_NAMES[m2 - 1]} ${d2}, ${paddedYear(y2)}`;
+  if (y1 !== y2) {
+    return `${start}, ${paddedYear(y1)}–${end}`;
+  }
+  return m1 === m2 ? `${start}–${d2}, ${paddedYear(y2)}` : `${start}–${end}`;
+}
+
+function Calendar({ open, today, plannedWeeks, week }) {
+  const [shown, setShown] = useState(() => {
+    // The month of the displayed week's Thursday, or of today when no week is displayed.
+    const [year, month] = civilFromDays(week ? dayNumber(week.startDate) + 3 : dayNumber(today));
+    return { year, month };
+  });
+  const { year, month } = shown;
+  const step = (delta) => {
+    const index = shown.year * 12 + shown.month - 1 + delta;
+    setShown({ year: Math.floor(index / 12), month: (index % 12) + 1 });
+  };
+  const planned = new Set(plannedWeeks.map((w) => `${w.isoYear}-${w.isoWeek}`));
+  const todayDay = dayNumber(today);
+  const first = daysFromCivil(year, month, 1);
+  const last = daysFromCivil(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1, 1) - 1;
+  const rows = [];
+  for (let monday = first - weekdayIndex(first); monday <= last; monday += 7) {
+    rows.push(monday);
+  }
   return (
-    <>
-      <h1 className="title">{children}</h1>
-      {link && (
-        <div className="header-meta">
-          <a className="all-weeks" href={link.href}>
-            {link.label}
-          </a>
+    <section id="calendar" className={open ? "calendar is-open" : "calendar"} aria-label="Calendar">
+      <div className="cal-nav">
+        <button
+          type="button"
+          className="cal-step"
+          aria-label="Previous month"
+          disabled={year === 1 && month === 1}
+          onClick={() => step(-1)}
+        >
+          ‹
+        </button>
+        <div className="cal-title">
+          {MONTH_NAMES[month - 1]} {paddedYear(year)}
         </div>
-      )}
-    </>
+        <button
+          type="button"
+          className="cal-step"
+          aria-label="Next month"
+          disabled={year === 9999 && month === 12}
+          onClick={() => step(1)}
+        >
+          ›
+        </button>
+      </div>
+      <div className="cal-head" aria-hidden="true">
+        <span className="cal-wk">Wk</span>
+        {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map((d) => (
+          <span key={d} className="cal-cell">
+            {d}
+          </span>
+        ))}
+      </div>
+      {rows.map((monday) => {
+        const iso = isoWeekOf(monday);
+        const isPlanned = planned.has(`${iso.isoYear}-${iso.isoWeek}`);
+        const isDisplayed = week && week.isoYear === iso.isoYear && week.isoWeek === iso.isoWeek;
+        const cells = [
+          <span key="wk" className="cal-wk">
+            {isPlanned && <span className="cal-dot" aria-hidden="true"></span>}
+            {iso.isoWeek}
+          </span>,
+        ];
+        for (let i = 0; i < 7; i++) {
+          const [y, m, d] = civilFromDays(monday + i);
+          const cls = ["cal-cell"];
+          if (y !== year || m !== month) cls.push("cal-out");
+          if (monday + i === todayDay) cls.push("cal-today");
+          cells.push(
+            <span key={i} className={cls.join(" ")}>
+              {d}
+            </span>,
+          );
+        }
+        const cls = ["cal-row"];
+        if (isPlanned) cls.push("cal-planned");
+        // A week that cannot be a path (the last row of December 9999) is shown but is not a link.
+        if (monday < MIN_DAY || monday + 6 > MAX_DAY) {
+          return (
+            <div key={monday} className={cls.join(" ")}>
+              {cells}
+            </div>
+          );
+        }
+        return (
+          <a
+            key={monday}
+            className={cls.join(" ")}
+            href={`/${paddedYear(iso.isoYear)}/${iso.isoWeek}`}
+            aria-label={`Week ${iso.isoWeek}, ${formatWeekRange(monday)}${isPlanned ? ", planned" : ""}`}
+            aria-current={isDisplayed ? "page" : undefined}
+          >
+            {cells}
+          </a>
+        );
+      })}
+    </section>
+  );
+}
+
+// The header with the "Calendar" toggle (narrow screens), the calendar, then the page content.
+function CalendarShell({ page, week, heading, subtitle, children }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="app has-calendar">
+      <div className="header">
+        <PageTitle>{heading}</PageTitle>
+        <div className="header-meta">
+          {subtitle && <p className="subtitle">{subtitle}</p>}
+          <button
+            type="button"
+            className="all-weeks calendar-toggle"
+            aria-expanded={open}
+            aria-controls="calendar"
+            onClick={() => setOpen(!open)}
+          >
+            Calendar
+          </button>
+        </div>
+      </div>
+      <Calendar open={open} today={page.today} plannedWeeks={page.plannedWeeks} week={week} />
+      {children}
+    </div>
   );
 }
 
@@ -373,10 +547,6 @@ function yearPath(year) {
   return "/" + String(year).padStart(4, "0");
 }
 
-function allWeeks(year) {
-  return { href: yearPath(year), label: "All weeks" };
-}
-
 function WeekList({ weeks }) {
   return (
     <ul className="week-list">
@@ -396,11 +566,13 @@ function WeekList({ weeks }) {
 
 function MissingWeek({ page }) {
   return (
-    <Shell
-      title={<PageTitle link={allWeeks(page.week.isoYear)}>Meal Plan: {formatRangeWithYear(page.week.startDate, page.week.endDate)}</PageTitle>}
+    <CalendarShell
+      page={page}
+      week={page.week}
+      heading={`Meal Plan: ${formatRangeWithYear(page.week.startDate, page.week.endDate)}`}
     >
       <p className="empty">No meal plan for this week yet.</p>
-    </Shell>
+    </CalendarShell>
   );
 }
 
@@ -439,10 +611,10 @@ function YearPage({ page }) {
 
 function InvalidWeek({ page }) {
   return (
-    <Shell title={<PageTitle>Meal Plan</PageTitle>}>
+    <CalendarShell page={page} week={null} heading="Meal Plan">
       <p className="empty">Invalid week.</p>
-      <Nav links={[THIS_WEEK, allWeeks(page.currentYear)]} />
-    </Shell>
+      <Nav links={[THIS_WEEK]} />
+    </CalendarShell>
   );
 }
 
@@ -458,7 +630,7 @@ function Unavailable() {
 function App({ page }) {
   switch (page.kind) {
     case "week":
-      return <MealPlan data={page.document} selectedWeekday={page.selectedWeekday} />;
+      return <MealPlan page={page} />;
     case "missing":
       return <MissingWeek page={page} />;
     case "year":

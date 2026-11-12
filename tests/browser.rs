@@ -576,26 +576,14 @@ fn clock_at(y: i32, mo: u32, d: u32, h: u32, mi: u32, sec: u32) -> Clock {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn plan_header_range_and_all_weeks_link_by_keyboard() {
+fn plan_header_range_and_no_all_weeks_link() {
     let h = Harness::start("", 1280);
     assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
-    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 1);
+    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
     assert_eq!(
-        h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
-        "/2026"
+        h.js("document.body.textContent.includes('All weeks')"),
+        false
     );
-    assert_eq!(h.text("a.all-weeks"), "All weeks");
-
-    // The first tab stop is the link; it shows a focus ring; Enter follows it.
-    h.press("Tab");
-    assert_eq!(h.js("document.activeElement.className"), "all-weeks");
-    assert_eq!(
-        h.js("getComputedStyle(document.activeElement).outlineStyle"),
-        "solid"
-    );
-    h.press("Enter");
-    h.wait_page("/2026");
-    assert_eq!(h.text(".title"), "Meal Plan: 2026");
 }
 
 #[test]
@@ -723,41 +711,494 @@ fn year_links_skip_gap_years_and_empty_year_keeps_links() {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn all_weeks_link_targets_the_displayed_year() {
+fn calendar_is_on_week_pages_only_and_all_weeks_is_gone() {
     let h = Harness::start("", 1280);
-    let target = "document.querySelector('a.all-weeks').getAttribute('href')";
-
-    // A stored plan and a missing plan of ISO 2025 both link to /2025 and the click works.
-    h.exec(&bare_weeks(&[(2025, 50)]));
-    for _ in 0..2 {
-        h.goto_page("/2025/50");
-        assert_eq!(h.js(target), "/2025");
-        h.click("a.all-weeks");
-        h.wait_page("/2025");
-        assert_eq!(h.text(".title"), "Meal Plan: 2025");
-        h.exec("DELETE FROM weeks WHERE iso_year = 2025 AND iso_week = 50;");
+    let present = |h: &Harness| h.js("document.querySelectorAll('#calendar').length");
+    let no_all_weeks = |h: &Harness, what: &str| {
+        assert_eq!(
+            h.js("document.body.textContent.includes('All weeks')"),
+            false,
+            "{what}"
+        );
+    };
+    for (path, status) in [("/2026/44", 200), ("/2026/45", 404), ("/2026/54", 404)] {
+        h.goto_page(path);
+        assert_eq!(h.status(), status, "{path}");
+        assert_eq!(present(&h), 1, "{path}");
+        no_all_weeks(&h, path);
     }
-    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts("a.nav-link"), ["This week"]);
 
-    // `/` on 2025-12-29 (Berlin) is ISO 2026-W1, so the link goes to /2026.
+    // `/` with an empty database is a 200 missing-plan page with the calendar.
+    let e = Opts::new().db(Db::Empty).path("/").launch();
+    assert_eq!(e.status(), 200);
+    assert_eq!(present(&e), 1);
+    no_all_weeks(&e, "/ (empty)");
+
+    // Year pages and the 503 page have no calendar.
+    h.goto_page("/2026");
+    assert_eq!(present(&h), 0);
+    let u = Opts::new().db(Db::ClosedPool).path("/").launch();
+    assert_eq!(u.status(), 503);
+    assert_eq!(present(&u), 0);
+    no_all_weeks(&u, "503");
+}
+
+impl Harness {
+    fn cal_heading(&self) -> String {
+        self.text(".cal-title")
+    }
+
+    /// Every calendar row: [href or null, aria-label or null, aria-current or null, planned, cell texts].
+    fn cal_rows(&self) -> Vec<serde_json::Value> {
+        let v = self.js(
+            "[...document.querySelectorAll('#calendar .cal-row')].map(r => [r.getAttribute('href'), r.getAttribute('aria-label'), r.getAttribute('aria-current'), r.classList.contains('cal-planned'), [...r.children].map(c => c.textContent)])",
+        );
+        serde_json::from_value(v).unwrap()
+    }
+
+    /// The `[x, y]` day-of-month texts of the cells carrying the today mark.
+    fn cal_today_cells(&self) -> Vec<String> {
+        let v = self.js("[...document.querySelectorAll('#calendar .cal-today')].map(c => c.textContent + (c.classList.contains('cal-out') ? ' out' : ''))");
+        serde_json::from_value(v).unwrap()
+    }
+
+    fn cal_click(&self, label: &str) {
+        self.click(&format!("#calendar button[aria-label='{label}']"));
+    }
+}
+
+/// Expected canonical hrefs of a month's rows, from chrono.
+fn expected_month_hrefs(year: i32, month: u32) -> Vec<String> {
+    use chrono::{Datelike, NaiveDate};
+    let first = NaiveDate::from_ymd_opt(year, month, 1).unwrap();
+    let next = if month == 12 {
+        NaiveDate::from_ymd_opt(year + 1, 1, 1)
+    } else {
+        NaiveDate::from_ymd_opt(year, month + 1, 1)
+    }
+    .unwrap();
+    let mut monday = first - chrono::Duration::days(first.weekday().num_days_from_monday() as i64);
+    let mut hrefs = vec![];
+    while monday < next {
+        let iso = monday.iso_week();
+        hrefs.push(format!("/{:04}/{}", iso.year(), iso.week()));
+        monday += chrono::Duration::days(7);
+    }
+    hrefs
+}
+
+fn row_hrefs(rows: &[serde_json::Value]) -> Vec<String> {
+    rows.iter()
+        .map(|r| r[0].as_str().unwrap().to_string())
+        .collect()
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_opens_on_the_expected_month() {
+    let sql = bare_weeks(&[(2026, 1)]);
+    let h = Opts::new().sql(&sql).launch();
+    assert_eq!(h.cal_heading(), "October 2026");
+    h.goto_page("/2026/1");
+    assert_eq!(h.cal_heading(), "January 2026");
+    h.goto_page("/2026/45");
+    assert_eq!(h.cal_heading(), "November 2026");
+
+    // The invalid page opens on today's month, by the server's clock and not the browser's:
+    // 2026-11-30 23:30Z is already December 1 in Berlin.
     let h = Opts::new()
-        .clock(clock_at(2025, 12, 29, 12, 0, 0))
-        .path("/")
+        .clock(clock_at(2026, 11, 30, 23, 30, 0))
+        .path("/2026/54")
         .launch();
-    assert_eq!(h.js(target), "/2026");
-
-    // The invalid week page links to the current ISO year of the clock (2026 on the default clock).
-    let h = Harness::start("", 1280);
-    h.goto_page("/2025/53");
+    h.set_browser_timezone("America/Los_Angeles");
+    h.goto_page("/2026/54");
     assert_eq!(h.status(), 404);
-    assert_eq!(h.texts("a.nav-link"), ["This week", "All weeks"]);
+    assert_eq!(h.cal_heading(), "December 2026");
+    assert_eq!(h.cal_today_cells(), ["1"]);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_rows_link_to_canonical_week_paths() {
+    let h = Opts::new().launch();
+    h.goto_page("/2026/1");
+    assert_eq!(h.cal_heading(), "January 2026");
+    let rows = h.cal_rows();
+    assert_eq!(row_hrefs(&rows), expected_month_hrefs(2026, 1));
+    // The row with December 29, 2025 is ISO 2026-W1.
+    assert_eq!(rows[0][0], "/2026/1");
+    assert_eq!(rows[0][4][1], "29");
+
+    h.goto_page("/2026/44");
+    assert_eq!(h.cal_heading(), "October 2026");
+    assert_eq!(row_hrefs(&h.cal_rows()), expected_month_hrefs(2026, 10));
+    // Each row shows its week number and seven dates, in the expected layout.
+    let rows = h.cal_rows();
+    assert_eq!(rows.len(), 5);
     assert_eq!(
-        h.js("document.querySelectorAll('a.nav-link')[1].getAttribute('href')"),
-        "/2026"
+        rows[4][4],
+        serde_json::json!(["44", "26", "27", "28", "29", "30", "31", "1"])
     );
-    h.click("a.nav-link[href='/2026']");
-    h.wait_page("/2026");
-    assert_eq!(h.text(".title"), "Meal Plan: 2026");
+
+    // December 2020, then January 2021, whose first row is ISO 2020-W53.
+    h.goto_page("/2020/53");
+    // Its Thursday is December 31, 2020.
+    assert_eq!(h.cal_heading(), "December 2020");
+    assert_eq!(row_hrefs(&h.cal_rows()), expected_month_hrefs(2020, 12));
+    h.cal_click("Next month");
+    assert_eq!(h.cal_heading(), "January 2021");
+    let rows = h.cal_rows();
+    assert_eq!(row_hrefs(&rows), expected_month_hrefs(2021, 1));
+    assert_eq!(rows[0][0], "/2020/53");
+    assert_eq!(rows[0][4][5], "1");
+
+    // An unplanned row opens the missing-plan page; a planned row opens its plan.
+    h.goto_page("/2026/44");
+    h.cal_click("Next month");
+    h.click("#calendar a[href='/2026/46']");
+    h.wait_page("/2026/46");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    h.goto_page("/2026/45");
+    h.cal_click("Previous month");
+    h.click("#calendar a[href='/2026/44']");
+    h.wait_page("/2026/44");
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_marks_planned_weeks_and_the_displayed_week() {
+    let sql = bare_weeks(&[(2026, 46), (2026, 1)]);
+    let h = Opts::new().sql(&sql).launch();
+    let marked = |h: &Harness| -> Vec<String> {
+        let v = h.js("[...document.querySelectorAll('#calendar .cal-planned')].map(r => r.querySelector('.cal-wk').textContent)");
+        serde_json::from_value(v).unwrap()
+    };
+    let current = |h: &Harness| -> Vec<String> {
+        let v = h.js("[...document.querySelectorAll('#calendar [aria-current]')].map(r => r.getAttribute('aria-current') + ':' + r.querySelector('.cal-wk').textContent)");
+        serde_json::from_value(v).unwrap()
+    };
+    assert_eq!(marked(&h), ["44"]);
+    assert_eq!(current(&h), ["page:44"]);
+    // The mark is visible, also on the highlighted row.
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('.cal-planned .cal-dot')).backgroundColor !== 'rgba(0, 0, 0, 0)'"),
+        true
+    );
+    h.cal_click("Next month");
+    assert_eq!(h.cal_heading(), "November 2026");
+    assert_eq!(marked(&h), ["44", "46"]);
+    assert_eq!(current(&h), ["page:44"]);
+    let labels: Vec<String> = h
+        .cal_rows()
+        .iter()
+        .take(3)
+        .map(|r| r[1].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "Week 44, October 26–November 1, 2026, planned",
+            "Week 45, November 2–8, 2026",
+            "Week 46, November 9–15, 2026, planned"
+        ]
+    );
+    // The highlighted row uses the selected-button gradient.
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('#calendar [aria-current]')).backgroundImage.includes('linear-gradient')"),
+        true
+    );
+
+    h.goto_page("/2026/1");
+    assert_eq!(
+        h.cal_rows()[0][1],
+        "Week 1, December 29, 2025–January 4, 2026, planned"
+    );
+    assert_eq!(marked(&h), ["1"]);
+
+    // Today follows the server clock (Berlin Dec 2), not the browser (Kiritimati: Dec 3).
+    let h = Opts::new()
+        .clock(clock_at(2026, 12, 2, 10, 30, 0))
+        .path("/2026/49")
+        .launch();
+    h.set_browser_timezone("Pacific/Kiritimati");
+    h.goto_page("/2026/49");
+    assert_eq!(h.cal_heading(), "December 2026");
+    assert_eq!(h.cal_today_cells(), ["2"]);
+    h.cal_click("Previous month");
+    assert_eq!(h.cal_heading(), "November 2026");
+    assert_eq!(h.cal_today_cells(), ["2 out"]);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_month_navigation_is_local() {
+    let h = Opts::new().launch();
+    // A non-Monday day and the Prep tab, selected before navigating.
+    h.select_day(3);
+    h.select_tab(1);
+    let urls = h.requested_urls();
+    let href = h.js("location.href");
+    let state = || {
+        h.js("[...document.querySelectorAll('.tab-button')].map(b => b.getAttribute('aria-pressed'))")
+    };
+    let tabs = state();
+    h.cal_click("Previous month");
+    h.cal_click("Previous month");
+    assert_eq!(h.cal_heading(), "August 2026");
+    // No row of August 2026 is the displayed week.
+    assert_eq!(
+        h.js("document.querySelectorAll('#calendar [aria-current]').length"),
+        0
+    );
+    // Keyboard: focus the next button and press Enter and Space.
+    h.js("document.querySelector(\"#calendar button[aria-label='Next month']\").focus()");
+    h.press("Enter");
+    h.press(" ");
+    assert_eq!(h.cal_heading(), "October 2026");
+    h.cal_click("Next month");
+    assert_eq!(h.cal_heading(), "November 2026");
+    assert_eq!(
+        h.js("document.querySelectorAll('#calendar [aria-current]').length"),
+        1
+    );
+    h.cal_click("Previous month");
+    assert_eq!(h.cal_heading(), "October 2026");
+    assert_eq!(
+        h.js("document.querySelector('#calendar [aria-current]').getAttribute('href')"),
+        "/2026/44"
+    );
+
+    assert_eq!(h.requested_urls(), urls);
+    assert_eq!(h.js("location.href"), href);
+    assert_eq!(state(), tabs);
+    h.select_tab(0);
+    assert_eq!(
+        h.pressed(),
+        vec![false, false, false, true, false, false, false]
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_range_limits() {
+    let h = Opts::new().path("/0001/1").launch();
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.cal_heading(), "January 0001");
+    assert_eq!(
+        h.js("document.querySelector(\"#calendar button[aria-label='Previous month']\").disabled"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelector(\"#calendar button[aria-label='Next month']\").disabled"),
+        false
+    );
+    let rows = h.cal_rows();
+    assert_eq!(rows[0][0], "/0001/1");
+    assert_eq!(rows[0][1], "Week 1, January 1–7, 0001");
+    h.js("document.querySelector(\"#calendar button[aria-label='Previous month']\").click()");
+    assert_eq!(h.cal_heading(), "January 0001");
+    assert_eq!(h.pathname(), "/0001/1");
+
+    h.goto_page("/9999/51");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.cal_heading(), "December 9999");
+    assert_eq!(
+        h.js("document.querySelector(\"#calendar button[aria-label='Next month']\").disabled"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelector(\"#calendar button[aria-label='Previous month']\").disabled"),
+        false
+    );
+    let rows = h.cal_rows();
+    let (last, others) = rows.split_last().unwrap();
+    assert_eq!(rows.len(), 5);
+    assert!(last[0].is_null() && last[1].is_null());
+    assert_eq!(
+        last[4],
+        serde_json::json!(["52", "27", "28", "29", "30", "31", "1", "2"])
+    );
+    assert_eq!(
+        h.js("document.querySelector('#calendar div.cal-row').tagName"),
+        "DIV"
+    );
+    for r in others {
+        assert!(r[0].is_string(), "{r}");
+    }
+    assert_eq!(others.last().unwrap()[0], "/9999/51");
+    h.js("document.querySelector(\"#calendar button[aria-label='Next month']\").click()");
+    assert_eq!(h.cal_heading(), "December 9999");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_reflects_committed_weeks_on_reload() {
+    let h = Opts::new().launch();
+    assert_eq!(
+        h.js("[...document.querySelectorAll('#calendar .cal-planned')].map(r => r.getAttribute('href'))"),
+        serde_json::json!(["/2026/44"])
+    );
+    h.exec(&bare_weeks(&[(2026, 43)]));
+    h.goto_page("/2026/44");
+    assert_eq!(
+        h.js("[...document.querySelectorAll('#calendar .cal-planned')].map(r => r.getAttribute('href'))"),
+        serde_json::json!(["/2026/43", "/2026/44"])
+    );
+}
+
+/// The calendar sidebar beside the 540 px column, centred as a group, without a toggle.
+fn assert_sidebar_layout(width: u32) {
+    let h = Opts::new().width(width).launch();
+    assert_eq!(h.js("window.innerWidth"), width);
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('#calendar')).display"),
+        "block"
+    );
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('.calendar-toggle')).display"),
+        "none"
+    );
+    assert_eq!(
+        h.js("document.querySelector('.app').getBoundingClientRect().width"),
+        540
+    );
+    assert_eq!(
+        h.js("document.querySelector('#calendar').getBoundingClientRect().right <= document.querySelector('.app').getBoundingClientRect().left"),
+        true
+    );
+    assert_eq!(
+        h.js("Math.abs(document.querySelector('#calendar').getBoundingClientRect().left - (window.innerWidth - document.querySelector('.app').getBoundingClientRect().right)) <= 1"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelector('#calendar').getBoundingClientRect().left >= 0"),
+        true
+    );
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_is_a_sidebar_at_1280px() {
+    assert_sidebar_layout(1280);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_is_a_sidebar_at_900px() {
+    assert_sidebar_layout(900);
+}
+
+impl Harness {
+    fn calendar_shown(&self) -> bool {
+        self.js("getComputedStyle(document.querySelector('#calendar')).display !== 'none'")
+            .as_bool()
+            .unwrap()
+    }
+
+    fn expanded(&self) -> String {
+        self.js("document.querySelector('.calendar-toggle').getAttribute('aria-expanded')")
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// Open and close once with the pointer, asserting `aria-expanded` and that the page still fits.
+    fn toggle_once(&self) {
+        assert!(!self.calendar_shown());
+        assert_eq!(self.expanded(), "false");
+        self.click(".calendar-toggle");
+        self.wait_for("document.querySelector('#calendar').offsetParent !== null");
+        assert_eq!(self.expanded(), "true");
+        assert_eq!(
+            self.js("document.documentElement.scrollWidth <= window.innerWidth"),
+            true
+        );
+        self.click(".calendar-toggle");
+        self.wait_for("document.querySelector('#calendar').offsetParent === null");
+        assert_eq!(self.expanded(), "false");
+    }
+}
+
+fn assert_toggle_layout(width: u32) {
+    let h = Opts::new().width(width).launch();
+    assert!(!h.calendar_shown());
+    assert_eq!(h.expanded(), "false");
+    assert_eq!(
+        h.js("document.querySelector('.calendar-toggle').getAttribute('aria-controls')"),
+        "calendar"
+    );
+    assert_eq!(h.text(".calendar-toggle"), "Calendar");
+    assert_eq!(
+        h.js("document.querySelectorAll('.header .header-meta > .calendar-toggle').length"),
+        1
+    );
+    // Right-aligned in the header row.
+    assert_eq!(
+        h.js("Math.abs(document.querySelector('.calendar-toggle').getBoundingClientRect().right - document.querySelector('.header').getBoundingClientRect().right) < 1"),
+        true
+    );
+    let style = "(() => { const s = getComputedStyle(document.querySelector(SEL)); return [s.fontSize, s.color, s.fontFamily, s.fontWeight, s.textDecorationLine]; })()";
+    let toggle = h.js(&style.replace("SEL", "'.calendar-toggle'"));
+
+    // Opens between the header and the tabs; closes again.
+    h.click(".calendar-toggle");
+    h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+    assert_eq!(h.expanded(), "true");
+    assert_eq!(
+        h.js("document.querySelector('#calendar').getBoundingClientRect().top >= document.querySelector('.header').getBoundingClientRect().bottom"),
+        true
+    );
+    assert_eq!(
+        h.js("document.querySelector('#calendar').getBoundingClientRect().bottom <= document.querySelector('.tabs').getBoundingClientRect().top"),
+        true
+    );
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
+    h.click(".calendar-toggle");
+    h.wait_for("document.querySelector('#calendar').offsetParent === null");
+    assert_eq!(h.expanded(), "false");
+
+    // Enter on the focused button toggles too, and a reload starts closed.
+    h.js("document.querySelector('.calendar-toggle').focus()");
+    h.press("Enter");
+    h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+    assert_eq!(h.expanded(), "true");
+    h.goto("/2026/44");
+    assert!(!h.calendar_shown());
+    assert_eq!(h.expanded(), "false");
+
+    // Same look as the year page's links.
+    h.goto_page("/2026");
+    let link = h.js(&style.replace("SEL", "'a.all-weeks'"));
+    assert_eq!(toggle, link);
+
+    // The missing-plan and invalid pages toggle too, and fit when open.
+    h.goto_page("/2026/45");
+    h.toggle_once();
+    h.goto_page("/2026/54");
+    h.toggle_once();
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_toggle_at_899px() {
+    assert_toggle_layout(899);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn calendar_toggle_at_375px() {
+    assert_toggle_layout(375);
 }
 
 #[test]
@@ -788,7 +1229,7 @@ fn past_week_selects_monday_and_keeps_url() {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn missing_week_pages_link_to_archive_only() {
+fn missing_week_pages_have_the_calendar_and_no_links() {
     let h = Harness::start("", 1280);
 
     // Explicit missing week, across an ISO year boundary: 404 with the full range and years.
@@ -802,15 +1243,8 @@ fn missing_week_pages_link_to_archive_only() {
         0
     );
     assert_eq!(h.js("document.querySelectorAll('a.nav-link').length"), 0);
-    assert_eq!(h.text("a.all-weeks"), "All weeks");
-    assert_eq!(
-        h.js("document.querySelector('a.all-weeks').getAttribute('href')"),
-        "/2026"
-    );
-    assert_eq!(
-        h.js("document.querySelector('.header a.all-weeks').getBoundingClientRect().top < document.querySelector('.empty').getBoundingClientRect().top"),
-        true
-    );
+    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
+    assert_eq!(h.cal_heading(), "December 2026");
 
     // `/` with the current week (W49: Nov 30 - Dec 6) not stored is a 200 and stays at `/`.
     h.goto_page("/");
@@ -822,12 +1256,8 @@ fn missing_week_pages_link_to_archive_only() {
         h.js("document.querySelectorAll('.week-list, .week-link').length"),
         0
     );
-
-    // The "All weeks" link goes to the year page.
-    h.click("a.all-weeks");
-    h.wait_page("/2026");
-    assert_eq!(h.text(".title"), "Meal Plan: 2026");
-    assert_eq!(h.texts(".week-link-title"), ["Week 44 · 2026"]);
+    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
+    assert_eq!(h.cal_heading(), "December 2026");
 }
 
 #[test]
@@ -835,19 +1265,18 @@ fn missing_week_pages_link_to_archive_only() {
 fn empty_database_pages() {
     let h = Opts::new().db(Db::Empty).path("/").launch();
     assert_eq!(h.status(), 200);
-    // "All weeks" from the empty current week lands on the (200) current year page.
-    h.click("a.all-weeks");
-    h.wait_page("/2026");
+    // Missing page without any stored weeks: the message and a calendar without planned weeks.
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    assert_eq!(h.js("document.querySelectorAll('.week-list').length"), 0);
+    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
+    assert_eq!(h.cal_heading(), "December 2026");
+    assert_eq!(h.js("document.querySelectorAll('.cal-planned').length"), 0);
+    // The current year page is a 200 without plans.
+    h.goto_page("/2026");
     assert_eq!(h.status(), 200);
     assert_eq!(h.texts(".empty"), ["No meal plans available yet."]);
     assert_eq!(h.js("document.querySelectorAll('.week-link').length"), 0);
     assert_eq!(h.texts("a.all-weeks"), ["This week"]);
-    h.click("a.all-weeks");
-    h.wait_page("/");
-    // Missing page without any stored weeks: just the message, no list.
-    assert_eq!(h.status(), 200);
-    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
-    assert_eq!(h.js("document.querySelectorAll('.week-list').length"), 0);
 }
 
 #[test]
@@ -857,10 +1286,8 @@ fn invalid_week_page_and_zero_padded_redirect() {
     h.goto_page("/2025/53");
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["Invalid week."]);
-    assert_eq!(h.texts("a.nav-link"), ["This week", "All weeks"]);
-    h.click("a.nav-link[href='/2026']");
-    h.wait_page("/2026");
-    assert_eq!(h.text(".title"), "Meal Plan: 2026");
+    assert_eq!(h.texts("a.nav-link"), ["This week"]);
+    assert_eq!(h.text(".title"), "Meal Plan");
 
     h.goto_page("/2025/53");
     h.click("a.nav-link[href='/']");
@@ -963,8 +1390,14 @@ fn list_pages_fit_375px() {
         h.js("document.documentElement.scrollWidth <= window.innerWidth"),
         true
     );
-    // The plan page with the "All weeks" link also fits.
+    // The plan page fits closed and open.
     h.goto("/2026/44");
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
+    h.click(".calendar-toggle");
+    h.wait_for("document.querySelector('#calendar').offsetParent !== null");
     assert_eq!(
         h.js("document.documentElement.scrollWidth <= window.innerWidth"),
         true
@@ -1985,7 +2418,7 @@ fn weekly_text_renders_literally() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn tabs_work_by_keyboard() {
     let h = Harness::start("", 1280);
-    h.js("document.querySelector('.all-weeks').focus()");
+    h.js("document.querySelector('#calendar a:last-of-type').focus()");
     h.press("Tab");
     assert_eq!(
         h.js("document.activeElement === document.querySelectorAll('.tab-button')[0]"),
@@ -2255,6 +2688,31 @@ fn visual_capture(w: u32) {
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["Invalid week."]);
     h.capture(w, "invalid-week");
+    if w < 900 {
+        h.click(".calendar-toggle");
+        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+        h.capture(w, "invalid-week-calendar-open");
+    }
+
+    // The calendar beside the plan page: closed and open at phone width, always shown at desktop width.
+    let sql = bare_weeks(&[(2026, 43), (2026, 46)]);
+    let h = Opts::new().width(w).sql(&sql).launch();
+    assert_eq!(h.cal_heading(), "October 2026");
+    if w < 900 {
+        h.capture(w, "calendar-closed");
+        h.click(".calendar-toggle");
+        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+        h.capture(w, "calendar-open");
+    } else {
+        h.capture(w, "calendar");
+    }
+    h.goto_page("/2026/45");
+    assert_eq!(h.status(), 404);
+    if w < 900 {
+        h.click(".calendar-toggle");
+        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+    }
+    h.capture(w, "missing-week-calendar");
 
     let h = Opts::new().width(w).db(Db::ClosedPool).path("/").launch();
     assert_eq!(h.status(), 503);

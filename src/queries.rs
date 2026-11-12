@@ -1,9 +1,9 @@
 //! Application queries.
 use crate::calendar::{iso_week_of, week_dates, week_path};
 use crate::model::{
-    Day, Meal, MealHit, MealPage, MealRecord, PrepSession, PrepTask, Reminder, RevisedWeek,
-    ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek, StrategyCard,
-    StrategyItem, Week, WeekDocument, WeekPage, WeekSummary, YearListing,
+    Day, Meal, MealHit, MealPage, MealRecord, PlannedWeek, PrepSession, PrepTask, Reminder,
+    RevisedWeek, ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek,
+    StrategyCard, StrategyItem, Week, WeekDocument, WeekPage, WeekSummary, YearListing,
 };
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
@@ -604,6 +604,56 @@ pub async fn load_week_with_pause(
     let document = load_week_paused(&mut tx, iso_year, iso_week, pause).await?;
     tx.commit().await?;
     Ok(document)
+}
+
+/// Every stored week, ascending by (iso_year, iso_week).
+pub async fn planned_weeks_in(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<PlannedWeek>, sqlx::Error> {
+    let rows = sqlx::query("SELECT iso_year, iso_week FROM weeks ORDER BY iso_year, iso_week")
+        .fetch_all(&mut *conn)
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|row| PlannedWeek {
+            iso_year: row.get("iso_year"),
+            iso_week: row.get("iso_week"),
+        })
+        .collect())
+}
+
+/// Every stored week, in its own read transaction (for the invalid week page).
+pub async fn planned_weeks(pool: &SqlitePool) -> Result<Vec<PlannedWeek>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let weeks = planned_weeks_in(&mut tx).await?;
+    tx.commit().await?;
+    Ok(weeks)
+}
+
+/// The week's document (`None` if no `weeks` row) and `plannedWeeks`, from one read transaction.
+pub async fn load_week_page(
+    pool: &SqlitePool,
+    iso_year: i32,
+    iso_week: u32,
+) -> Result<(Option<WeekDocument>, Vec<PlannedWeek>), sqlx::Error> {
+    load_week_page_with_pause(pool, iso_year, iso_week, std::future::ready(())).await
+}
+
+/// Test seam for snapshot tests: `pause` is awaited after the week document has been read (the read snapshot
+/// is open) and before `plannedWeeks` is read.
+#[doc(hidden)]
+pub async fn load_week_page_with_pause(
+    pool: &SqlitePool,
+    iso_year: i32,
+    iso_week: u32,
+    pause: impl std::future::Future<Output = ()>,
+) -> Result<(Option<WeekDocument>, Vec<PlannedWeek>), sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let document = load_week_in(&mut tx, iso_year, iso_week).await?;
+    pause.await;
+    let weeks = planned_weeks_in(&mut tx).await?;
+    tx.commit().await?;
+    Ok((document, weeks))
 }
 
 async fn load_week_paused(

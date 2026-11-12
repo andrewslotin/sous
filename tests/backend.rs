@@ -123,6 +123,10 @@ async fn insert_weeks(t: &TestDb, weeks: &[(i32, i32)]) {
     }
 }
 
+fn planned(y: i64, w: i64) -> Value {
+    json!({"isoYear": y, "isoWeek": w})
+}
+
 fn summary(y: i64, w: i64, start: &str, end: &str, path: &str) -> Value {
     json!({"isoYear": y, "isoWeek": w, "startDate": start, "endDate": end, "path": path})
 }
@@ -343,7 +347,8 @@ async fn http_503_when_database_unavailable() {
     closed.close().await;
 
     for pool in [&tableless, &closed] {
-        for uri in ["/", "/2026/44", "/2026/45", "/2026"] {
+        // `/2026/54` and `/%FF/1` are invalid weeks: their page reads `plannedWeeks`, so they fail too.
+        for uri in ["/", "/2026/44", "/2026/45", "/2026", "/2026/54", "/%FF/1"] {
             let (s, h, body) = get(pool, uri).await;
             assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
             assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
@@ -495,6 +500,8 @@ async fn root_missing_current_week_is_200_with_summary() {
         page_json(&body),
         json!({
             "kind": "missing",
+            "today": "2026-12-02",
+            "plannedWeeks": [planned(2026, 44)],
             "week": summary(2026, 49, "2026-11-30", "2026-12-06", "/2026/49"),
         })
     );
@@ -536,6 +543,8 @@ async fn explicit_missing_week_is_404_without_weeks() {
         page_json(&body),
         json!({
             "kind": "missing",
+            "today": "2026-12-02",
+            "plannedWeeks": [planned(2026, 44), planned(2026, 53)],
             "week": summary(2026, 45, "2026-11-02", "2026-11-08", "/2026/45"),
         })
     );
@@ -581,7 +590,7 @@ async fn invalid_paths_are_404_invalid_and_never_500() {
         assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
         assert_eq!(
             page_json(&body),
-            json!({"kind": "invalid", "currentYear": 2026}),
+            json!({"kind": "invalid", "today": "2026-12-02", "plannedWeeks": [planned(2026, 44)]}),
             "{uri}"
         );
         assert_eq!(title(&body), "Invalid week — Meal Plan", "{uri}");
@@ -646,8 +655,214 @@ async fn root_does_not_panic_when_current_week_is_unrepresentable() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(
         page_json(&body),
-        json!({"kind": "invalid", "currentYear": 9999})
+        json!({"kind": "invalid", "today": "9999-12-31", "plannedWeeks": [planned(2026, 44)]})
     );
+}
+
+#[tokio::test]
+async fn page_today_follows_the_service_timezone_around_midnight() {
+    use chrono::TimeZone;
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    // Berlin is UTC+1 on November 1, 2026: 22:59:59Z is still Sunday, 23:00:00Z is Monday.
+    for (clock, today) in [
+        (berlin(2026, 11, 1, 22, 59, 59), "2026-11-01"),
+        (berlin(2026, 11, 1, 23, 0, 0), "2026-11-02"),
+        (
+            Clock::fixed(
+                chrono_tz::America::New_York,
+                chrono::Utc
+                    .with_ymd_and_hms(2026, 11, 1, 22, 59, 59)
+                    .unwrap(),
+            ),
+            "2026-11-01",
+        ),
+        (
+            Clock::fixed(
+                chrono_tz::America::New_York,
+                chrono::Utc.with_ymd_and_hms(2026, 11, 1, 23, 0, 0).unwrap(),
+            ),
+            "2026-11-01",
+        ),
+    ] {
+        // `/` is the stored W44 or the missing W45; the others are an explicit week, a missing week
+        // and an invalid week.
+        for (uri, kind) in [
+            ("/", ["week", "missing"].as_slice()),
+            ("/2026/44", ["week"].as_slice()),
+            ("/2026/45", ["missing"].as_slice()),
+            ("/2026/54", ["invalid"].as_slice()),
+        ] {
+            let (_, _, body) = get_at(&pool, clock.clone(), uri).await;
+            let page = page_json(&body);
+            assert!(kind.contains(&page["kind"].as_str().unwrap()), "{uri}");
+            assert_eq!(page["today"], today, "{uri}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn today_is_zero_padded_to_four_digits() {
+    let t = TestDb::migrated().await;
+    let pool = t.reader().await;
+    let (_, _, body) = get_at(&pool, berlin(1, 1, 4, 12, 0, 0), "/").await;
+    let page = page_json(&body);
+    assert_eq!(page["kind"], "missing");
+    assert_eq!(page["today"], "0001-01-04");
+    assert_eq!(page["week"]["path"], "/0001/1");
+}
+
+#[tokio::test]
+async fn planned_weeks_are_ascending_and_the_same_on_every_page_kind() {
+    let t = TestDb::with_fixture().await;
+    insert_weeks(&t, &[(2027, 1), (2020, 53), (2026, 1), (2025, 52)]).await;
+    let pool = t.reader().await;
+    let expected = json!([
+        planned(2020, 53),
+        planned(2025, 52),
+        planned(2026, 1),
+        planned(2026, 44),
+        planned(2027, 1),
+    ]);
+    for (uri, kind) in [
+        ("/2026/44", "week"),
+        ("/2026/45", "missing"),
+        ("/", "missing"),
+        ("/2026/54", "invalid"),
+        ("/%FF/1", "invalid"),
+    ] {
+        let (_, _, body) = get(&pool, uri).await;
+        let page = page_json(&body);
+        assert_eq!(page["kind"], kind, "{uri}");
+        assert_eq!(page["plannedWeeks"], expected, "{uri}");
+    }
+    // The key order puts `today` and `plannedWeeks` right after `kind`.
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    assert!(body.contains(
+        "{\"kind\":\"week\",\"today\":\"2026-12-02\",\"plannedWeeks\":[{\"isoYear\":2020,\"isoWeek\":53}"
+    ));
+}
+
+#[tokio::test]
+async fn empty_database_pages_have_no_planned_weeks() {
+    let t = TestDb::migrated().await;
+    let pool = t.reader().await;
+    for (uri, status, expected) in [
+        (
+            "/",
+            StatusCode::OK,
+            json!({
+                "kind": "missing",
+                "today": "2026-12-02",
+                "plannedWeeks": [],
+                "week": summary(2026, 49, "2026-11-30", "2026-12-06", "/2026/49"),
+            }),
+        ),
+        (
+            "/2026/45",
+            StatusCode::NOT_FOUND,
+            json!({
+                "kind": "missing",
+                "today": "2026-12-02",
+                "plannedWeeks": [],
+                "week": summary(2026, 45, "2026-11-02", "2026-11-08", "/2026/45"),
+            }),
+        ),
+        (
+            "/2026/54",
+            StatusCode::NOT_FOUND,
+            json!({"kind": "invalid", "today": "2026-12-02", "plannedWeeks": []}),
+        ),
+    ] {
+        let (s, _, body) = get(&pool, uri).await;
+        assert_eq!(s, status, "{uri}");
+        assert_eq!(page_json(&body), expected, "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn embedded_document_equals_the_api_body() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    let page = page_json(&body);
+    let (s, _, api_body) = get(&pool, "/api/2026/44").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(
+        page["document"],
+        serde_json::from_str::<Value>(&api_body).unwrap()
+    );
+    assert!(page["document"].get("today").is_none());
+    assert!(page["document"].get("plannedWeeks").is_none());
+}
+
+#[tokio::test]
+async fn planned_weeks_are_read_fresh_on_every_request() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let planned_in = |body: &str| page_json(body)["plannedWeeks"].clone();
+
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    assert_eq!(planned_in(&body), json!([planned(2026, 44)]));
+
+    insert_weeks(&t, &[(2026, 46)]).await;
+    for uri in ["/2026/44", "/2026/45", "/2026/54"] {
+        let (_, _, body) = get(&pool, uri).await;
+        assert_eq!(
+            planned_in(&body),
+            json!([planned(2026, 44), planned(2026, 46)]),
+            "{uri}"
+        );
+    }
+
+    let mut c = t.writer().await;
+    exec(&mut c, "DELETE FROM weeks WHERE iso_week = 46")
+        .await
+        .unwrap();
+    for uri in ["/2026/44", "/2026/45", "/2026/54"] {
+        let (_, _, body) = get(&pool, uri).await;
+        assert_eq!(planned_in(&body), json!([planned(2026, 44)]), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn week_and_planned_weeks_come_from_one_snapshot() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let mut writer = t.writer().await;
+
+    // The week document is read and the snapshot is open; another connection commits a new week.
+    let pause = async {
+        exec(&mut writer, &week_sql(&uuid(900), 2026, 46))
+            .await
+            .unwrap();
+    };
+    let (document, planned_weeks) = queries::load_week_page_with_pause(&pool, 2026, 44, pause)
+        .await
+        .unwrap();
+    assert!(document.is_some());
+    assert_eq!(
+        serde_json::to_value(&planned_weeks).unwrap(),
+        json!([planned(2026, 44)])
+    );
+
+    let (document, planned_weeks) = queries::load_week_page(&pool, 2026, 44).await.unwrap();
+    assert!(document.is_some());
+    assert_eq!(
+        serde_json::to_value(&planned_weeks).unwrap(),
+        json!([planned(2026, 44), planned(2026, 46)])
+    );
+}
+
+#[tokio::test]
+async fn year_pages_have_no_calendar_data() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let (_, _, body) = get(&pool, "/2026").await;
+    let page = page_json(&body);
+    assert_eq!(page["kind"], "year");
+    assert!(page.get("today").is_none());
+    assert!(page.get("plannedWeeks").is_none());
 }
 
 #[tokio::test]
@@ -719,7 +934,7 @@ async fn year_title_is_not_zero_padded() {
 }
 
 #[tokio::test]
-async fn all_weeks_target_year_is_in_the_page_payload() {
+async fn pages_carry_their_own_iso_week_year_and_the_clock_date() {
     let t = TestDb::with_fixture().await;
     insert_weeks(&t, &[(2025, 50)]).await;
     let pool = t.reader().await;
@@ -736,19 +951,23 @@ async fn all_weeks_target_year_is_in_the_page_payload() {
     assert_eq!(page["kind"], "missing");
     assert_eq!(page["week"]["isoYear"], 2026);
 
-    // Invalid week pages carry the ISO week-year of the clock, on both sides of New Year.
-    for (clock, current_year) in [
-        (berlin(2025, 12, 28, 21, 59, 59), 2025),
-        (berlin(2025, 12, 28, 22, 59, 59), 2025),
-        (berlin(2025, 12, 28, 23, 0, 0), 2026),
-        (berlin(2027, 1, 3, 12, 0, 0), 2026),
-        (berlin(2027, 1, 4, 12, 0, 0), 2027),
+    // Invalid week pages carry the clock's date in the service timezone, on both sides of New Year.
+    for (clock, today) in [
+        (berlin(2025, 12, 28, 21, 59, 59), "2025-12-28"),
+        (berlin(2025, 12, 28, 22, 59, 59), "2025-12-28"),
+        (berlin(2025, 12, 28, 23, 0, 0), "2025-12-29"),
+        (berlin(2027, 1, 3, 12, 0, 0), "2027-01-03"),
+        (berlin(2027, 1, 4, 12, 0, 0), "2027-01-04"),
     ] {
         let (s, _, body) = get_at(&pool, clock, "/2025/53").await;
         assert_eq!(s, StatusCode::NOT_FOUND);
         assert_eq!(
             page_json(&body),
-            json!({"kind": "invalid", "currentYear": current_year})
+            json!({
+                "kind": "invalid",
+                "today": today,
+                "plannedWeeks": [planned(2025, 50), planned(2026, 44)],
+            })
         );
     }
 }

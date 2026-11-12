@@ -116,12 +116,23 @@ fn unavailable(error: &sqlx::Error) -> Response {
     )
 }
 
-fn invalid(today: NaiveDate) -> Response {
+/// `YYYY-MM-DD` for the page data's `today`.
+fn today_string(today: NaiveDate) -> String {
+    today.format("%Y-%m-%d").to_string()
+}
+
+/// The invalid week page; a failed `plannedWeeks` read is the database failure page.
+async fn invalid(state: &AppState, today: NaiveDate) -> Response {
+    let planned_weeks = match queries::planned_weeks(&state.pool).await {
+        Ok(planned_weeks) => planned_weeks,
+        Err(error) => return unavailable(&error),
+    };
     page_response(
         StatusCode::NOT_FOUND,
         "Invalid week — Meal Plan",
         &Page::Invalid {
-            current_year: calendar::iso_week_of(today).0,
+            today: today_string(today),
+            planned_weeks,
         },
     )
 }
@@ -137,10 +148,11 @@ async fn show_week(
 ) -> Response {
     let title = format!("Meal Plan — {iso_year} week {iso_week}");
 
-    let document = match queries::load_week(&state.pool, iso_year, iso_week).await {
-        Ok(document) => document,
-        Err(error) => return unavailable(&error),
-    };
+    let (document, planned_weeks) =
+        match queries::load_week_page(&state.pool, iso_year, iso_week).await {
+            Ok(loaded) => loaded,
+            Err(error) => return unavailable(&error),
+        };
     if let Some(document) = document {
         let selected_weekday = if calendar::iso_week_of(today) == (iso_year, iso_week) {
             today.weekday().number_from_monday()
@@ -151,6 +163,8 @@ async fn show_week(
             StatusCode::OK,
             &title,
             &Page::Week {
+                today: today_string(today),
+                planned_weeks,
                 selected_weekday,
                 document,
             },
@@ -158,9 +172,17 @@ async fn show_week(
     }
 
     let Some(week) = queries::week_summary(iso_year, iso_week) else {
-        return invalid(today);
+        return invalid(state, today).await;
     };
-    page_response(missing_status, &title, &Page::Missing { week })
+    page_response(
+        missing_status,
+        &title,
+        &Page::Missing {
+            today: today_string(today),
+            planned_weeks,
+            week,
+        },
+    )
 }
 
 async fn root_handler(State(state): State<AppState>) -> Response {
@@ -176,7 +198,7 @@ async fn week_handler(
     // Malformed percent-encoding is an invalid week, not a plain-text 400.
     let today = state.clock.today();
     let Ok(Path((year, week))) = path else {
-        return invalid(today);
+        return invalid(&state, today).await;
     };
     match calendar::classify_week_path(&year, &week) {
         WeekPath::Canonical(iso_year, iso_week) => {
@@ -185,7 +207,7 @@ async fn week_handler(
         WeekPath::Redirect(iso_year, iso_week) => {
             Redirect::permanent(&calendar::week_path(iso_year, iso_week)).into_response()
         }
-        WeekPath::Invalid => invalid(today),
+        WeekPath::Invalid => invalid(&state, today).await,
     }
 }
 
@@ -204,7 +226,7 @@ async fn year_handler(
         Ok(listing) => listing,
         Err(error) => return unavailable(&error),
     };
-    // A year without plans is a 404, except the current one: it is what "All weeks" links to.
+    // A year without plans is a 404, except the current one.
     let status = if listing.weeks.is_empty() && year != current_year {
         StatusCode::NOT_FOUND
     } else {

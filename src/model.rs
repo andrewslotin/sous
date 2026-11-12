@@ -168,6 +168,14 @@ pub struct YearListing {
     pub next_year: Option<i32>,
 }
 
+/// One stored week in the page data's `plannedWeeks`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlannedWeek {
+    pub iso_year: i32,
+    pub iso_week: u32,
+}
+
 /// Initial payload embedded in every HTML page; the frontend renders by `kind`.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -176,13 +184,20 @@ pub struct YearListing {
     rename_all_fields = "camelCase"
 )]
 pub enum Page {
-    /// A stored plan. `selected_weekday` is 1 (Monday) ..= 7, chosen by the server.
+    /// A stored plan. `selected_weekday` is 1 (Monday) ..= 7, chosen by the server. `today` is the server's
+    /// today in `APP_TIMEZONE` (`YYYY-MM-DD`); `planned_weeks` lists every stored week, ascending, for the calendar.
     Week {
+        today: String,
+        planned_weeks: Vec<PlannedWeek>,
         selected_weekday: u32,
         document: WeekDocument,
     },
     /// A valid week with no stored plan.
-    Missing { week: WeekSummary },
+    Missing {
+        today: String,
+        planned_weeks: Vec<PlannedWeek>,
+        week: WeekSummary,
+    },
     /// `/<year>`: stored plans of one ISO week-year, newest first, and the adjacent years that have plans.
     Year {
         year: i32,
@@ -190,8 +205,11 @@ pub enum Page {
         next_year: Option<i32>,
         weeks: Vec<WeekSummary>,
     },
-    /// Invalid year/week path. `current_year` is the ISO week-year of today, for the "All weeks" link.
-    Invalid { current_year: i32 },
+    /// Invalid year/week path.
+    Invalid {
+        today: String,
+        planned_weeks: Vec<PlannedWeek>,
+    },
     /// Database failure.
     Unavailable,
 }
