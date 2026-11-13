@@ -98,6 +98,8 @@ pub struct PrepSession {
     pub id: String,
     pub title: String,
     pub covers: Option<String>,
+    /// 1 (Monday) ..= 7, or null: shown on no day.
+    pub weekday: Option<u32>,
     /// By `prep_tasks.position`.
     pub tasks: Vec<PrepTask>,
 }
@@ -124,7 +126,7 @@ pub struct WeekSummary {
 }
 
 /// `schemaVersion` of the week document (page data, `/api/<year>/<week>`, `get_week`).
-pub const WEEK_SCHEMA_VERSION: u32 = 2;
+pub const WEEK_SCHEMA_VERSION: u32 = 3;
 
 /// `schemaVersion` of the year document (`/api/<year>`).
 pub const YEAR_SCHEMA_VERSION: u32 = 1;
@@ -160,6 +162,16 @@ pub struct PlannedWeek {
     pub iso_week: u32,
 }
 
+/// One date in the page data's `markedDays`.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkedDay {
+    /// `YYYY-MM-DD`.
+    pub date: String,
+    pub shopping: bool,
+    pub prep: bool,
+}
+
 /// Initial payload embedded in every HTML page; the frontend renders by `kind`.
 #[derive(Debug, Serialize)]
 #[serde(
@@ -168,18 +180,22 @@ pub struct PlannedWeek {
     rename_all_fields = "camelCase"
 )]
 pub enum Page {
-    /// A stored plan. `selected_weekday` is 1 (Monday) ..= 7, chosen by the server. `today` is the server's
-    /// today in `APP_TIMEZONE` (`YYYY-MM-DD`); `planned_weeks` lists every stored week, ascending, for the calendar.
+    /// A stored plan. `today` is the server's today in `APP_TIMEZONE` (`YYYY-MM-DD`); `planned_weeks` lists
+    /// every stored week, ascending, and `marked_days` every date with a shopping or prep mark, for the
+    /// calendar. `displayed_date` is the day the page shows (`YYYY-MM-DD`, inside the document's week).
     Week {
         today: String,
         planned_weeks: Vec<PlannedWeek>,
-        selected_weekday: u32,
+        marked_days: Vec<MarkedDay>,
+        displayed_date: String,
         document: WeekDocument,
     },
     /// A valid week with no stored plan.
     Missing {
         today: String,
         planned_weeks: Vec<PlannedWeek>,
+        marked_days: Vec<MarkedDay>,
+        displayed_date: String,
         week: WeekSummary,
     },
     /// `/<year>`: stored plans of one ISO week-year, newest first, and the adjacent years that have plans.
@@ -189,10 +205,19 @@ pub enum Page {
         next_year: Option<i32>,
         weeks: Vec<WeekSummary>,
     },
-    /// Invalid year/week path.
+    /// Invalid year/week path. `displayed_date` is always `None` (serialized as null).
     Invalid {
         today: String,
         planned_weeks: Vec<PlannedWeek>,
+        marked_days: Vec<MarkedDay>,
+        displayed_date: Option<String>,
+    },
+    /// Date-shaped segment that is not a valid date path. `displayed_date` is always `None`.
+    InvalidDate {
+        today: String,
+        planned_weeks: Vec<PlannedWeek>,
+        marked_days: Vec<MarkedDay>,
+        displayed_date: Option<String>,
     },
     /// Database failure.
     Unavailable,
@@ -319,6 +344,15 @@ pub struct ShoppingDay {
 /// Schema of a required field whose value may be an explicit `null`.
 pub(crate) fn nullable<T: JsonSchema>(generator: &mut SchemaGenerator) -> Schema {
     <Option<T>>::json_schema(generator)
+}
+
+/// Schema of a prep session's `weekday`: an integer 1–7 or null.
+fn weekday_schema(_: &mut SchemaGenerator) -> Schema {
+    schemars::json_schema!({
+        "type": ["integer", "null"],
+        "minimum": 1,
+        "maximum": 7
+    })
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -469,6 +503,10 @@ pub struct PrepSessionInput {
     #[serde(deserialize_with = "Option::deserialize")]
     #[schemars(required, schema_with = "nullable::<String>")]
     pub covers: Option<String>,
+    /// 1 (Monday) ..= 7 of the session's week, or null: the session is shown on no day.
+    #[serde(deserialize_with = "Option::deserialize")]
+    #[schemars(required, schema_with = "weekday_schema")]
+    pub weekday: Option<u32>,
     pub tasks: Vec<PrepTaskInput>,
 }
 

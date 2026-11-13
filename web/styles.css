@@ -48,19 +48,23 @@ button:focus-visible, a:focus-visible {
 .cal-head, .cal-row { display: grid; grid-template-columns: 34px repeat(7, 1fr); align-items: center; text-align: center; }
 .cal-head { padding: 0 4px; margin-bottom: 4px; font-size: 10px; font-weight: 600; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; }
 .cal-row {
-  padding: 6px 4px; border-radius: 8px; color: #1e293b; text-decoration: none;
-  font-size: 12px; font-family: 'JetBrains Mono', monospace;
+  padding: 2px 4px; color: #1e293b; font-size: 12px; font-family: 'JetBrains Mono', monospace;
 }
-a.cal-row:hover { background: #f1f5f9; }
-.cal-row[aria-current="page"] { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #f8fafc; }
 .cal-wk { position: relative; color: #64748b; }
-.cal-row[aria-current="page"] .cal-wk { color: #cbd5e1; }
 .cal-dot { position: absolute; left: 4px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: #16a34a; }
-.cal-row[aria-current="page"] .cal-dot { background: #4ade80; }
-.cal-cell { padding: 3px 0; }
+.cal-head .cal-cell { padding: 0; }
+.cal-cell { position: relative; display: block; padding: 5px 0 9px; border-radius: 6px; color: inherit; text-decoration: none; }
+a.cal-cell:hover { background: #f1f5f9; }
 .cal-out { color: #94a3b8; }
-.cal-today { font-weight: 700; border-radius: 6px; box-shadow: inset 0 0 0 1.5px #3b82f6; }
-.cal-row[aria-current="page"] .cal-today { box-shadow: inset 0 0 0 1.5px #60a5fa; }
+.cal-today { font-weight: 700; box-shadow: inset 0 0 0 1.5px #3b82f6; }
+.cal-selected, a.cal-selected:hover { background: linear-gradient(135deg, #1a1a2e, #16213e); color: #f8fafc; }
+.cal-selected.cal-today { box-shadow: inset 0 0 0 1.5px #60a5fa; }
+.cal-marks { position: absolute; left: 0; right: 0; bottom: 3px; display: flex; justify-content: center; gap: 3px; }
+.cal-mark { width: 5px; height: 5px; }
+.cal-mark-shopping { border-radius: 50%; background: #9d174d; }
+.cal-mark-prep { border-radius: 1px; background: #b45309; }
+.cal-selected .cal-mark-shopping { background: #fbb6ce; }
+.cal-selected .cal-mark-prep { background: #fde68a; }
 
 @media (min-width: 900px) {
   /* A 260 px sidebar and a 24 px gap, left of the 540 px column; shifting the column right by half of that
@@ -82,16 +86,18 @@ a.cal-row:hover { background: #f1f5f9; }
 .week-link-title { display: block; font-size: 15px; font-weight: 600; color: #1e293b; font-family: 'Source Serif 4', Georgia, serif; }
 .week-link-range { display: block; margin-top: 2px; font-size: 12px; color: #64748b; }
 
-.days { display: flex; gap: 6px; margin-bottom: 16px; overflow-x: auto; padding-bottom: 4px; }
-.day-button {
-  padding: 8px 14px; border-radius: 8px; border: none; background: #fff; color: #64748b;
-  font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+.day-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.day-heading {
+  flex: 1; min-width: 0; text-align: center; font-size: 17px; font-weight: 700; color: #1e293b;
+  font-family: 'Source Serif 4', Georgia, serif;
+}
+.day-step {
+  flex: none; display: flex; align-items: center; justify-content: center; width: 36px; height: 36px;
+  border-radius: 8px; background: #fff; color: #475569; font-size: 20px; line-height: 1; text-decoration: none;
   box-shadow: 0 1px 2px rgba(0,0,0,0.06);
 }
-.day-button[aria-pressed="true"] {
-  background: linear-gradient(135deg, #1a1a2e, #16213e); color: #f8fafc;
-  box-shadow: 0 2px 8px rgba(26,26,46,0.3);
-}
+a.day-step[href]:hover { background: #f1f5f9; color: #0f172a; }
+.day-step.is-disabled { color: #cbd5e1; box-shadow: none; cursor: default; }
 
 .summary {
   display: flex; gap: 16px; flex-wrap: wrap; padding: 14px 18px;
@@ -128,7 +134,7 @@ a.cal-row:hover { background: #f1f5f9; }
   display: block; width: 100%; padding: 14px 16px; border: none; background: none; border-radius: 10px;
   text-align: left; font: inherit; color: inherit; cursor: pointer;
 }
-.meal-toggle:focus-visible, .day-button:focus-visible, a:focus-visible { outline-offset: -2px; }
+.meal-toggle:focus-visible, a:focus-visible { outline-offset: -2px; }
 .meal.is-open .meal-toggle { padding-bottom: 12px; }
 .meal-head { display: flex; justify-content: space-between; align-items: flex-start; }
 .meal-main { flex: 1; }
@@ -173,18 +179,6 @@ a.cal-row:hover { background: #f1f5f9; }
 .shop-items { list-style-type: disc; padding-left: 26px; }
 .shop-items li { font-size: 12px; color: #334155; line-height: 1.5; padding: 5px 0; overflow-wrap: anywhere; }
 .shop-empty { font-size: 12px; color: #334155; line-height: 1.5; }
-
-.tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-.tab-button {
-  padding: 8px 16px; border-radius: 8px; border: none; background: #fff; color: #64748b;
-  font-size: 12px; font-weight: 600; cursor: pointer;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-}
-.tab-button[aria-pressed="true"] {
-  background: linear-gradient(135deg, #1a1a2e, #16213e); color: #f8fafc;
-  box-shadow: 0 2px 8px rgba(26,26,46,0.3);
-}
-.tab-button:focus-visible { outline-offset: -2px; }
 
 .reminder {
   margin-top: 8px; padding: 14px 16px; background: linear-gradient(135deg, #eff6ff, #dbeafe);

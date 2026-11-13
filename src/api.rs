@@ -1,5 +1,11 @@
 //! Read-only JSON API.
-use crate::{AppState, calendar, calendar::WeekPath, model, model::YearDocument, queries};
+use crate::{
+    AppState, calendar,
+    calendar::{DatePath, WeekPath},
+    model,
+    model::YearDocument,
+    queries,
+};
 use axum::extract::rejection::PathRejection;
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, header};
@@ -20,14 +26,14 @@ pub struct ErrorBody {
     pub message: &'static str,
 }
 
-/// Routes under `/api`. `/api/{year}` overlaps a catch-all, so every other path beneath `/api`
+/// Routes under `/api`. `/api/{segment}` overlaps a catch-all, so every other path beneath `/api`
 /// reaches the router fallback, which answers it with [`not_found`] (see [`is_api_path`]).
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/{year}/{week}", get(week_handler))
         .route(
-            "/api/{year}",
-            get(year_handler).fallback(year_method_fallback),
+            "/api/{segment}",
+            get(segment_handler).fallback(segment_method_fallback),
         )
         .route("/api", any(not_found))
         .route("/api/", any(not_found))
@@ -74,6 +80,20 @@ fn unavailable(db_error: &sqlx::Error) -> Response {
     )
 }
 
+/// The week document of a valid ISO week, or `week_not_found`.
+async fn week_response(state: &AppState, iso_year: i32, iso_week: u32) -> Response {
+    match queries::load_week(&state.pool, iso_year, iso_week).await {
+        Ok(Some(document)) => json(StatusCode::OK, &document),
+        Ok(None) if queries::week_summary(iso_year, iso_week).is_none() => invalid(),
+        Ok(None) => error(
+            StatusCode::NOT_FOUND,
+            "week_not_found",
+            "No meal plan for this week yet.",
+        ),
+        Err(db_error) => unavailable(&db_error),
+    }
+}
+
 async fn week_handler(
     State(state): State<AppState>,
     path: Result<Path<(String, String)>, PathRejection>,
@@ -83,18 +103,7 @@ async fn week_handler(
         return invalid();
     };
     match calendar::classify_week_path(&year, &week) {
-        WeekPath::Canonical(iso_year, iso_week) => {
-            match queries::load_week(&state.pool, iso_year, iso_week).await {
-                Ok(Some(document)) => json(StatusCode::OK, &document),
-                Ok(None) if queries::week_summary(iso_year, iso_week).is_none() => invalid(),
-                Ok(None) => error(
-                    StatusCode::NOT_FOUND,
-                    "week_not_found",
-                    "No meal plan for this week yet.",
-                ),
-                Err(db_error) => unavailable(&db_error),
-            }
-        }
+        WeekPath::Canonical(iso_year, iso_week) => week_response(&state, iso_year, iso_week).await,
         WeekPath::Redirect(iso_year, iso_week) => {
             Redirect::permanent(&format!("/api{}", calendar::week_path(iso_year, iso_week)))
                 .into_response()
@@ -103,17 +112,29 @@ async fn week_handler(
     }
 }
 
-/// `GET /api/<year>`: the year page's listing and status rule, from one query.
-async fn year_handler(
+/// `GET /api/<segment>`: a year document, the week document of a date, or `not_found`.
+async fn segment_handler(
     State(state): State<AppState>,
     path: Result<Path<String>, PathRejection>,
 ) -> Response {
-    let Some(year) = path
-        .ok()
-        .and_then(|Path(segment)| calendar::parse_year_path(&segment))
-    else {
+    let Ok(Path(segment)) = path else {
         return not_found().await;
     };
+    if let Some(year) = calendar::parse_year_path(&segment) {
+        return year_response(&state, year).await;
+    }
+    match calendar::classify_date_path(&segment) {
+        Some(DatePath::Valid(date)) => {
+            let (iso_year, iso_week) = calendar::iso_week_of(date);
+            week_response(&state, iso_year, iso_week).await
+        }
+        Some(DatePath::Invalid) => error(StatusCode::NOT_FOUND, "invalid_date", "Invalid date."),
+        None => not_found().await,
+    }
+}
+
+/// The year page's listing and status rule, from one query.
+async fn year_response(state: &AppState, year: i32) -> Response {
     let current_year = calendar::iso_week_of(state.clock.today()).0;
     let listing = match queries::load_year(&state.pool, year).await {
         Ok(listing) => listing,
@@ -139,14 +160,19 @@ async fn year_handler(
     )
 }
 
-/// Non-GET methods: 405 on a year path, the JSON not-found response on any other single segment.
-async fn year_method_fallback(path: Result<Path<String>, PathRejection>) -> Response {
+/// Non-GET methods: 405 on a year or date-shaped path, the JSON not-found response on any other single segment.
+async fn segment_method_fallback(path: Result<Path<String>, PathRejection>) -> Response {
     match path {
-        Ok(Path(segment)) if calendar::parse_year_path(&segment).is_some() => (
-            StatusCode::METHOD_NOT_ALLOWED,
-            [(header::ALLOW, "GET,HEAD")],
-        )
-            .into_response(),
+        Ok(Path(segment))
+            if calendar::parse_year_path(&segment).is_some()
+                || calendar::classify_date_path(&segment).is_some() =>
+        {
+            (
+                StatusCode::METHOD_NOT_ALLOWED,
+                [(header::ALLOW, "GET,HEAD")],
+            )
+                .into_response()
+        }
         _ => not_found().await,
     }
 }

@@ -57,7 +57,7 @@
                   "$ref": "#/components/schemas/WeekDocument"
                 },
                 "example": {
-                  "schemaVersion": 2,
+                  "schemaVersion": 3,
                   "week": {
                     "id": "00000001-0000-4000-8000-000000000001",
                     "isoYear": 2026,
@@ -435,6 +435,7 @@
                       "id": "00000008-0000-4000-8000-000000000035",
                       "title": "Monday Prep Session (~1.5 hours)",
                       "covers": "Covers Monday through Wednesday",
+                      "weekday": null,
                       "tasks": [
                         {
                           "id": "00000009-0000-4000-8000-000000000037",
@@ -460,6 +461,7 @@
                       "id": "00000008-0000-4000-8000-000000000032",
                       "title": "Wednesday Evening Prep (~45 min)",
                       "covers": null,
+                      "weekday": null,
                       "tasks": [
                         {
                           "id": "00000009-0000-4000-8000-000000000034",
@@ -582,29 +584,30 @@
         }
       }
     },
-    "/api/{year}": {
+    "/api/{segment}": {
       "get": {
-        "operationId": "getYear",
-        "summary": "List the stored meal plans of one ISO week-year.",
-        "description": "Uses the same query and status rule as the HTML page `/{year}`, read from one database snapshot. A year without plans is 404 `year_not_found`, except the current year (the ISO week-year of today in the service timezone), which returns an empty `weeks` array. A single segment that is not a four-digit year from 0001 to 9999 returns `not_found`, as does any path under `/api` that matches neither this route nor the two-segment week route.",
+        "operationId": "getYearOrDate",
+        "summary": "List the stored meal plans of one ISO week-year, or get the week that contains a date.",
+        "description": "One single-segment route with two forms. A four-digit segment (`/api/2026`) is a year: it uses the same query and status rule as the HTML page `/{year}`, read from one database snapshot. A year without plans is 404 `year_not_found`, except the current year (the ISO week-year of today in the service timezone), which returns an empty `weeks` array. A date segment (`/api/2026-10-28`) returns the complete week document of the ISO week that contains the date, byte for byte what `/api/{year}/{week}` returns, with no redirect; a valid date whose week has no plan is 404 `week_not_found`, and a date-shaped segment that is not a real date (or whose week cannot be represented) is 404 `invalid_date`. Any other single segment returns `not_found`, as does any path under `/api` that matches no route.",
         "parameters": [
           {
-            "name": "year",
+            "name": "segment",
             "in": "path",
             "required": true,
-            "description": "ISO week-year: exactly four decimal digits, 0001 to 9999. Anything else is `not_found`.",
+            "description": "Either an ISO week-year (exactly four decimal digits, 0001 to 9999) or a date `YYYY-MM-DD` (ASCII digits only, zero-padded, year 0001 to 9999, and the seven days of its ISO week must be representable, so the last valid date is 9999-12-26). Anything else is `not_found`; a date-shaped value that is not a valid date is `invalid_date`.",
             "schema": {
               "type": "string",
-              "pattern": "^[0-9]{4}$",
+              "pattern": "^[0-9]{4}(-[0-9]{2}-[0-9]{2})?$",
               "examples": [
-                "2026"
+                "2026",
+                "2026-10-28"
               ]
             }
           }
         ],
         "responses": {
           "200": {
-            "description": "The year listing.",
+            "description": "The year listing for a year segment, or the week document for a date segment.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -617,28 +620,40 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/YearDocument"
-                },
-                "example": {
-                  "schemaVersion": 1,
-                  "year": 2026,
-                  "previousYear": 2025,
-                  "nextYear": null,
-                  "weeks": [
+                  "oneOf": [
                     {
-                      "isoYear": 2026,
-                      "isoWeek": 44,
-                      "startDate": "2026-10-26",
-                      "endDate": "2026-11-01",
-                      "path": "/2026/44"
+                      "$ref": "#/components/schemas/YearDocument"
+                    },
+                    {
+                      "$ref": "#/components/schemas/WeekDocument"
                     }
                   ]
+                },
+                "examples": {
+                  "year": {
+                    "summary": "A year segment, e.g. /api/2026. A date segment returns the WeekDocument shown under getWeek.",
+                    "value": {
+                      "schemaVersion": 1,
+                      "year": 2026,
+                      "previousYear": 2025,
+                      "nextYear": null,
+                      "weeks": [
+                        {
+                          "isoYear": 2026,
+                          "isoWeek": 44,
+                          "startDate": "2026-10-26",
+                          "endDate": "2026-11-01",
+                          "path": "/2026/44"
+                        }
+                      ]
+                    }
+                  }
                 }
               }
             }
           },
           "404": {
-            "description": "A valid year without plans that is not the current year, or a path that is not a year.",
+            "description": "A valid year without plans that is not the current year, a valid date whose week has no plan, a date-shaped segment that is not a valid date, or a segment that is neither.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -663,8 +678,26 @@
                       }
                     }
                   },
+                  "week_not_found": {
+                    "summary": "Valid date whose week has no plan",
+                    "value": {
+                      "error": {
+                        "code": "week_not_found",
+                        "message": "No meal plan for this week yet."
+                      }
+                    }
+                  },
+                  "invalid_date": {
+                    "summary": "Date-shaped segment that is not a valid date",
+                    "value": {
+                      "error": {
+                        "code": "invalid_date",
+                        "message": "Invalid date."
+                      }
+                    }
+                  },
                   "not_found": {
-                    "summary": "Not a year, or a path under /api that matches no route",
+                    "summary": "Neither a year nor a date, or a path under /api that matches no route",
                     "value": {
                       "error": {
                         "code": "not_found",
@@ -729,7 +762,7 @@
         "description": "The complete meal plan of one ISO week. Identical to the document embedded in the HTML page.",
         "properties": {
           "schemaVersion": {
-            "const": 2,
+            "const": 3,
             "type": "integer",
             "description": "API format version; independent of SQL migration versions."
           },
@@ -1142,6 +1175,15 @@
             ],
             "description": "Optional note on which days the session covers."
           },
+          "weekday": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 1,
+            "maximum": 7,
+            "description": "The day the session happens on, 1 (Monday) to 7 (Sunday), or null when it has no day. A null weekday shows the session on no day. Not tied to `covers`."
+          },
           "tasks": {
             "type": "array",
             "items": {
@@ -1154,6 +1196,7 @@
           "id",
           "title",
           "covers",
+          "weekday",
           "tasks"
         ],
         "additionalProperties": false
@@ -1282,6 +1325,7 @@
                 "enum": [
                   "week_not_found",
                   "invalid_week",
+                  "invalid_date",
                   "year_not_found",
                   "not_found",
                   "service_unavailable"

@@ -49,11 +49,14 @@ Configure it with environment variables:
 | --- | --- |
 | `/` | The current ISO week |
 | `/<year>/<week>` | A specific ISO week, e.g. `/2026/44` |
+| `/<date>` | One day of its week, e.g. `/2026-10-28` |
 | `/<year>` | The stored weeks of one ISO week-year, newest first, e.g. `/2026` |
 | `/api/<year>/<week>` | The full week as JSON |
+| `/api/<date>` | The full week containing that date as JSON |
 | `/api/<year>` | The year listing as JSON |
 
-Weeks use ISO 8601 numbering (Monday to Sunday). The API is described in the [OpenAPI document](docs/openapi.json).
+Weeks use ISO 8601 numbering (Monday to Sunday). A plan page shows one day at a time, with links to the previous
+and next day and a month calendar that links every date and marks the days with shopping lists or prep sessions. The API is described in the [OpenAPI document](docs/openapi.json).
 
 ### MCP
 

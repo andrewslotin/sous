@@ -1,12 +1,7 @@
 const { useState } = React;
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const TABS = [
-  { id: "plan", label: "Daily Plan" },
-  { id: "prep", label: "Prep Sessions" },
-];
+const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 const MEAL_ICONS = { Breakfast: "☀️", Lunch: "🥗", Dinner: "🍽️", Snack: "🥜" };
 
@@ -219,14 +214,29 @@ function Reminder({ reminder }) {
   );
 }
 
+// A step to the previous or next day. A target without a valid date path is shown disabled and is not a link.
+function DayStep({ target, label, children }) {
+  if (!hasDatePath(target)) {
+    return (
+      <a className="day-step is-disabled" aria-disabled="true" aria-label={label}>
+        {children}
+      </a>
+    );
+  }
+  return (
+    <a className="day-step" href={datePath(target)} aria-label={label}>
+      {children}
+    </a>
+  );
+}
+
 function MealPlan({ page }) {
   const data = page.document;
-  const [activeTab, setActiveTab] = useState("plan");
-  const [selectedDay, setSelectedDay] = useState(page.selectedWeekday - 1);
-  const day = data.days[selectedDay];
-  // A session without tasks has nothing to show, so it is not displayed.
-  const prepSessions = data.prepSessions.filter((s) => s.tasks.length > 0);
-  const listsById =new Map(data.shoppingLists.map((l) => [l.id, l]));
+  const day = data.days.find((d) => d.date === page.displayedDate);
+  const dayNum = dayNumber(day.date);
+  // A session shows on the day of its weekday; a session without tasks has nothing to show.
+  const prepSessions = data.prepSessions.filter((s) => s.weekday === day.weekday && s.tasks.length > 0);
+  const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
   return (
     <CalendarShell
       page={page}
@@ -234,60 +244,37 @@ function MealPlan({ page }) {
       heading={`Meal Plan: ${formatDateRange(data.week)}`}
       subtitle={data.week.subtitle}
     >
-      <div className="tabs">
-        {TABS.map((tab) => (
-          <button
-            key={tab.id}
-            type="button"
-            className="tab-button"
-            aria-pressed={activeTab === tab.id}
-            onClick={() => setActiveTab(tab.id)}
-          >
-            {tab.label}
-          </button>
-        ))}
+      <div className="day-row">
+        <DayStep target={dayNum - 1} label="Previous day">
+          ‹
+        </DayStep>
+        <h2 className="day-heading">{formatDayHeading(dayNum)}</h2>
+        <DayStep target={dayNum + 1} label="Next day">
+          ›
+        </DayStep>
       </div>
-      {activeTab === "plan" && (
-        <>
-          <div className="days">
-            {data.days.map((d, i) => (
-              <button
-                key={d.date}
-                type="button"
-                className="day-button"
-                aria-pressed={selectedDay === i}
-                onClick={() => setSelectedDay(i)}
-              >
-                {WEEKDAYS[d.weekday - 1]}
-              </button>
-            ))}
-          </div>
-          {day.shoppingListIds.map((listId) => (
-            <ShoppingListCard key={`${day.date}-${listId}`} list={listsById.get(listId)} />
-          ))}
-          {day.meals.length === 0 ? (
-            <p className="empty">No meals planned for this day.</p>
-          ) : (
-            <>
-              <DaySummary meals={day.meals} />
-              {day.meals.map((meal) => (
-                <MealCard key={meal.id} meal={meal} />
-              ))}
-            </>
-          )}
-          {day.reminder !== null && <Reminder reminder={day.reminder} />}
-        </>
-      )}
-      {activeTab === "prep" && (
+      {day.shoppingListIds.map((listId) => (
+        <ShoppingListCard key={listId} list={listsById.get(listId)} />
+      ))}
+      {prepSessions.length > 0 && (
         <>
           {data.week.prepIntro !== null && <p className="prep-intro">{data.week.prepIntro}</p>}
-          {prepSessions.length === 0 ? (
-            <p className="empty">No prep sessions planned.</p>
-          ) : (
-            prepSessions.map((s) => <PrepCard key={s.id} session={s} />)
-          )}
+          {prepSessions.map((s) => (
+            <PrepCard key={s.id} session={s} />
+          ))}
         </>
       )}
+      {day.meals.length === 0 ? (
+        <p className="empty">No meals planned for this day.</p>
+      ) : (
+        <>
+          <DaySummary meals={day.meals} />
+          {day.meals.map((meal) => (
+            <MealCard key={meal.id} meal={meal} />
+          ))}
+        </>
+      )}
+      {day.reminder !== null && <Reminder reminder={day.reminder} />}
     </CalendarShell>
   );
 }
@@ -350,28 +337,51 @@ function paddedYear(year) {
   return String(year).padStart(4, "0");
 }
 
+function twoDigits(n) {
+  return String(n).padStart(2, "0");
+}
+
+// A day number as "YYYY-MM-DD", the year zero-padded to four digits.
+function isoDate(days) {
+  const [y, m, d] = civilFromDays(days);
+  return `${paddedYear(y)}-${twoDigits(m)}-${twoDigits(d)}`;
+}
+
+// The page path of a day, "/2026-11-11".
+function datePath(days) {
+  return "/" + isoDate(days);
+}
+
+// A date path needs a representable ISO week: its Monday from 0001-01-01 and its Sunday up to 9999-12-31.
+function hasDatePath(days) {
+  const monday = days - weekdayIndex(days);
+  return monday >= MIN_DAY && monday + 6 <= MAX_DAY;
+}
+
+// "Wednesday, November 11": full names, no year.
+function formatDayHeading(days) {
+  const [, month, day] = civilFromDays(days);
+  return `${WEEKDAY_NAMES[weekdayIndex(days)]}, ${MONTH_NAMES[month - 1]} ${day}`;
+}
+
 // The Monday-first ISO week that starts on `monday`: its ISO year and number (the Thursday decides the year).
 function isoWeekOf(monday) {
   const [isoYear] = civilFromDays(monday + 3);
   return { isoYear, isoWeek: Math.floor((monday + 3 - daysFromCivil(isoYear, 1, 1)) / 7) + 1 };
 }
 
-// "November 9–15, 2026", "October 26–November 1, 2026", "December 29, 2025–January 4, 2026".
-function formatWeekRange(monday) {
-  const [y1, m1, d1] = civilFromDays(monday);
-  const [y2, m2, d2] = civilFromDays(monday + 6);
-  const start = `${MONTH_NAMES[m1 - 1]} ${d1}`;
-  const end = `${MONTH_NAMES[m2 - 1]} ${d2}, ${paddedYear(y2)}`;
-  if (y1 !== y2) {
-    return `${start}, ${paddedYear(y1)}–${end}`;
-  }
-  return m1 === m2 ? `${start}–${d2}, ${paddedYear(y2)}` : `${start}–${end}`;
+// The day whose month the calendar opens on: today when no date is displayed, the displayed date on a date page
+// (`/YYYY-MM-DD`), otherwise the Thursday of the displayed week.
+function initialMonthDay(page, week) {
+  if (page.displayedDate === null) return dayNumber(page.today);
+  if (/^\/\d{4}-\d{2}-\d{2}$/.test(window.location.pathname)) return dayNumber(page.displayedDate);
+  return dayNumber(week.startDate) + 3;
 }
 
-function Calendar({ open, today, plannedWeeks, week }) {
+function Calendar({ open, page, week }) {
+  const { today, plannedWeeks, markedDays, displayedDate } = page;
   const [shown, setShown] = useState(() => {
-    // The month of the displayed week's Thursday, or of today when no week is displayed.
-    const [year, month] = civilFromDays(week ? dayNumber(week.startDate) + 3 : dayNumber(today));
+    const [year, month] = civilFromDays(initialMonthDay(page, week));
     return { year, month };
   });
   const { year, month } = shown;
@@ -380,6 +390,7 @@ function Calendar({ open, today, plannedWeeks, week }) {
     setShown({ year: Math.floor(index / 12), month: (index % 12) + 1 });
   };
   const planned = new Set(plannedWeeks.map((w) => `${w.isoYear}-${w.isoWeek}`));
+  const marks = new Map(markedDays.map((d) => [d.date, d]));
   const todayDay = dayNumber(today);
   const first = daysFromCivil(year, month, 1);
   const last = daysFromCivil(month === 12 ? year + 1 : year, month === 12 ? 1 : month + 1, 1) - 1;
@@ -423,7 +434,8 @@ function Calendar({ open, today, plannedWeeks, week }) {
       {rows.map((monday) => {
         const iso = isoWeekOf(monday);
         const isPlanned = planned.has(`${iso.isoYear}-${iso.isoWeek}`);
-        const isDisplayed = week && week.isoYear === iso.isoYear && week.isoWeek === iso.isoWeek;
+        // A week that cannot be a path (the last row of December 9999) shows its dates but links none.
+        const linked = hasDatePath(monday);
         const cells = [
           <span key="wk" className="cal-wk">
             {isPlanned && <span className="cal-dot" aria-hidden="true"></span>}
@@ -431,36 +443,50 @@ function Calendar({ open, today, plannedWeeks, week }) {
           </span>,
         ];
         for (let i = 0; i < 7; i++) {
-          const [y, m, d] = civilFromDays(monday + i);
+          const day = monday + i;
+          const [y, m, d] = civilFromDays(day);
           const cls = ["cal-cell"];
           if (y !== year || m !== month) cls.push("cal-out");
-          if (monday + i === todayDay) cls.push("cal-today");
+          if (day === todayDay) cls.push("cal-today");
+          if (!linked) {
+            cells.push(
+              <span key={i} className={cls.join(" ")}>
+                {d}
+              </span>,
+            );
+            continue;
+          }
+          const date = isoDate(day);
+          const mark = marks.get(date);
+          const names = [];
+          if (mark && mark.shopping) names.push("shopping");
+          if (mark && mark.prep) names.push("prep");
+          const selected = date === displayedDate;
+          if (selected) cls.push("cal-selected");
           cells.push(
-            <span key={i} className={cls.join(" ")}>
+            <a
+              key={i}
+              className={cls.join(" ")}
+              href={`/${date}`}
+              aria-label={[`${WEEKDAY_NAMES[i]}, ${MONTH_NAMES[m - 1]} ${d}, ${paddedYear(y)}`, ...names].join(", ")}
+              aria-current={selected ? "page" : undefined}
+            >
               {d}
-            </span>,
+              {names.length > 0 && (
+                <span className="cal-marks" aria-hidden="true">
+                  {mark.shopping && <span className="cal-mark cal-mark-shopping"></span>}
+                  {mark.prep && <span className="cal-mark cal-mark-prep"></span>}
+                </span>
+              )}
+            </a>,
           );
         }
         const cls = ["cal-row"];
         if (isPlanned) cls.push("cal-planned");
-        // A week that cannot be a path (the last row of December 9999) is shown but is not a link.
-        if (monday < MIN_DAY || monday + 6 > MAX_DAY) {
-          return (
-            <div key={monday} className={cls.join(" ")}>
-              {cells}
-            </div>
-          );
-        }
         return (
-          <a
-            key={monday}
-            className={cls.join(" ")}
-            href={`/${paddedYear(iso.isoYear)}/${iso.isoWeek}`}
-            aria-label={`Week ${iso.isoWeek}, ${formatWeekRange(monday)}${isPlanned ? ", planned" : ""}`}
-            aria-current={isDisplayed ? "page" : undefined}
-          >
+          <div key={monday} className={cls.join(" ")}>
             {cells}
-          </a>
+          </div>
         );
       })}
     </section>
@@ -487,7 +513,7 @@ function CalendarShell({ page, week, heading, subtitle, children }) {
           </button>
         </div>
       </div>
-      <Calendar open={open} today={page.today} plannedWeeks={page.plannedWeeks} week={week} />
+      <Calendar open={open} page={page} week={week} />
       {children}
     </div>
   );
@@ -583,6 +609,15 @@ function InvalidWeek({ page }) {
   );
 }
 
+function InvalidDate({ page }) {
+  return (
+    <CalendarShell page={page} week={null} heading="Meal Plan">
+      <p className="empty">Invalid date.</p>
+      <Nav links={[THIS_WEEK]} />
+    </CalendarShell>
+  );
+}
+
 function Unavailable() {
   return (
     <Shell title={<PageTitle>Meal Plan</PageTitle>}>
@@ -602,6 +637,8 @@ function App({ page }) {
       return <YearPage page={page} />;
     case "invalid":
       return <InvalidWeek page={page} />;
+    case "invalidDate":
+      return <InvalidDate page={page} />;
     default:
       return <Unavailable />;
   }

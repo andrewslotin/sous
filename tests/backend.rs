@@ -12,6 +12,7 @@ use tower::ServiceExt;
 
 const FIXTURE: &str = include_str!("../fixtures/2026-w44.sql");
 const WEEKLY_FIXTURE: &str = include_str!("../fixtures/2026-w44-weekly.sql");
+const PREP_DAYS_FIXTURE: &str = include_str!("../fixtures/2026-w44-prep-days.sql");
 const STRATEGY_FIXTURE: &str = include_str!("fixtures/0003-strategy.sql");
 const HISTORY_FIXTURE: &str = include_str!("../fixtures/2026-history.sql");
 const U1: &str = "11111111-1111-4111-8111-111111111111";
@@ -37,6 +38,17 @@ impl TestDb {
         let t = Self::with_base_fixture().await;
         let mut c = t.writer().await;
         sqlx::raw_sql(WEEKLY_FIXTURE).execute(&mut c).await.unwrap();
+        t
+    }
+
+    /// `with_fixture` plus the prep session weekdays.
+    async fn with_prep_days() -> Self {
+        let t = Self::with_fixture().await;
+        let mut c = t.writer().await;
+        sqlx::raw_sql(PREP_DAYS_FIXTURE)
+            .execute(&mut c)
+            .await
+            .unwrap();
         t
     }
 
@@ -127,6 +139,19 @@ async fn insert_weeks(t: &TestDb, weeks: &[(i32, i32)]) {
 
 fn planned(y: i64, w: i64) -> Value {
     json!({"isoYear": y, "isoWeek": w})
+}
+
+/// `markedDays` of the weekly fixture: Monday and Wednesday of 2026-W44 have shopping lists; their prep
+/// marks need the prep-days fixture.
+fn fixture_marks(prep: bool) -> Value {
+    json!([
+        {"date": "2026-10-26", "shopping": true, "prep": prep},
+        {"date": "2026-10-28", "shopping": true, "prep": prep},
+    ])
+}
+
+fn mark(date: &str, shopping: bool, prep: bool) -> Value {
+    json!({"date": date, "shopping": shopping, "prep": prep})
 }
 
 fn summary(y: i64, w: i64, start: &str, end: &str, path: &str) -> Value {
@@ -438,7 +463,7 @@ async fn iso_week_53_and_year_boundary() {
     let page = page_json(&body);
     assert_eq!(page["document"]["week"]["isoYear"], 2026);
     assert_eq!(page["document"]["week"]["isoWeek"], 53);
-    assert_eq!(page["selectedWeekday"], 6);
+    assert_eq!(page["displayedDate"], "2027-01-02");
 
     // Monday 2027-01-04 is 2027-W1, which is not stored.
     let (s, _, body) = get_at(&pool, berlin(2027, 1, 4, 12, 0, 0), "/").await;
@@ -469,7 +494,8 @@ async fn root_selects_today_in_service_timezone() {
     let page = page_json(&body);
     assert_eq!(page["kind"], "week");
     assert_eq!(page["document"]["week"]["isoWeek"], 44);
-    assert_eq!(page["selectedWeekday"], 7);
+    assert_eq!(page["displayedDate"], "2026-11-01");
+    assert!(page.get("selectedWeekday").is_none());
 
     // One second later it is Monday in W45.
     let (s, _, body) = get_at(&pool, berlin(2026, 11, 1, 23, 0, 0), "/").await;
@@ -477,7 +503,7 @@ async fn root_selects_today_in_service_timezone() {
     let page = page_json(&body);
     assert_eq!(page["kind"], "week");
     assert_eq!(page["document"]["week"]["isoWeek"], 45);
-    assert_eq!(page["selectedWeekday"], 1);
+    assert_eq!(page["displayedDate"], "2026-11-02");
 
     // The same instant in New York is still Sunday of W44.
     let new_york = Clock::fixed(
@@ -487,7 +513,7 @@ async fn root_selects_today_in_service_timezone() {
     let (_, _, body) = get_at(&pool, new_york, "/").await;
     let page = page_json(&body);
     assert_eq!(page["document"]["week"]["isoWeek"], 44);
-    assert_eq!(page["selectedWeekday"], 7);
+    assert_eq!(page["displayedDate"], "2026-11-01");
 }
 
 #[tokio::test]
@@ -504,31 +530,37 @@ async fn root_missing_current_week_is_200_with_summary() {
             "kind": "missing",
             "today": "2026-12-02",
             "plannedWeeks": [planned(2026, 44)],
+            "markedDays": fixture_marks(false),
+            "displayedDate": "2026-12-02",
             "week": summary(2026, 49, "2026-11-30", "2026-12-06", "/2026/49"),
         })
     );
 }
 
 #[tokio::test]
-async fn explicit_week_selects_today_only_in_current_week() {
+async fn explicit_week_displays_today_only_in_current_week() {
     let t = TestDb::with_fixture().await;
     insert_weeks(&t, &[(2027, 2), (2026, 49)]).await;
     let pool = t.reader().await;
 
-    // Clock is Wednesday of 2026-W49.
+    // Clock is Wednesday 2026-12-02 of 2026-W49.
     let (s, _, body) = get(&pool, "/2026/49").await;
     assert_eq!(s, StatusCode::OK);
-    assert_eq!(page_json(&body)["selectedWeekday"], 3);
-    // Past week and future week: Monday, no redirect.
-    for uri in ["/2026/44", "/2027/2"] {
+    assert_eq!(page_json(&body)["displayedDate"], "2026-12-02");
+    // Past week and future week: the Monday, no redirect.
+    for (uri, monday) in [("/2026/44", "2026-10-26"), ("/2027/2", "2027-01-11")] {
         let (s, h, body) = get(&pool, uri).await;
         assert_eq!(s, StatusCode::OK, "{uri}");
         assert!(h.get(header::LOCATION).is_none());
-        assert_eq!(page_json(&body)["selectedWeekday"], 1, "{uri}");
+        assert_eq!(page_json(&body)["displayedDate"], monday, "{uri}");
     }
-    // With the clock inside W44 (Friday), /2026/44 selects today.
+    // With the clock inside W44 (Friday), /2026/44 displays today.
     let (_, _, body) = get_at(&pool, berlin(2026, 10, 30, 9, 0, 0), "/2026/44").await;
-    assert_eq!(page_json(&body)["selectedWeekday"], 5);
+    assert_eq!(page_json(&body)["displayedDate"], "2026-10-30");
+    // A missing week follows the same rule and stays a 404.
+    let (s, _, body) = get(&pool, "/2026/45").await;
+    assert_eq!(s, StatusCode::NOT_FOUND);
+    assert_eq!(page_json(&body)["displayedDate"], "2026-11-02");
 }
 
 #[tokio::test]
@@ -547,6 +579,8 @@ async fn explicit_missing_week_is_404_without_weeks() {
             "kind": "missing",
             "today": "2026-12-02",
             "plannedWeeks": [planned(2026, 44), planned(2026, 53)],
+            "markedDays": fixture_marks(false),
+            "displayedDate": "2026-11-02",
             "week": summary(2026, 45, "2026-11-02", "2026-11-08", "/2026/45"),
         })
     );
@@ -592,7 +626,13 @@ async fn invalid_paths_are_404_invalid_and_never_500() {
         assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
         assert_eq!(
             page_json(&body),
-            json!({"kind": "invalid", "today": "2026-12-02", "plannedWeeks": [planned(2026, 44)]}),
+            json!({
+                "kind": "invalid",
+                "today": "2026-12-02",
+                "plannedWeeks": [planned(2026, 44)],
+                "markedDays": fixture_marks(false),
+                "displayedDate": null,
+            }),
             "{uri}"
         );
         assert_eq!(title(&body), "Invalid week — Meal Plan", "{uri}");
@@ -645,7 +685,7 @@ async fn clock_is_read_once_per_request() {
     let page = page_json(&body);
     assert_eq!(page["kind"], "week");
     assert_eq!(page["document"]["week"]["isoWeek"], 44);
-    assert_eq!(page["selectedWeekday"], 7);
+    assert_eq!(page["displayedDate"], "2026-11-01");
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -657,7 +697,13 @@ async fn root_does_not_panic_when_current_week_is_unrepresentable() {
     assert_eq!(s, StatusCode::NOT_FOUND);
     assert_eq!(
         page_json(&body),
-        json!({"kind": "invalid", "today": "9999-12-31", "plannedWeeks": [planned(2026, 44)]})
+        json!({
+            "kind": "invalid",
+            "today": "9999-12-31",
+            "plannedWeeks": [planned(2026, 44)],
+            "markedDays": fixture_marks(false),
+            "displayedDate": null,
+        })
     );
 }
 
@@ -732,11 +778,15 @@ async fn planned_weeks_are_ascending_and_the_same_on_every_page_kind() {
         ("/", "missing"),
         ("/2026/54", "invalid"),
         ("/%FF/1", "invalid"),
+        ("/2026-10-30", "week"),
+        ("/2026-11-02", "missing"),
+        ("/2026-13-01", "invalidDate"),
     ] {
         let (_, _, body) = get(&pool, uri).await;
         let page = page_json(&body);
         assert_eq!(page["kind"], kind, "{uri}");
         assert_eq!(page["plannedWeeks"], expected, "{uri}");
+        assert_eq!(page["markedDays"], fixture_marks(false), "{uri}");
     }
     // The key order puts `today` and `plannedWeeks` right after `kind`.
     let (_, _, body) = get(&pool, "/2026/44").await;
@@ -757,6 +807,8 @@ async fn empty_database_pages_have_no_planned_weeks() {
                 "kind": "missing",
                 "today": "2026-12-02",
                 "plannedWeeks": [],
+                "markedDays": [],
+                "displayedDate": "2026-12-02",
                 "week": summary(2026, 49, "2026-11-30", "2026-12-06", "/2026/49"),
             }),
         ),
@@ -767,13 +819,44 @@ async fn empty_database_pages_have_no_planned_weeks() {
                 "kind": "missing",
                 "today": "2026-12-02",
                 "plannedWeeks": [],
+                "markedDays": [],
+                "displayedDate": "2026-11-02",
                 "week": summary(2026, 45, "2026-11-02", "2026-11-08", "/2026/45"),
             }),
         ),
         (
             "/2026/54",
             StatusCode::NOT_FOUND,
-            json!({"kind": "invalid", "today": "2026-12-02", "plannedWeeks": []}),
+            json!({
+                "kind": "invalid",
+                "today": "2026-12-02",
+                "plannedWeeks": [],
+                "markedDays": [],
+                "displayedDate": null,
+            }),
+        ),
+        (
+            "/2026-11-02",
+            StatusCode::NOT_FOUND,
+            json!({
+                "kind": "missing",
+                "today": "2026-12-02",
+                "plannedWeeks": [],
+                "markedDays": [],
+                "displayedDate": "2026-11-02",
+                "week": summary(2026, 45, "2026-11-02", "2026-11-08", "/2026/45"),
+            }),
+        ),
+        (
+            "/2026-02-30",
+            StatusCode::NOT_FOUND,
+            json!({
+                "kind": "invalidDate",
+                "today": "2026-12-02",
+                "plannedWeeks": [],
+                "markedDays": [],
+                "displayedDate": null,
+            }),
         ),
     ] {
         let (s, _, body) = get(&pool, uri).await;
@@ -795,7 +878,7 @@ async fn embedded_document_equals_the_api_body() {
         serde_json::from_str::<Value>(&api_body).unwrap()
     );
     assert!(page["document"].get("strategyCards").is_none());
-    assert_eq!(page["document"]["schemaVersion"], 2);
+    assert_eq!(page["document"]["schemaVersion"], 3);
     assert!(page["document"].get("today").is_none());
     assert!(page["document"].get("plannedWeeks").is_none());
 }
@@ -841,20 +924,69 @@ async fn week_and_planned_weeks_come_from_one_snapshot() {
             .await
             .unwrap();
     };
-    let (document, planned_weeks) = queries::load_week_page_with_pause(&pool, 2026, 44, pause)
+    let (document, calendar) = queries::load_week_page_with_pause(&pool, 2026, 44, pause)
         .await
         .unwrap();
     assert!(document.is_some());
     assert_eq!(
-        serde_json::to_value(&planned_weeks).unwrap(),
+        serde_json::to_value(&calendar.planned_weeks).unwrap(),
         json!([planned(2026, 44)])
     );
 
-    let (document, planned_weeks) = queries::load_week_page(&pool, 2026, 44).await.unwrap();
+    let (document, calendar) = queries::load_week_page(&pool, 2026, 44).await.unwrap();
     assert!(document.is_some());
     assert_eq!(
-        serde_json::to_value(&planned_weeks).unwrap(),
+        serde_json::to_value(&calendar.planned_weeks).unwrap(),
         json!([planned(2026, 44), planned(2026, 46)])
+    );
+}
+
+#[tokio::test]
+async fn marked_days_come_from_the_same_snapshot_as_the_document() {
+    let t = TestDb::with_prep_days().await;
+    let pool = t.reader().await;
+    let mut writer = t.writer().await;
+
+    // The document is read and the snapshot is open; another connection commits a shopping link and
+    // a prep weekday change. Neither is visible in this snapshot.
+    let pause = async {
+        exec(
+            &mut writer,
+            &format!(
+                "INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{TUE}', '{L1}', 0)"
+            ),
+        )
+        .await
+        .unwrap();
+        exec(
+            &mut writer,
+            &format!("UPDATE prep_sessions SET weekday = 5 WHERE id = '{SESSION_MON}'"),
+        )
+        .await
+        .unwrap();
+    };
+    let (document, calendar) = queries::load_week_page_with_pause(&pool, 2026, 44, pause)
+        .await
+        .unwrap();
+    let document = serde_json::to_value(document.unwrap()).unwrap();
+    assert_eq!(document["days"][1]["shoppingListIds"], json!([]));
+    assert_eq!(document["prepSessions"][0]["weekday"], 1);
+    assert_eq!(
+        serde_json::to_value(&calendar.marked_days).unwrap(),
+        fixture_marks(true)
+    );
+
+    let (document, calendar) = queries::load_week_page(&pool, 2026, 44).await.unwrap();
+    let document = serde_json::to_value(document.unwrap()).unwrap();
+    assert_eq!(document["days"][1]["shoppingListIds"], json!([L1]));
+    assert_eq!(
+        serde_json::to_value(&calendar.marked_days).unwrap(),
+        json!([
+            mark("2026-10-26", true, false),
+            mark("2026-10-27", true, false),
+            mark("2026-10-28", true, true),
+            mark("2026-10-30", false, true),
+        ])
     );
 }
 
@@ -971,6 +1103,8 @@ async fn pages_carry_their_own_iso_week_year_and_the_clock_date() {
                 "kind": "invalid",
                 "today": today,
                 "plannedWeeks": [planned(2025, 50), planned(2026, 44)],
+                "markedDays": fixture_marks(false),
+                "displayedDate": null,
             })
         );
     }
@@ -1281,6 +1415,648 @@ async fn unknown_paths_keep_plain_404() {
         assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
         assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
         assert!(!body.contains("sous-page"), "{uri}");
+    }
+}
+
+// ---- Feature 13: day view ----
+
+/// Page body, plus the `displayedDate` and `kind` of its payload.
+async fn page_at(pool: &SqlitePool, clock: Clock, uri: &str) -> (StatusCode, Value) {
+    let (s, _, body) = get_at(pool, clock, uri).await;
+    (s, page_json(&body))
+}
+
+#[tokio::test]
+async fn root_displayed_date_is_today_in_the_service_timezone() {
+    use chrono::TimeZone;
+    let t = TestDb::with_fixture().await;
+    insert_weeks(&t, &[(2026, 45), (2026, 46)]).await;
+    let pool = t.reader().await;
+    let new_york = |y, m, d, h, min, s| {
+        Clock::fixed(
+            chrono_tz::America::New_York,
+            chrono::Utc.with_ymd_and_hms(y, m, d, h, min, s).unwrap(),
+        )
+    };
+
+    for (clock, date, week, what) in [
+        (
+            berlin(2026, 11, 11, 22, 59, 59),
+            "2026-11-11",
+            46,
+            "Berlin before midnight",
+        ),
+        (
+            berlin(2026, 11, 11, 23, 0, 0),
+            "2026-11-12",
+            46,
+            "Berlin after midnight",
+        ),
+        // Sunday -> Monday: the week changes with the date.
+        (
+            berlin(2026, 11, 8, 22, 59, 59),
+            "2026-11-08",
+            45,
+            "Berlin Sunday",
+        ),
+        (
+            berlin(2026, 11, 8, 23, 0, 0),
+            "2026-11-09",
+            46,
+            "Berlin Monday",
+        ),
+        // The same instants in New York are still the previous evening.
+        (
+            new_york(2026, 11, 11, 22, 59, 59),
+            "2026-11-11",
+            46,
+            "New York 17:59",
+        ),
+        (
+            new_york(2026, 11, 11, 23, 0, 0),
+            "2026-11-11",
+            46,
+            "New York 18:00",
+        ),
+        (
+            new_york(2026, 11, 12, 4, 59, 59),
+            "2026-11-11",
+            46,
+            "New York before midnight",
+        ),
+        (
+            new_york(2026, 11, 12, 5, 0, 0),
+            "2026-11-12",
+            46,
+            "New York after midnight",
+        ),
+        (
+            new_york(2026, 11, 9, 4, 59, 59),
+            "2026-11-08",
+            45,
+            "New York Sunday",
+        ),
+        (
+            new_york(2026, 11, 9, 5, 0, 0),
+            "2026-11-09",
+            46,
+            "New York Monday",
+        ),
+    ] {
+        let (s, page) = page_at(&pool, clock, "/").await;
+        assert_eq!(s, StatusCode::OK, "{what}");
+        assert_eq!(page["kind"], "week", "{what}");
+        assert_eq!(page["displayedDate"], date, "{what}");
+        assert_eq!(page["today"], date, "{what}");
+        assert_eq!(page["document"]["week"]["isoWeek"], week, "{what}");
+        assert!(page.get("selectedWeekday").is_none(), "{what}");
+    }
+
+    // No page kind carries `selectedWeekday`.
+    for uri in [
+        "/",
+        "/2026/44",
+        "/2026/45",
+        "/2026/54",
+        "/2026-10-28",
+        "/2026-11-02",
+        "/2026-02-30",
+    ] {
+        let (_, page) = page_at(&pool, test_clock(), uri).await;
+        assert!(page.get("selectedWeekday").is_none(), "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn date_pages_show_the_week_that_holds_the_date() {
+    let t = TestDb::with_fixture().await;
+    insert_weeks(&t, &[(2026, 46), (2026, 1), (2026, 53)]).await;
+    let pool = t.reader().await;
+
+    let (s, h, body) = get(&pool, "/2026-11-11").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(h[header::CACHE_CONTROL], "no-store");
+    assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8");
+    assert_eq!(title(&body), "Meal Plan — 2026 week 46");
+    let page = page_json(&body);
+    assert_eq!(page["kind"], "week");
+    assert_eq!(page["displayedDate"], "2026-11-11");
+    assert_eq!(page["document"]["week"]["isoYear"], 2026);
+    assert_eq!(page["document"]["week"]["isoWeek"], 46);
+    assert_eq!(page["today"], "2026-12-02");
+
+    // The date of an explicit week page: today inside the current week, else the Monday.
+    let (_, page) = page_at(&pool, test_clock(), "/2026/46").await;
+    assert_eq!(page["displayedDate"], "2026-11-09");
+    let (_, page) = page_at(&pool, berlin(2026, 11, 12, 9, 0, 0), "/2026/46").await;
+    assert_eq!(page["displayedDate"], "2026-11-12");
+    // The clock does not matter for a date page.
+    let (_, page) = page_at(&pool, berlin(2026, 11, 12, 9, 0, 0), "/2026-11-15").await;
+    assert_eq!(page["displayedDate"], "2026-11-15");
+
+    // ISO year boundaries: 2025-12-29 opens 2026-W1, 2027-01-03 opens 2026-W53.
+    let (s, h, body) = get(&pool, "/2025-12-29").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(h.get(header::LOCATION).is_none());
+    assert_eq!(title(&body), "Meal Plan — 2026 week 1");
+    let page = page_json(&body);
+    assert_eq!(page["displayedDate"], "2025-12-29");
+    assert_eq!(page["document"]["week"]["isoYear"], 2026);
+    assert_eq!(page["document"]["week"]["isoWeek"], 1);
+    let (_, page) = page_at(&pool, test_clock(), "/2027-01-03").await;
+    assert_eq!(page["displayedDate"], "2027-01-03");
+    assert_eq!(page["document"]["week"]["isoYear"], 2026);
+    assert_eq!(page["document"]["week"]["isoWeek"], 53);
+
+    // The API serves the same document, byte for byte, under the date and under the week.
+    let (_, _, by_date) = get(&pool, "/api/2025-12-29").await;
+    let (s, _, by_week) = get(&pool, "/api/2026/1").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(by_date, by_week);
+}
+
+#[tokio::test]
+async fn date_page_status_table() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+
+    // Valid date, no plan: the missing page for the date's ISO week, a 404.
+    for (uri, path, range) in [
+        ("/2026-11-11", "/2026/46", ("2026-11-09", "2026-11-15")),
+        ("/0001-01-01", "/0001/1", ("0001-01-01", "0001-01-07")),
+        ("/9999-12-26", "/9999/51", ("9999-12-20", "9999-12-26")),
+    ] {
+        let (s, h, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+        let page = page_json(&body);
+        assert_eq!(page["kind"], "missing", "{uri}");
+        assert_eq!(page["displayedDate"], &uri[1..], "{uri}");
+        assert_eq!(page["week"]["path"], path, "{uri}");
+        assert_eq!(page["week"]["startDate"], range.0, "{uri}");
+        assert_eq!(page["week"]["endDate"], range.1, "{uri}");
+        assert_eq!(page["today"], "2026-12-02", "{uri}");
+        assert!(page["plannedWeeks"].is_array(), "{uri}");
+        assert!(page["markedDays"].is_array(), "{uri}");
+    }
+    let (_, _, body) = get(&pool, "/2026-11-11").await;
+    assert_eq!(title(&body), "Meal Plan — 2026 week 46");
+
+    // The same dates with a bare week row stored are 200 week pages.
+    insert_weeks(&t, &[(1, 1), (9999, 51)]).await;
+    for uri in ["/0001-01-01", "/9999-12-26"] {
+        let (s, h, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::OK, "{uri}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+        let page = page_json(&body);
+        assert_eq!(page["kind"], "week", "{uri}");
+        assert_eq!(page["displayedDate"], &uri[1..], "{uri}");
+    }
+
+    // Date-shaped but not a valid date path.
+    for uri in [
+        "/2026-02-30",
+        "/2025-02-29",
+        "/0000-01-01",
+        "/2026-13-01",
+        "/2026-00-10",
+        "/2026-01-00",
+        "/9999-12-27",
+        "/9999-12-31",
+    ] {
+        let (s, h, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+        assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
+        assert_eq!(title(&body), "Invalid date — Meal Plan", "{uri}");
+        assert_eq!(
+            page_json(&body),
+            json!({
+                "kind": "invalidDate",
+                "today": "2026-12-02",
+                "plannedWeeks": [planned(1, 1), planned(2026, 44), planned(9999, 51)],
+                "markedDays": fixture_marks(false),
+                "displayedDate": null,
+            }),
+            "{uri}"
+        );
+    }
+
+    // Not date-shaped: the plain not-found page.
+    for uri in [
+        "/2026-1-5",
+        "/2026-11",
+        "/2026-11-111",
+        "/20261111",
+        "/%FF",
+        "/weeks",
+        "/%EF%BC%92%EF%BC%90%EF%BC%92%EF%BC%96-11-11",
+        "/%202026-11-11",
+    ] {
+        let (s, h, body) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{uri}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+        assert_eq!(h[header::CONTENT_TYPE], "text/html; charset=utf-8", "{uri}");
+        assert!(!body.contains("sous-page"), "{uri}");
+    }
+
+    // A missing plan at `/` is still a 200.
+    let (s, _, body) = get(&pool, "/").await;
+    assert_eq!(s, StatusCode::OK);
+    assert_eq!(page_json(&body)["kind"], "missing");
+}
+
+#[tokio::test]
+async fn date_paths_allow_only_get_and_head() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    for uri in [
+        "/2026-11-11",
+        "/2026-02-30",
+        "/0000-01-01",
+        "/9999-12-31",
+        "/api/2026-11-11",
+        "/api/2026-02-30",
+        "/api/9999-12-31",
+    ] {
+        for method in ["POST", "PUT", "PATCH", "DELETE"] {
+            let (s, h, _) = send(&pool, method, uri, None).await;
+            assert_eq!(s, StatusCode::METHOD_NOT_ALLOWED, "{method} {uri}");
+            assert_eq!(h[header::ALLOW], "GET,HEAD", "{method} {uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{method} {uri}");
+        }
+    }
+    // Other single segments keep the plain not-found response.
+    for method in ["POST", "PUT", "DELETE"] {
+        let (s, _, body) = send(&pool, method, "/2026-1-5", None).await;
+        assert_eq!(s, StatusCode::NOT_FOUND, "{method}");
+        assert!(!body.contains("sous-page"), "{method}");
+        let res = send(&pool, method, "/api/2026-1-5", None).await;
+        assert_json_response(&res, StatusCode::NOT_FOUND, &api_not_found(), "api");
+    }
+}
+
+#[tokio::test]
+async fn date_pages_503_when_database_unavailable() {
+    let (_dir, tableless) = tableless_pool().await;
+    let t = TestDb::with_fixture().await;
+    let closed = t.reader().await;
+    closed.close().await;
+    for pool in [&tableless, &closed] {
+        // Valid with or without a plan, and invalid: all need the database.
+        for uri in ["/2026-10-28", "/2026-11-11", "/2026-02-30"] {
+            let (s, h, body) = get(pool, uri).await;
+            assert_eq!(s, StatusCode::SERVICE_UNAVAILABLE, "{uri}");
+            assert_eq!(h[header::CACHE_CONTROL], "no-store", "{uri}");
+            assert_eq!(page_json(&body), json!({"kind": "unavailable"}), "{uri}");
+        }
+        // A non-date segment is rejected before any database access.
+        let (s, _, _) = get(pool, "/2026-1-5").await;
+        assert_eq!(s, StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
+async fn api_date_routes() {
+    let t = TestDb::with_fixture().await;
+    insert_weeks(&t, &[(2026, 46), (2026, 1), (2026, 53)]).await;
+    let pool = t.reader().await;
+    let nf = StatusCode::NOT_FOUND;
+
+    // Same document as the week route, byte for byte; no redirects.
+    for (date, year, week) in [
+        ("2026-10-28", 2026, 44),
+        ("2026-11-11", 2026, 46),
+        ("2025-12-29", 2026, 1),
+        ("2027-01-03", 2026, 53),
+    ] {
+        let (s, h, by_date) = get(&pool, &format!("/api/{date}")).await;
+        assert_eq!(s, StatusCode::OK, "{date}");
+        assert_eq!(h[header::CONTENT_TYPE], "application/json", "{date}");
+        assert_eq!(h[header::CACHE_CONTROL], "no-store", "{date}");
+        let (_, _, by_week) = get(&pool, &format!("/api/{year}/{week}")).await;
+        assert_eq!(by_date, by_week, "{date}");
+    }
+
+    // Valid date, no plan.
+    for uri in [
+        "/api/2026-11-02",
+        "/api/0001-01-01",
+        "/api/9999-12-26",
+        "/api/2026-12-02",
+    ] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &week_not_found(), uri);
+    }
+    let mut c = t.writer().await;
+    exec(&mut c, &week_sql(&uuid(900), 1, 1)).await.unwrap();
+    exec(&mut c, &week_sql(&uuid(901), 9999, 51)).await.unwrap();
+    for uri in ["/api/0001-01-01", "/api/9999-12-26"] {
+        let (s, _, _) = get(&pool, uri).await;
+        assert_eq!(s, StatusCode::OK, "{uri}");
+    }
+
+    // Date-shaped but invalid.
+    for uri in [
+        "/api/2026-02-30",
+        "/api/2025-02-29",
+        "/api/0000-01-01",
+        "/api/2026-13-01",
+        "/api/9999-12-27",
+        "/api/9999-12-31",
+    ] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &invalid_date_error(), uri);
+    }
+
+    // Neither a year nor date-shaped.
+    for uri in [
+        "/api/2026-1-5",
+        "/api/2026-11",
+        "/api/20261111",
+        "/api/%FF",
+        "/api/weeks",
+    ] {
+        let res = get(&pool, uri).await;
+        assert_json_response(&res, nf, &api_not_found(), uri);
+    }
+
+    // The year route is unchanged.
+    assert_eq!(get(&pool, "/api/2026").await.0, StatusCode::OK);
+    assert_eq!(get(&pool, "/api/2025").await.0, nf);
+}
+
+/// Insert week `(y, w)` with a day on `weekday` that links one shopping list. Ids derive from `n`.
+async fn add_shopping_day(c: &mut SqliteConnection, n: u32, y: i32, w: i32, weekday: i32) {
+    let (week, day, list) = (uuid(n), uuid(n + 1), uuid(n + 2));
+    exec(c, &week_sql(&week, y, w)).await.unwrap();
+    exec(c, &day_sql(&day, &week, weekday)).await.unwrap();
+    exec(
+        c,
+        &format!(
+            "INSERT INTO shopping_lists (id, week_id, position, label) VALUES ('{list}', '{week}', 0, 'l')"
+        ),
+    )
+    .await
+    .unwrap();
+    exec(
+        c,
+        &format!(
+            "INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{day}', '{list}', 0)"
+        ),
+    )
+    .await
+    .unwrap();
+}
+
+/// Insert a prep session with `tasks` tasks on an existing week. Ids derive from `n`.
+async fn add_session(
+    c: &mut SqliteConnection,
+    n: u32,
+    week: &str,
+    position: i32,
+    weekday: Option<i32>,
+    tasks: u32,
+) {
+    let session = uuid(n);
+    let weekday = weekday.map_or("NULL".to_string(), |d| d.to_string());
+    exec(
+        c,
+        &format!(
+            "INSERT INTO prep_sessions (id, week_id, position, title, weekday) \
+             VALUES ('{session}', '{week}', {position}, 's', {weekday})"
+        ),
+    )
+    .await
+    .unwrap();
+    for i in 0..tasks {
+        exec(
+            c,
+            &format!(
+                "INSERT INTO prep_tasks (id, session_id, position, name, time, instructions) \
+                 VALUES ('{}', '{session}', {i}, 'n', 't', 'i')",
+                uuid(n + 1 + i)
+            ),
+        )
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn marked_days_for_the_pinned_fixtures() {
+    // Without the prep-days file the sessions have no weekday: shopping marks only.
+    let t = TestDb::with_fixture().await;
+    let (_, page) = page_at(&t.reader().await, test_clock(), "/2026/44").await;
+    assert_eq!(page["markedDays"], fixture_marks(false));
+
+    let t = TestDb::with_prep_days().await;
+    let pool = t.reader().await;
+    let (_, page) = page_at(&pool, test_clock(), "/2026/44").await;
+    assert_eq!(
+        page["markedDays"],
+        json!([
+            {"date": "2026-10-26", "shopping": true, "prep": true},
+            {"date": "2026-10-28", "shopping": true, "prep": true},
+        ])
+    );
+    // The key order is date, shopping, prep.
+    let (_, _, body) = get(&pool, "/2026/44").await;
+    assert!(
+        body.contains("\"markedDays\":[{\"date\":\"2026-10-26\",\"shopping\":true,\"prep\":true}")
+    );
+    // The prep sessions carry their weekday right after `covers`.
+    let (_, _, api) = get(&pool, "/api/2026/44").await;
+    assert!(api.contains("\"covers\":"));
+    let doc: Value = serde_json::from_str(&api).unwrap();
+    let weekdays: Vec<(&str, &Value)> = doc["prepSessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| (s["id"].as_str().unwrap(), &s["weekday"]))
+        .collect();
+    assert!(weekdays.contains(&(SESSION_MON, &json!(1))));
+    assert!(weekdays.contains(&(SESSION_WED, &json!(3))));
+
+    // History weeks have no shopping links and no prep sessions.
+    let mut c = t.writer().await;
+    sqlx::raw_sql(HISTORY_FIXTURE)
+        .execute(&mut c)
+        .await
+        .unwrap();
+    let (_, page) = page_at(&pool, test_clock(), "/2026/44").await;
+    assert_eq!(page["markedDays"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn marked_days_need_a_weekday_and_a_task_for_prep() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let mut c = t.writer().await;
+
+    // A weekday but no tasks, and tasks but no weekday (the fixture sessions): no prep mark.
+    add_session(&mut c, 3000, FIXTURE_WEEK, 20, Some(5), 0).await;
+    let (_, page) = page_at(&pool, test_clock(), "/2026/44").await;
+    assert_eq!(page["markedDays"], fixture_marks(false));
+
+    // A weekday and a task: a prep mark on a day without shopping.
+    add_session(&mut c, 3100, FIXTURE_WEEK, 21, Some(5), 1).await;
+    let (_, page) = page_at(&pool, test_clock(), "/2026/44").await;
+    assert_eq!(
+        page["markedDays"],
+        json!([
+            mark("2026-10-26", true, false),
+            mark("2026-10-28", true, false),
+            mark("2026-10-30", false, true),
+        ])
+    );
+
+    // A day with a shopping link but no prep shows `prep: false` next to a day with both.
+    exec(
+        &mut c,
+        &format!("UPDATE prep_sessions SET weekday = 3 WHERE id = '{SESSION_WED}'"),
+    )
+    .await
+    .unwrap();
+    let (_, page) = page_at(&pool, test_clock(), "/2026/44").await;
+    assert_eq!(
+        page["markedDays"],
+        json!([
+            mark("2026-10-26", true, false),
+            mark("2026-10-28", true, true),
+            mark("2026-10-30", false, true),
+        ])
+    );
+}
+
+#[tokio::test]
+async fn marked_days_are_ascending_across_weeks_and_iso_years() {
+    let t = TestDb::migrated().await;
+    let pool = t.reader().await;
+    let mut c = t.writer().await;
+    // Inserted out of order on purpose.
+    add_shopping_day(&mut c, 1000, 2027, 1, 1).await;
+    add_shopping_day(&mut c, 2000, 2026, 44, 3).await;
+    add_shopping_day(&mut c, 4000, 2026, 1, 1).await;
+    add_shopping_day(&mut c, 5000, 2025, 52, 7).await;
+    // A prep-only mark in 2026-W1.
+    add_session(&mut c, 6000, &uuid(4000), 0, Some(2), 1).await;
+
+    for uri in [
+        "/2026/44",
+        "/2026/45",
+        "/2026/54",
+        "/2026-11-11",
+        "/2026-02-30",
+    ] {
+        let (_, page) = page_at(&pool, test_clock(), uri).await;
+        assert_eq!(
+            page["markedDays"],
+            json!([
+                mark("2025-12-28", true, false),
+                mark("2025-12-29", true, false),
+                mark("2025-12-30", false, true),
+                mark("2026-10-28", true, false),
+                mark("2027-01-04", true, false),
+            ]),
+            "{uri}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn marked_days_follow_committed_changes() {
+    let t = TestDb::with_fixture().await;
+    let pool = t.reader().await;
+    let marks = |uri: &'static str| {
+        let pool = pool.clone();
+        async move { page_at(&pool, test_clock(), uri).await.1["markedDays"].clone() }
+    };
+    let mut c = t.writer().await;
+    assert_eq!(marks("/2026/44").await, fixture_marks(false));
+
+    // An uncommitted weekday is invisible; once committed it shows on the next request.
+    let mut tx = c.begin().await.unwrap();
+    exec(
+        &mut tx,
+        &format!("UPDATE prep_sessions SET weekday = 1 WHERE id = '{SESSION_MON}'"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(marks("/2026/44").await, fixture_marks(false));
+    tx.commit().await.unwrap();
+    assert_eq!(
+        marks("/2026/44").await,
+        json!([
+            mark("2026-10-26", true, true),
+            mark("2026-10-28", true, false)
+        ])
+    );
+
+    // A new shopping link.
+    exec(
+        &mut c,
+        &format!(
+            "INSERT INTO day_shopping_lists (day_id, shopping_list_id, position) VALUES ('{TUE}', '{L1}', 0)"
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        marks("/2026-10-27").await,
+        json!([
+            mark("2026-10-26", true, true),
+            mark("2026-10-27", true, false),
+            mark("2026-10-28", true, false),
+        ])
+    );
+
+    // Deleting some tasks keeps the mark, deleting the last one removes it.
+    exec(
+        &mut c,
+        &format!(
+            "DELETE FROM prep_tasks WHERE id = (SELECT id FROM prep_tasks WHERE session_id = '{SESSION_MON}' ORDER BY position LIMIT 1)"
+        ),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        marks("/2026/44").await.as_array().unwrap()[0],
+        mark("2026-10-26", true, true)
+    );
+    exec(
+        &mut c,
+        &format!("DELETE FROM prep_tasks WHERE session_id = '{SESSION_MON}'"),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        marks("/2026/44").await.as_array().unwrap()[0],
+        mark("2026-10-26", true, false)
+    );
+
+    // Deleting the week removes its marks.
+    exec(&mut c, "DELETE FROM weeks").await.unwrap();
+    assert_eq!(marks("/2026/44").await, json!([]));
+}
+
+#[tokio::test]
+async fn embedded_document_equals_the_api_body_on_date_routes() {
+    let t = TestDb::with_prep_days().await;
+    let pool = t.reader().await;
+    for (page_uri, api_uri) in [
+        ("/2026/44", "/api/2026/44"),
+        ("/2026-10-28", "/api/2026-10-28"),
+        ("/2026-11-01", "/api/2026-11-01"),
+    ] {
+        let (_, page) = page_at(&pool, test_clock(), page_uri).await;
+        let (s, _, api) = get(&pool, api_uri).await;
+        assert_eq!(s, StatusCode::OK, "{api_uri}");
+        assert_eq!(
+            page["document"],
+            serde_json::from_str::<Value>(&api).unwrap(),
+            "{page_uri}"
+        );
     }
 }
 
@@ -1855,16 +2631,6 @@ async fn upgrade_from_version_3_drops_strategy() {
     let before_rows = row_snapshot(&mut c, &CONTENT_TABLES).await;
     drop(c);
 
-    // The documents as the 0003 database serves them (the queries no longer read strategy tables).
-    let mut before_docs = Vec::new();
-    {
-        let old_pool = db::open_read_pool(&path).await.unwrap();
-        for &(y, w) in &weeks {
-            before_docs.push(week_value(&old_pool, y, w).await);
-        }
-        old_pool.close().await;
-    }
-
     db::migrate(&path).await.unwrap();
 
     let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
@@ -1877,7 +2643,10 @@ async fn upgrade_from_version_3_drops_strategy() {
         .map(|r| r.get::<String, _>(0))
         .collect();
     assert!(!tables.iter().any(|t| t.contains("strategy")), "{tables:?}");
-    assert_eq!(row_snapshot(&mut c, &CONTENT_TABLES).await, before_rows);
+    assert_eq!(
+        without_weekday_column(row_snapshot(&mut c, &CONTENT_TABLES).await),
+        before_rows
+    );
 
     let pool = db::open_read_pool(&path).await.unwrap();
     // The same fixtures in a database that never had strategy cards: the weeks must match it.
@@ -1887,16 +2656,116 @@ async fn upgrade_from_version_3_drops_strategy() {
         .await
         .unwrap();
     let fresh_pool = fresh.reader().await;
-    for ((y, w), before) in weeks.into_iter().zip(before_docs) {
+    for (y, w) in weeks {
         let doc = week_value(&pool, y, w).await;
-        assert_eq!(doc, before, "{y}-W{w} unchanged by the upgrade");
         assert!(doc.get("strategyCards").is_none(), "{y}-W{w}");
-        assert_eq!(doc["schemaVersion"], 2, "{y}-W{w}");
+        assert_eq!(doc["schemaVersion"], 3, "{y}-W{w}");
         assert_eq!(doc, week_value(&fresh_pool, y, w).await, "{y}-W{w}");
     }
     let doc = week_value(&pool, 2026, 44).await;
     assert_eq!(doc["prepSessions"].as_array().unwrap().len(), 2);
     assert_eq!(doc["days"][2]["reminder"]["title"], "Shop day");
+}
+
+/// `row_snapshot` rows of a database that has `prep_sessions.weekday` (the last column), with that
+/// column removed and asserted NULL, so they compare with a snapshot taken before the column existed.
+fn without_weekday_column(rows: Vec<String>) -> Vec<String> {
+    let mut in_sessions = false;
+    rows.into_iter()
+        .map(|row| {
+            if row.starts_with("== ") {
+                in_sessions = row.starts_with("== prep_sessions:");
+                return row;
+            }
+            if in_sessions {
+                return row
+                    .strip_suffix(",NULL")
+                    .unwrap_or_else(|| panic!("weekday is NULL after the upgrade: {row}"))
+                    .to_string();
+            }
+            row
+        })
+        .collect()
+}
+
+/// Feature 13 upgrade: a database at migration 0004 holding all fixtures gets `weekday` as NULL on
+/// every session and nothing else changes.
+#[tokio::test]
+async fn upgrade_from_version_4_adds_a_null_prep_weekday() {
+    const CONTENT_TABLES: [&str; 10] = [
+        "weeks",
+        "days",
+        "meals",
+        "meal_steps",
+        "shopping_lists",
+        "day_shopping_lists",
+        "shopping_categories",
+        "shopping_items",
+        "prep_sessions",
+        "prep_tasks",
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let mut old = sqlx::migrate!();
+    old.migrations = old
+        .migrations
+        .iter()
+        .filter(|m| m.version <= 4)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    assert_eq!(old.migrations.len(), 4);
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    old.run(&mut c).await.unwrap();
+    for sql in [FIXTURE, WEEKLY_FIXTURE, HISTORY_FIXTURE] {
+        sqlx::raw_sql(sql).execute(&mut c).await.unwrap();
+    }
+    let before_rows = row_snapshot(&mut c, &CONTENT_TABLES).await;
+    assert!(
+        before_rows
+            .iter()
+            .any(|r| r.starts_with("== prep_sessions: 2 rows"))
+    );
+    drop(c);
+
+    db::migrate(&path).await.unwrap();
+
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    // Every session is NULL, every other row and column is unchanged.
+    assert_eq!(
+        without_weekday_column(row_snapshot(&mut c, &CONTENT_TABLES).await),
+        before_rows
+    );
+    drop(c);
+
+    // Each week serves what a fresh database with the same files serves, weekday null everywhere.
+    let pool = db::open_read_pool(&path).await.unwrap();
+    let fresh = TestDb::with_fixture().await;
+    sqlx::raw_sql(HISTORY_FIXTURE)
+        .execute(&mut fresh.writer().await)
+        .await
+        .unwrap();
+    let fresh_pool = fresh.reader().await;
+    for (y, w) in [(2026, 38), (2026, 41), (2026, 44)] {
+        let doc = week_value(&pool, y, w).await;
+        assert_eq!(doc, week_value(&fresh_pool, y, w).await, "{y}-W{w}");
+        assert_eq!(doc["schemaVersion"], 3, "{y}-W{w}");
+        for session in doc["prepSessions"].as_array().unwrap() {
+            assert_eq!(session["weekday"], Value::Null, "{y}-W{w}");
+        }
+    }
+    assert_eq!(
+        week_value(&pool, 2026, 44).await["prepSessions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
 }
 
 #[tokio::test]
@@ -2145,7 +3014,7 @@ async fn week_without_weekly_content_has_empty_collections() {
     assert_eq!(doc["week"]["prepIntro"], Value::Null);
     assert_eq!(doc["prepSessions"], json!([]));
     assert!(doc.get("strategyCards").is_none());
-    assert_eq!(doc["schemaVersion"], 2);
+    assert_eq!(doc["schemaVersion"], 3);
     for d in doc["days"].as_array().unwrap() {
         assert_eq!(d["reminder"], Value::Null);
     }
@@ -2247,6 +3116,10 @@ fn invalid_week() -> Value {
     api_error("invalid_week", "Invalid week.")
 }
 
+fn invalid_date_error() -> Value {
+    api_error("invalid_date", "Invalid date.")
+}
+
 fn api_not_found() -> Value {
     api_error("not_found", "Not found.")
 }
@@ -2310,7 +3183,7 @@ async fn api_matches_page_bootstrap() {
     // Null and empty values are explicit keys.
     let t = TestDb::with_fixture().await;
     let doc = api_json(&t.reader().await, "/api/2026/44").await;
-    assert_eq!(doc["schemaVersion"], 2);
+    assert_eq!(doc["schemaVersion"], 3);
     assert!(doc.get("strategyCards").is_none());
     let thursday = doc["days"][3].as_object().unwrap();
     assert_eq!(thursday["id"], Value::Null);
@@ -2392,7 +3265,7 @@ async fn api_error_contract() {
     let closed = t.reader().await;
     closed.close().await;
     for (name, pool) in [("tableless", &tableless), ("closed", &closed)] {
-        for uri in ["/api/2026/44", "/api/2026/45"] {
+        for uri in ["/api/2026/44", "/api/2026/45", "/api/2026-10-28"] {
             let res = get(pool, uri).await;
             assert_json_response(
                 &res,
@@ -2907,13 +3780,32 @@ fn check_schema(root: &Value, schema: &Value, value: &Value, at: &str) {
         return check_schema(root, &root["components"]["schemas"][name], value, at);
     }
     if let Some(branches) = schema.get("oneOf") {
-        // Only used for a nullable `$ref`: null selects the `null` branch, anything else the other.
-        let branch = branches
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|b| (b["type"] == "null") == value.is_null())
-            .unwrap_or_else(|| panic!("{at}: no oneOf branch"));
+        // A nullable `$ref`: null selects the `null` branch, anything else the other.
+        // Two documents: the branch whose `schemaVersion` const equals the value's.
+        let branches = branches.as_array().unwrap();
+        let resolve = |b: &'_ Value| -> Value {
+            match b.get("$ref").and_then(Value::as_str) {
+                Some(r) => root["components"]["schemas"]
+                    [r.strip_prefix("#/components/schemas/").unwrap()]
+                .clone(),
+                None => b.clone(),
+            }
+        };
+        let versioned = |b: &Value| {
+            let schema = resolve(b);
+            let v = &schema["properties"]["schemaVersion"]["const"];
+            !v.is_null() && *v == value["schemaVersion"]
+        };
+        let branch = if branches.iter().any(|b| b["type"] == "null") {
+            branches
+                .iter()
+                .find(|b| (b["type"] == "null") == value.is_null())
+        } else {
+            let matching: Vec<_> = branches.iter().filter(|b| versioned(b)).collect();
+            assert!(matching.len() <= 1, "{at}: ambiguous oneOf");
+            matching.into_iter().next()
+        }
+        .unwrap_or_else(|| panic!("{at}: no oneOf branch"));
         return check_schema(root, branch, value, at);
     }
     if let Some(c) = schema.get("const") {
@@ -2984,10 +3876,11 @@ async fn openapi_matches_api() {
         "getWeek"
     );
     assert_eq!(
-        spec["paths"]["/api/{year}"]["get"]["operationId"],
-        "getYear"
+        spec["paths"]["/api/{segment}"]["get"]["operationId"],
+        "getYearOrDate"
     );
-    let year_responses = &spec["paths"]["/api/{year}"]["get"]["responses"];
+    assert!(!OPENAPI.contains("getYear\"") && !OPENAPI.contains("/api/{year}\""));
+    let year_responses = &spec["paths"]["/api/{segment}"]["get"]["responses"];
 
     let t = TestDb::with_fixture().await;
     let pool = t.reader().await;
@@ -3008,8 +3901,21 @@ async fn openapi_matches_api() {
     let year_pool = year_t.reader().await;
     let live_year = api_json(&year_pool, "/api/2026").await;
     let year_content = &year_responses["200"]["content"]["application/json"];
-    assert_eq!(year_content["example"], live_year);
+    assert_eq!(year_content["examples"]["year"]["value"], live_year);
     check_schema(&spec, &year_content["schema"], &live_year, "$year");
+    // The date form returns the week document, which satisfies the same `oneOf` (second branch).
+    let live_date = api_json(&pool, "/api/2026-10-28").await;
+    assert_eq!(live_date, live);
+    check_schema(&spec, &year_content["schema"], &live_date, "$date");
+    let live_date_bare = api_json(&bare.reader().await, "/api/2026-10-28").await;
+    check_schema(
+        &spec,
+        &year_content["schema"],
+        &live_date_bare,
+        "$date-bare",
+    );
+    // The year document must not satisfy the week branch by accident.
+    assert_ne!(live_year["schemaVersion"], live_date["schemaVersion"]);
     let empty = TestDb::migrated().await;
     let live_empty = api_json(&empty.reader().await, "/api/2026").await;
     assert_eq!(live_empty["weeks"], json!([]));
@@ -3039,7 +3945,7 @@ async fn openapi_matches_api() {
     }
     assert_eq!(
         schemas["WeekDocument"]["properties"]["schemaVersion"]["const"],
-        2
+        3
     );
     assert_eq!(
         schemas["YearDocument"]["properties"]["schemaVersion"]["const"],
@@ -3055,10 +3961,15 @@ async fn openapi_matches_api() {
     ];
     let year_cases = [
         ("year_not_found", &pool, "/api/2025"),
+        ("week_not_found", &pool, "/api/2026-11-02"),
+        ("invalid_date", &pool, "/api/2026-02-30"),
         ("not_found", &pool, "/api/nothing"),
         ("service_unavailable", &tableless, "/api/2026"),
     ];
-    for (route_responses, cases) in [(responses, &week_cases), (year_responses, &year_cases)] {
+    for (route_responses, cases) in [
+        (responses, &week_cases[..]),
+        (year_responses, &year_cases[..]),
+    ] {
         for (code, pool, uri) in cases {
             let (s, _, body) = get(pool, uri).await;
             let body: Value = serde_json::from_str(&body).unwrap();

@@ -48,28 +48,33 @@ The [feature tracker](README.md) links the incremental implementation specs. Fea
 | --- | --- |
 | `/` | Render current ISO week using configured timezone. |
 | `/<year>/<week>` | Render the specified ISO week; canonical week number has no leading zero. |
+| `/<date>` | Render the ISO week containing the date (`YYYY-MM-DD`), showing that day. |
 | `/<year>` | List the stored plans of one ISO week-year in descending week order, with date ranges and links, and link the adjacent years that have plans. |
 | `/api/<year>/<week>` | Return a complete, ordered week document as JSON. |
+| `/api/<date>` | Return the document of the week containing the date as JSON. |
 | `/api/<year>` | Return the year page's listing as JSON. |
 
 For example, `/2026/44` represents October 26–November 1, 2026. Validate that the requested week exists in the ISO calendar; some years have no week 53. Accept four-digit years from 0001–9999 only when the entire seven-day date range is representable. Redirect zero-padded valid week paths to their canonical form.
 
-A year path is exactly four ASCII digits from 0001 to 9999, the same form as the year in week URLs; any other single-segment path, including `/weeks`, is a plain 404. A year page lists the weeks whose ISO week-year is in its URL, so `/2026/1` (December 29, 2025–January 4, 2026) is on `/2026`. It links to the previous and next year only when that adjacent year has at least one stored plan. The current year is the ISO week-year of today in the configured timezone, resolved on every request. Year pages are still served at `/<year>`, but no page links to them.
+A year path is exactly four ASCII digits from 0001 to 9999, the same form as the year in week URLs. A single-segment path that is neither a year nor shaped like a date (see below), such as `/weeks` or `/2026-11`, is a plain 404. A year page lists the weeks whose ISO week-year is in its URL, so `/2026/1` (December 29, 2025–January 4, 2026) is on `/2026`. It links to the previous and next year only when that adjacent year has at least one stored plan. The current year is the ISO week-year of today in the configured timezone, resolved on every request. Year pages are still served at `/<year>`, but no page links to them.
 
 The root route retains `/` in the address bar. On each navigation or reload it resolves the current week again. Explicit week URLs always retain their requested week, regardless of today's date.
 
-On the current week's page, initially select today. On any other week's page, select Monday. Day controls use Monday–Sunday order. Changing tabs or days does not fetch a different week.
+A date path is exactly `YYYY-MM-DD`: four, two and two ASCII digits, a real calendar date, and its ISO week fully representable. A well-formed but impossible or unrepresentable date (such as `/2026-02-30`) renders the invalid date page (HTTP 404). `/2026-1-5` is not date-shaped, so it is a plain 404.
+
+A plan page shows one day, the page's displayed date (`displayedDate` in the page data). At `/<date>` it is the date. At `/` and `/<year>/<week>` it is today when today is in the week and Monday otherwise. A missing-plan page for a date path also carries its date; invalid pages have none. Previous and next day are ordinary links to date paths, so every day change is a navigation; the first and last representable days have a disabled step. The page has no tabs and no day selector.
 
 ## Missing data and errors
 
 A plan exists when a `weeks` record exists. An empty database is a supported first-run state.
 
-- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and the month calendar of week links. Do not show a list of available weeks.
-- Missing plan at a valid explicit week URL: HTTP 404 with the same useful content.
-- Invalid year/week route: HTTP 404 with “Invalid week.”, a link to the current week and the month calendar of week links. If the invalid page cannot read `plannedWeeks`, the database failure rule below applies (HTTP 503).
+- Missing plan at `/`: HTTP 200 with the requested date range, “No meal plan for this week yet.”, and the month calendar. Do not show a list of available weeks.
+- Missing plan at a valid explicit week or date URL: HTTP 404 with the same useful content.
+- Invalid year/week route: HTTP 404 with “Invalid week.”, a link to the current week and the month calendar. If the invalid page cannot read `plannedWeeks`, the database failure rule below applies (HTTP 503).
+- Invalid date route: HTTP 404 with “Invalid date.”, a link to the current week and the month calendar, titled “Invalid date — Meal Plan”.
 - Year without plans: show “No meal plans available yet.” and the year links instead of an empty list. HTTP 200 for the current year, including an empty database; HTTP 404 for any other year.
 - Existing week with no meals for a day: show “No meals planned for this day.” and omit the nutrition summary. Do not invent zero-valued meals.
-- No prep sessions: show a short empty message in the Prep Sessions tab.
+- Prep: a prep session shows on the day of its `weekday`. Sessions without a weekday or without tasks are not shown, and the week's prep introduction shows only above at least one shown session. There is no empty prep message.
 - Database failure: HTTP 503 and a generic availability message. Never present a database failure as a missing plan; log details on the server.
 
 The HTML response itself has the correct status; do not serve HTTP 200 for every path and defer missing-plan detection entirely to the browser.
@@ -80,8 +85,7 @@ The HTML response itself has the correct status; do not serve HTTP 200 for every
 
 Retain:
 
-- Daily Plan and Prep Sessions tabs.
-- Day selector and expandable meal, prep, and shopping cards.
+- Expandable meal, prep, and shopping cards.
 - Meal descriptions, nutrition values, ordered instructions, and tip callouts.
 - Daily nutrition totals and the existing meal-type colors and icons.
 - Shopping-list categories and notes; multiple lists can appear on a day in stored order.
@@ -91,15 +95,15 @@ Intentional changes:
 - Shopping items become ordinary bullet lists. Remove checkbox controls, completion counts, checked colors, and strikethrough state.
 - Display days in ISO week order.
 - Add year and missing-plan pages using the existing typography and container.
-- Week, missing-plan and invalid week pages show a month calendar of week links: a sidebar beside the 540px content column at 900px and wider, and a “Calendar” toggle below that.
-- Select today only when viewing the actual current week; the sample selects by weekday even for old plans.
-- The reference page's Strategy tab is removed. The page has only the Daily Plan and Prep Sessions tabs.
+- Week, date, missing-plan and invalid pages show a month calendar: a sidebar beside the 540px content column at 900px and wider, and a “Calendar” toggle below that. Every date is a link to its date path, week rows show the week number and a dot for planned weeks, and a day with a shopping list or prep session carries a mark (a dot for shopping, a small square for prep).
+- The Daily Plan and Prep Sessions tabs and the day selector are replaced by the day view: a row with previous and next day links around the day's heading (for example “Wednesday, November 11”), then the day's shopping lists, prep sessions, nutrition summary and meals, and reminder.
+- The reference page's Strategy tab is removed.
 
-Move all week-specific text into the database, including the header subtitle, prep introduction, and optional day reminder. Keep “Meal Plan”, tab names, empty-state messages, and nutrition labels as UI text.
+Move all week-specific text into the database, including the header subtitle, prep introduction, and optional day reminder. Keep “Meal Plan”, weekday and month names, empty-state messages, and nutrition labels as UI text.
 
 Continue using the existing React component structure and styles. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. Match the existing body font fallback behavior rather than introducing a new font.
 
-Expanded cards and selected tabs are transient browser state. No persisted UI state or shopping progress is required. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to tabs and expandable controls without changing their appearance.
+Expanded cards are transient browser state. No persisted UI state or shopping progress is required. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
 
 ## Database contract
 
@@ -118,7 +122,7 @@ Ordered child collections have an integer `position >= 0`, unique within their p
 | `day_shopping_lists` | `day_id` FK, `shopping_list_id` FK, `position`; composite PK day/list; unique day/position. Both records must belong to the same week. |
 | `shopping_categories` | `id` PK, `shopping_list_id` FK, `position`, `name`. |
 | `shopping_items` | `id` PK, `category_id` FK, `position`, `text`. |
-| `prep_sessions` | `id` PK, `week_id` FK, `position`, `title`, optional `covers`. |
+| `prep_sessions` | `id` PK, `week_id` FK, `position`, `title`, optional `covers`, optional `weekday` integer 1–7 (the day it shows on). |
 | `prep_tasks` | `id` PK, `session_id` FK, `position`, `name`, `time`, `instructions`. |
 
 Parent deletion cascades to owned children and association records. Index foreign keys used to assemble a week. Enforce cross-week shopping associations with insert/update triggers, including attempts to move referenced records between weeks.
@@ -137,7 +141,7 @@ The schema is a documented integration contract; implementing data entry is outs
 
 The page handler reads a complete week in one read transaction and embeds its initial JSON document safely into the HTML shell. This avoids a second initial data request and ensures status, headings, dates, and content describe the same snapshot. Escape embedded JSON appropriately so text such as `</script>` cannot terminate its container.
 
-The week, missing-plan and invalid week pages also embed `today` (the server's today in `APP_TIMEZONE`) and `plannedWeeks` (every stored week, ascending by ISO week-year and week). On week and missing-plan pages `plannedWeeks` is read in the same read transaction as the week. The week document and the JSON API do not change.
+The week, date, missing-plan and invalid pages also embed `today` (the server's today in `APP_TIMEZONE`), `plannedWeeks` (every stored week, ascending by ISO week-year and week), `displayedDate` (the shown day, or null) and `markedDays` (`{ date, shopping, prep }` for every date of every stored week that has a shopping list or a shown prep session, ascending). On week and missing-plan pages these are read in the same read transaction as the week. The JSON API returns the week document only.
 
 The JSON endpoint exposes the same document shape:
 
@@ -146,12 +150,12 @@ schemaVersion
 week: { id, isoYear, isoWeek, startDate, endDate, subtitle, prepIntro }
 days: [ { id|null, date, weekday, meals: [...], shoppingListIds: [...], reminder|null } ]
 shoppingLists: [ { id, label, note, categories: [ { id, name, items: [...] } ] } ]
-prepSessions: [ { id, title, covers, tasks: [...] } ]
+prepSessions: [ { id, title, covers, weekday|null, tasks: [...] } ]
 ```
 
 Nested meals and tasks carry their stored display fields and IDs. Arrays are ordered. Nullable fields are explicit; absent collections are empty arrays. The API document does not expose internal migration tables or filesystem paths. Missing/invalid weeks return 404 with a stable JSON error code; database failures return 503.
 
-`/api/<year>` returns the year page's data (`year`, `previousYear`, `nextYear`, `weeks`) from one query, with the year page's status rule: a year without plans is 404 `year_not_found` unless it is the current year. Any two-segment path under `/api` is a week path: a valid week returns its document, and an invalid year or week is `invalid_week`. A single segment that is not a year, and any path under `/api` that matches neither route, returns `not_found`.
+`/api/<year>` returns the year page's data (`year`, `previousYear`, `nextYear`, `weeks`) from one query, with the year page's status rule: a year without plans is 404 `year_not_found` unless it is the current year. Any two-segment path under `/api` is a week path: a valid week returns its document, and an invalid year or week is `invalid_week`. A single segment is a year, a valid date (the document of its week), a date-shaped but impossible or unrepresentable date (`invalid_date`), or otherwise `not_found`. Any path under `/api` that matches no route returns `not_found`.
 
 Do not cache HTML or week JSON: send `Cache-Control: no-store`. Serve content-hashed static assets with long-lived immutable caching. No application data cache or restart is needed to observe committed writes. An open page changes only after navigation or refresh.
 
@@ -159,9 +163,9 @@ Request handlers use read-only database connections. Mutation requests to define
 
 ## Verification and acceptance criteria
 
-1. A populated fixture renders all tabs, cards, text, badges, and instructions with the reference styling. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
+1. A populated fixture renders each day's cards, text, badges, and instructions with the reference styling. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
 2. `/` resolves the current ISO week in the configured timezone; `/2026/44` shows October 26–November 1, 2026.
-3. Test ISO year boundaries, valid/invalid week 53, timezone midnight boundaries, canonical redirects, and old/future week selection.
+3. Test ISO year boundaries, valid/invalid week 53, timezone midnight boundaries, canonical redirects, date paths, and the day shown for old, current and future weeks.
 4. Missing current plans, missing explicit weeks, empty archives, missing days, and unavailable databases produce their specified messages and HTTP statuses.
 5. Editing a meal through a separate database connection becomes visible on refresh without restarting. An uncommitted transaction is never partially rendered.
 6. Shopping lists render categorized bullets with no checkboxes or progress state. Collection ordering remains stable after edits.

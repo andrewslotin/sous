@@ -182,6 +182,9 @@ Rules for the document:
   the days whose `id` is `null`, or give them a new id if you add content.
 - `shoppingListIds` on a day refer to `shoppingLists` in the same document. One list may be assigned to several
   days. A list assigned to none is kept but not shown on any day.
+- Every prep session needs a `weekday`: 1 for Monday to 7 for Sunday, or `null`. It is the day the session happens
+  on, independent of `covers`. A session with `null` shows on no day. Any other value, including `0`, `8`, a fraction,
+  a string or a missing key, is `invalid_input`.
 - Meal `type` is one of `Breakfast`, `Lunch`, `Dinner`, `Snack`. Nutrition values are non-negative numbers.
 - The document has no dates: the week's dates come from `isoYear` and `isoWeek`. When editing a `get_week`
   result, remove `schemaVersion`, `week.isoYear`, `week.isoWeek`, `week.startDate`, `week.endDate` and every day's
@@ -235,7 +238,9 @@ Save next week (the document is abbreviated here; use the [example](examples/sav
 { "name": "save_week",
   "arguments": { "isoYear": 2026, "isoWeek": 45,
                  "document": { "week": { "id": "...", "subtitle": null, "prepIntro": null },
-                               "days": [], "shoppingLists": [], "prepSessions": [] } } }
+                               "days": [], "shoppingLists": [],
+                               "prepSessions": [ { "id": "...", "title": "Sunday prep", "covers": null,
+                                                   "weekday": 7, "tasks": [] } ] } } }
 ```
 
 The result holds the saved `document` (with all seven days) and a `revision`. Open `http://127.0.0.1:3000/2026/45`

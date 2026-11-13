@@ -1,14 +1,15 @@
 //! Application queries.
 use crate::calendar::{iso_week_of, week_dates, week_path};
 use crate::model::{
-    Day, Meal, MealHit, MealPage, MealRecord, PlannedWeek, PrepSession, PrepTask, Reminder,
-    RevisedWeek, ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step, StoredWeek, Week,
-    WeekDocument, WeekPage, WeekSummary, YearListing,
+    Day, MarkedDay, Meal, MealHit, MealPage, MealRecord, PlannedWeek, PrepSession, PrepTask,
+    Reminder, RevisedWeek, ShoppingCategory, ShoppingDay, ShoppingItem, ShoppingList, Step,
+    StoredWeek, Week, WeekDocument, WeekPage, WeekSummary, YearListing,
 };
 use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection, SqlitePool};
+use std::collections::BTreeMap;
 
 /// Which optimistic-concurrency check failed in `save_week`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -614,38 +615,102 @@ pub async fn planned_weeks_in(
         .collect())
 }
 
-/// Every stored week, in its own read transaction (for the invalid week page).
-pub async fn planned_weeks(pool: &SqlitePool) -> Result<Vec<PlannedWeek>, sqlx::Error> {
-    let mut tx = pool.begin().await?;
-    let weeks = planned_weeks_in(&mut tx).await?;
-    tx.commit().await?;
-    Ok(weeks)
+/// Dates with a shopping or prep mark, ascending. A date has a shopping mark when its day has at least one
+/// assigned list, and a prep mark when a prep session of its week has that weekday and at least one task.
+pub async fn marked_days_in(conn: &mut SqliteConnection) -> Result<Vec<MarkedDay>, sqlx::Error> {
+    let shopping = sqlx::query(
+        "SELECT DISTINCT w.iso_year, w.iso_week, d.weekday \
+         FROM day_shopping_lists x JOIN days d ON d.id = x.day_id JOIN weeks w ON w.id = d.week_id",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+    let prep = sqlx::query(
+        "SELECT DISTINCT w.iso_year, w.iso_week, s.weekday \
+         FROM prep_sessions s JOIN weeks w ON w.id = s.week_id \
+         WHERE s.weekday IS NOT NULL \
+           AND EXISTS (SELECT 1 FROM prep_tasks t WHERE t.session_id = s.id)",
+    )
+    .fetch_all(&mut *conn)
+    .await?;
+
+    let mut marks: BTreeMap<NaiveDate, (bool, bool)> = BTreeMap::new();
+    for (rows, is_prep) in [(shopping, false), (prep, true)] {
+        for row in rows {
+            let iso_year: i32 = row.get("iso_year");
+            let iso_week: u32 = row.get("iso_week");
+            let weekday: i64 = row.get("weekday");
+            let Some(dates) = week_dates(iso_year, iso_week) else {
+                tracing::warn!(
+                    iso_year,
+                    iso_week,
+                    "skipping stored week with unrepresentable dates"
+                );
+                continue;
+            };
+            let mark = marks.entry(dates[(weekday - 1) as usize]).or_default();
+            if is_prep {
+                mark.1 = true;
+            } else {
+                mark.0 = true;
+            }
+        }
+    }
+    Ok(marks
+        .into_iter()
+        .map(|(date, (shopping, prep))| MarkedDay {
+            date: date_text(date),
+            shopping,
+            prep,
+        })
+        .collect())
 }
 
-/// The week's document (`None` if no `weeks` row) and `plannedWeeks`, from one read transaction.
+/// What the calendar needs on every page: `plannedWeeks` and `markedDays`.
+pub struct CalendarData {
+    pub planned_weeks: Vec<PlannedWeek>,
+    pub marked_days: Vec<MarkedDay>,
+}
+
+/// `plannedWeeks` and `markedDays`, read on the caller's connection/transaction.
+pub async fn calendar_data_in(conn: &mut SqliteConnection) -> Result<CalendarData, sqlx::Error> {
+    Ok(CalendarData {
+        planned_weeks: planned_weeks_in(&mut *conn).await?,
+        marked_days: marked_days_in(&mut *conn).await?,
+    })
+}
+
+/// The same in its own read transaction (invalid week and invalid date pages).
+pub async fn calendar_data(pool: &SqlitePool) -> Result<CalendarData, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    let data = calendar_data_in(&mut tx).await?;
+    tx.commit().await?;
+    Ok(data)
+}
+
+/// The week's document (`None` if no `weeks` row) and the calendar data, from one read transaction.
 pub async fn load_week_page(
     pool: &SqlitePool,
     iso_year: i32,
     iso_week: u32,
-) -> Result<(Option<WeekDocument>, Vec<PlannedWeek>), sqlx::Error> {
+) -> Result<(Option<WeekDocument>, CalendarData), sqlx::Error> {
     load_week_page_with_pause(pool, iso_year, iso_week, std::future::ready(())).await
 }
 
 /// Test seam for snapshot tests: `pause` is awaited after the week document has been read (the read snapshot
-/// is open) and before `plannedWeeks` is read.
+/// is open) and before the calendar data is read.
 #[doc(hidden)]
 pub async fn load_week_page_with_pause(
     pool: &SqlitePool,
     iso_year: i32,
     iso_week: u32,
     pause: impl std::future::Future<Output = ()>,
-) -> Result<(Option<WeekDocument>, Vec<PlannedWeek>), sqlx::Error> {
+) -> Result<(Option<WeekDocument>, CalendarData), sqlx::Error> {
     let mut tx = pool.begin().await?;
     let document = load_week_in(&mut tx, iso_year, iso_week).await?;
     pause.await;
-    let weeks = planned_weeks_in(&mut tx).await?;
+    let calendar = calendar_data_in(&mut tx).await?;
     tx.commit().await?;
-    Ok((document, weeks))
+    Ok((document, calendar))
 }
 
 async fn load_week_paused(
@@ -759,7 +824,7 @@ async fn load_week_paused(
     .await?;
 
     let session_rows = sqlx::query(
-        "SELECT id, title, covers FROM prep_sessions WHERE week_id = ? ORDER BY position",
+        "SELECT id, title, covers, weekday FROM prep_sessions WHERE week_id = ? ORDER BY position",
     )
     .bind(&week_id)
     .fetch_all(&mut *conn)
@@ -795,6 +860,7 @@ async fn load_week_paused(
                 id,
                 title: row.get("title"),
                 covers: row.get("covers"),
+                weekday: row.get::<Option<i64>, _>("weekday").map(|n| n as u32),
             }
         })
         .collect();

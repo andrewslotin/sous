@@ -158,6 +158,9 @@ fn validate(
             format!("prepSessions[{s}].id"),
             &session.id,
         )?;
+        if session.weekday.is_some_and(|n| !(1..=7).contains(&n)) {
+            return invalid(format!("prepSessions[{s}].weekday must be 1–7 or null"));
+        }
         for (t, task) in session.tasks.iter().enumerate() {
             ids.add(
                 "prep_tasks",
@@ -399,14 +402,15 @@ async fn insert_content(conn: &mut SqliteConnection, input: &WeekInput) -> Resul
     }
     for (s, session) in input.prep_sessions.iter().enumerate() {
         sqlx::query(
-            "INSERT INTO prep_sessions (id, week_id, position, title, covers) \
-             VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO prep_sessions (id, week_id, position, title, covers, weekday) \
+             VALUES (?, ?, ?, ?, ?, ?)",
         )
         .bind(&session.id)
         .bind(week_id)
         .bind(s as i64)
         .bind(&session.title)
         .bind(&session.covers)
+        .bind(session.weekday)
         .execute(&mut *conn)
         .await?;
         for (t, task) in session.tasks.iter().enumerate() {

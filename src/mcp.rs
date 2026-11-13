@@ -310,7 +310,7 @@ pub fn tools() -> Vec<Tool> {
             "get_week",
             "Get one week",
             "Returns the complete saved document of one ISO week (days, meals with steps, shopping \
-             lists, prep sessions) plus its revision. Give isoYear and isoWeek \
+             lists, prep sessions with their weekday) plus its revision. Give isoYear and isoWeek \
              together, or neither for the current week. Pass the revision back as expectedRevision \
              to save_week. A week with no saved plan is week_not_found. For one day's shopping lists, use \
              get_shopping_lists instead.",
@@ -355,7 +355,8 @@ pub fn tools() -> Vec<Tool> {
              that is not in the submitted document is deleted. To change one thing, call get_week, edit \
              the document, and submit all of it. Other weeks are never touched. Use client-generated \
              lowercase UUIDs for new records and keep existing ids to preserve them. Optional values \
-             must be explicit nulls; array order is stored order. To create a week that has no \
+             must be explicit nulls; array order is stored order. Every prep session needs a \
+             weekday, 1-7 (Monday=1) or null; a null weekday shows the session on no day. To create a week that has no \
              saved plan yet, omit expectedRevision; if a plan is already saved, this returns \
              revision_conflict. To replace a saved week, pass the revision from get_week as \
              expectedRevision; a mismatch returns revision_conflict, after which you must fetch the \

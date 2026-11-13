@@ -247,6 +247,7 @@ fn sample() -> Value {
         ],
         "prepSessions": [{
             "id": uid(0xa7, 1), "title": "Sunday prep", "covers": null,
+            "weekday": 7,
             "tasks": [
                 {"id": uid(0xa8, 1), "name": "Chop", "time": "10 min", "instructions": "Chop all"},
                 {"id": uid(0xa8, 2), "name": "Cook", "time": "20 min", "instructions": "Cook all"},
@@ -290,7 +291,7 @@ fn expected_document(input: &Value, iso_year: i32, iso_week: u32) -> Value {
         })
         .collect();
     json!({
-        "schemaVersion": 2,
+        "schemaVersion": 3,
         "week": {
             "id": input["week"]["id"], "isoYear": iso_year, "isoWeek": iso_week,
             "startDate": date(0), "endDate": date(6),
@@ -1485,6 +1486,14 @@ fn invalid_edits() -> Vec<(&'static str, Value)> {
         ("weekday 0", edited(|v| v["days"][1]["weekday"] = json!(0))),
         ("weekday 8", edited(|v| v["days"][1]["weekday"] = json!(8))),
         (
+            "prep weekday 0",
+            edited(|v| v["prepSessions"][0]["weekday"] = json!(0)),
+        ),
+        (
+            "prep weekday 8",
+            edited(|v| v["prepSessions"][0]["weekday"] = json!(8)),
+        ),
+        (
             "unknown list reference",
             edited(|v| {
                 v["days"][1]["shoppingListIds"]
@@ -1704,6 +1713,7 @@ fn input_rejects_malformed_documents() {
         ("/days/0/meals/0", "cookTime"),
         ("/shoppingLists/0", "note"),
         ("/prepSessions/0", "covers"),
+        ("/prepSessions/0", "weekday"),
     ] {
         let result = parse(edited(|v| {
             v.pointer_mut(pointer)
@@ -1731,6 +1741,69 @@ fn input_rejects_malformed_documents() {
     assert!(parse(edited(|v| v["days"][0]["weekday"] = json!("1"))).is_err());
     assert!(parse(edited(|v| v["days"][0]["weekday"] = json!(-1))).is_err());
     assert!(parse(edited(|v| v["days"][0]["meals"][0]["forTwo"] = json!(1))).is_err());
+    // A prep weekday is an integer or null.
+    for bad in [json!(-1), json!(1.5), json!("3"), json!(true), json!([3])] {
+        assert!(
+            parse(edited(|v| v["prepSessions"][0]["weekday"] = bad.clone())).is_err(),
+            "prep weekday {bad}"
+        );
+    }
+    for good in [json!(1), json!(4), json!(7), Value::Null] {
+        assert!(
+            parse(edited(|v| v["prepSessions"][0]["weekday"] = good.clone())).is_ok(),
+            "prep weekday {good}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn prep_weekday_round_trips_and_is_part_of_the_revision() {
+    let t = TestDb::full().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+
+    // Every value 1-7 and null is stored and served as given, right after `covers`.
+    let mut revision = None::<String>;
+    for weekday in [
+        json!(1),
+        json!(2),
+        json!(3),
+        json!(4),
+        json!(5),
+        json!(6),
+        json!(7),
+        Value::Null,
+    ] {
+        let value = edited(|v| v["prepSessions"][0]["weekday"] = weekday.clone());
+        let saved = save_w45(&wp, revision.as_deref(), value.clone())
+            .await
+            .unwrap();
+        let loaded = queries::load_week(&rp, 2026, 45).await.unwrap().unwrap();
+        let doc = to_json(&loaded);
+        assert_eq!(doc["prepSessions"][0]["weekday"], weekday);
+        assert_eq!(doc, expected_document(&value, 2026, 45));
+        // The serialized key order puts `weekday` right after `covers`.
+        let text = serde_json::to_string(&loaded.prep_sessions[0]).unwrap();
+        assert!(text.contains("\"covers\":null,\"weekday\":"), "{text}");
+        assert_eq!(doc["schemaVersion"], 3);
+        revision = Some(saved.revision);
+    }
+
+    // A weekday-only change alters the revision; an identical resave keeps it.
+    let base = edited(|v| v["prepSessions"][0]["weekday"] = json!(2));
+    let first = save_w45(&wp, revision.as_deref(), base.clone())
+        .await
+        .unwrap();
+    let same = save_w45(&wp, Some(&first.revision), base).await.unwrap();
+    assert_eq!(same.revision, first.revision);
+    let moved = edited(|v| v["prepSessions"][0]["weekday"] = json!(3));
+    let changed = save_w45(&wp, Some(&same.revision), moved).await.unwrap();
+    assert_ne!(changed.revision, first.revision);
+    let cleared = edited(|v| v["prepSessions"][0]["weekday"] = Value::Null);
+    let nulled = save_w45(&wp, Some(&changed.revision), cleared)
+        .await
+        .unwrap();
+    assert_ne!(nulled.revision, changed.revision);
 }
 
 #[tokio::test]
@@ -2023,12 +2096,30 @@ fn week_input_schema_is_strict() {
         ("MealInput", "tip"),
         ("ShoppingListInput", "note"),
         ("PrepSessionInput", "covers"),
+        ("PrepSessionInput", "weekday"),
     ] {
         nullable(name, field);
     }
     assert_eq!(
         defs["MealInput"]["properties"]["tip"]["type"],
         json!(["string", "null"])
+    );
+
+    // A prep session's weekday is required, an integer 1-7 or null.
+    let prep_weekday = &defs["PrepSessionInput"]["properties"]["weekday"];
+    assert_eq!(prep_weekday["type"], json!(["integer", "null"]));
+    assert_eq!(
+        (
+            prep_weekday["minimum"].as_f64(),
+            prep_weekday["maximum"].as_f64()
+        ),
+        (Some(1.0), Some(7.0))
+    );
+    assert!(
+        defs["PrepSessionInput"]["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("weekday"))
     );
 
     let weekday = &defs["DayInput"]["properties"]["weekday"];

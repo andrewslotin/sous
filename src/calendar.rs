@@ -132,6 +132,44 @@ pub fn week_path(iso_year: i32, iso_week: u32) -> String {
     format!("/{iso_year:04}/{iso_week}")
 }
 
+/// Outcome of matching a single path segment as a date.
+#[derive(Debug, PartialEq, Eq)]
+pub enum DatePath {
+    /// A real Gregorian date whose whole ISO week is representable (`week_dates` is `Some`).
+    Valid(NaiveDate),
+    /// Date-shaped but not a valid date path, e.g. `2026-02-30`, `0000-01-01`, `9999-12-27`..`9999-12-31`.
+    Invalid,
+}
+
+/// `None` when `segment` is not date-shaped: exactly `DDDD-DD-DD` with ASCII digits.
+pub fn classify_date_path(segment: &str) -> Option<DatePath> {
+    let b = segment.as_bytes();
+    let shaped = b.len() == 10
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        });
+    if !shaped {
+        return None;
+    }
+    Some(match parse_date(segment) {
+        Some(date) => {
+            let (iso_year, iso_week) = iso_week_of(date);
+            if week_dates(iso_year, iso_week).is_some() {
+                DatePath::Valid(date)
+            } else {
+                DatePath::Invalid
+            }
+        }
+        None => DatePath::Invalid,
+    })
+}
+
+/// Page path of a date, e.g. `/2026-11-11`; the year is zero-padded to four digits (`/0001-01-01`).
+pub fn date_path(date: NaiveDate) -> String {
+    format!("/{:04}-{:02}-{:02}", date.year(), date.month(), date.day())
+}
+
 /// Monday..Sunday dates of an ISO week, or `None` if the week does not exist
 /// or is not fully representable in 0001-01-01..=9999-12-31.
 pub fn week_dates(iso_year: i32, iso_week: u32) -> Option<[NaiveDate; 7]> {
@@ -266,6 +304,70 @@ mod tests {
             let mut parts = path.trim_start_matches('/').split('/');
             let (ys, ws) = (parts.next().unwrap(), parts.next().unwrap());
             assert_eq!(classify_week_path(ys, ws), WeekPath::Canonical(y, w));
+        }
+    }
+
+    #[test]
+    fn classifies_date_paths() {
+        for (segment, expected) in [
+            ("2026-11-11", d(2026, 11, 11)),
+            ("2025-12-29", d(2025, 12, 29)),
+            ("2024-02-29", d(2024, 2, 29)),
+            ("0001-01-01", d(1, 1, 1)),
+            ("9999-12-26", d(9999, 12, 26)),
+        ] {
+            assert_eq!(
+                classify_date_path(segment),
+                Some(DatePath::Valid(expected)),
+                "{segment}"
+            );
+        }
+        for segment in [
+            "2026-02-30",
+            "2025-02-29",
+            "0000-01-01",
+            "2026-13-01",
+            "2026-00-10",
+            "2026-01-00",
+            "9999-12-27",
+            "9999-12-31",
+        ] {
+            assert_eq!(
+                classify_date_path(segment),
+                Some(DatePath::Invalid),
+                "{segment}"
+            );
+        }
+        for segment in [
+            "",
+            "2026",
+            "weeks",
+            "2026-1-5",
+            "2026-11",
+            "2026-11-111",
+            "20261111",
+            "2026/11/11",
+            "２０２６-11-11",
+            " 2026-11-11",
+            "2026-11-11 ",
+            "+026-11-11",
+            "2026-+1-11",
+        ] {
+            assert_eq!(classify_date_path(segment), None, "{segment:?}");
+        }
+    }
+
+    #[test]
+    fn date_paths_round_trip() {
+        assert_eq!(date_path(d(2026, 11, 11)), "/2026-11-11");
+        assert_eq!(date_path(d(1, 1, 1)), "/0001-01-01");
+        assert_eq!(date_path(d(999, 3, 4)), "/0999-03-04");
+        for date in [d(1, 1, 1), d(2026, 11, 11), d(2024, 2, 29), d(9999, 12, 26)] {
+            let path = date_path(date);
+            assert_eq!(
+                classify_date_path(path.trim_start_matches('/')),
+                Some(DatePath::Valid(date))
+            );
         }
     }
 

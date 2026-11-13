@@ -376,7 +376,7 @@ fn week45() -> Value {
             {"id": id(31), "label": "🧴 Household", "note": null, "categories": []},
         ],
         "prepSessions": [
-            {"id": id(60), "title": "Sunday prep", "covers": "Mon–Tue", "tasks": [
+            {"id": id(60), "title": "Sunday prep", "covers": "Mon–Tue", "weekday": 1, "tasks": [
                 {"id": id(61), "name": "Cook lentils", "time": "20 min", "instructions": "Boil and drain."},
             ]},
         ],
@@ -1103,7 +1103,7 @@ async fn saved_week_is_visible_without_rebuilding_the_router() {
         "Simmer 20 minutes."
     );
     assert!(api.get("strategyCards").is_none());
-    assert_eq!(api["schemaVersion"], 2);
+    assert_eq!(api["schemaVersion"], 3);
     let page = send(
         &app,
         Request::get("/2026/45")
@@ -1236,10 +1236,10 @@ async fn save_week_rejects_strategy_cards_and_get_week_has_none() {
     let saved = ok(&app, "save_week", save_args(45, Value::Null, week45())).await;
     let revision = saved["revision"].clone();
     assert!(saved["document"].get("strategyCards").is_none());
-    assert_eq!(saved["document"]["schemaVersion"], 2);
+    assert_eq!(saved["document"]["schemaVersion"], 3);
     let fetched = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 44})).await;
     assert!(fetched["document"].get("strategyCards").is_none());
-    assert_eq!(fetched["document"]["schemaVersion"], 2);
+    assert_eq!(fetched["document"]["schemaVersion"], 3);
     let (_, year) = get_json(&app, "/api/2026").await;
     assert_eq!(year["schemaVersion"], 1);
 
@@ -1685,6 +1685,107 @@ async fn mcp_client_smoke_test() {
     let tools = legacy.list_all_tools().await.expect("tools");
     assert_eq!(tools.len(), 7);
     legacy.cancel().await.ok();
+}
+
+// ---- Prep session weekday (feature 13) ----
+
+#[tokio::test]
+async fn save_week_prep_weekday_is_validated_stored_and_served() {
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+
+    // Every accepted value round-trips through get_week, the API and the page document.
+    let mut revision = Value::Null;
+    for weekday in [json!(1), json!(4), json!(7), Value::Null] {
+        let mut document = week45();
+        document["prepSessions"][0]["weekday"] = weekday.clone();
+        let saved = ok(&app, "save_week", save_args(45, revision.clone(), document)).await;
+        revision = saved["revision"].clone();
+        assert_eq!(saved["document"]["schemaVersion"], 3);
+        assert_eq!(saved["document"]["prepSessions"][0]["weekday"], weekday);
+        let fetched = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 45})).await;
+        assert_eq!(fetched["document"]["prepSessions"][0]["weekday"], weekday);
+        assert_eq!(fetched["revision"], revision);
+    }
+
+    // Anything else is invalid_input and changes nothing.
+    let before = env.dump().await;
+    for bad in [json!(0), json!(8), json!(-1), json!(1.5), json!("3")] {
+        let mut document = week45();
+        document["prepSessions"][0]["weekday"] = bad.clone();
+        assert_eq!(
+            err(&app, "save_week", save_args(45, revision.clone(), document)).await,
+            "invalid_input",
+            "{bad}"
+        );
+        assert_eq!(env.dump().await, before, "{bad}");
+    }
+    let mut missing = week45();
+    missing["prepSessions"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("weekday");
+    assert_eq!(
+        err(&app, "save_week", save_args(45, revision.clone(), missing)).await,
+        "invalid_input"
+    );
+    assert_eq!(env.dump().await, before);
+    let fetched = ok(&app, "get_week", json!({"isoYear": 2026, "isoWeek": 45})).await;
+    assert_eq!(fetched["revision"], revision);
+
+    // A weekday-only change alters the revision; an identical resave keeps it.
+    let mut same = week45();
+    same["prepSessions"][0]["weekday"] = Value::Null;
+    let resaved = ok(&app, "save_week", save_args(45, revision.clone(), same)).await;
+    assert_eq!(resaved["revision"], revision);
+    let mut moved = week45();
+    moved["prepSessions"][0]["weekday"] = json!(2);
+    let changed = ok(&app, "save_week", save_args(45, revision.clone(), moved)).await;
+    assert_ne!(changed["revision"], revision);
+}
+
+#[tokio::test]
+async fn prep_weekday_appears_in_the_tool_schemas() {
+    let env = Env::empty().await;
+    let app = env.app(journey_clock());
+    let tools = modern(&app, "tools/list", json!({})).await["tools"].clone();
+    let tool = |name: &str| {
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    // Find the `PrepSession*` definition that has `covers`.
+    let session_def = |schema: &Value| -> Value {
+        schema["$defs"]
+            .as_object()
+            .unwrap()
+            .values()
+            .find(|d| d["properties"].get("covers").is_some())
+            .unwrap_or_else(|| panic!("no prep session definition in {schema}"))
+            .clone()
+    };
+    let input = session_def(&tool("save_week")["inputSchema"]);
+    let weekday = &input["properties"]["weekday"];
+    assert_eq!(weekday["type"], json!(["integer", "null"]));
+    assert_eq!(
+        (&weekday["minimum"], &weekday["maximum"]),
+        (&json!(1), &json!(7))
+    );
+    assert!(
+        input["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("weekday"))
+    );
+
+    let output = session_def(&tool("get_week")["outputSchema"]);
+    let weekday = &output["properties"]["weekday"];
+    assert!(weekday.to_string().contains("integer"), "{weekday}");
+    assert!(weekday.to_string().contains("null"), "{weekday}");
 }
 
 // ---- Documentation stays in step with the server ----
