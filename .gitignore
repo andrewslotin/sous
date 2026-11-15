@@ -5,3 +5,6 @@ target/
 .mcp.json
 menu
 data/
+.claude/settings.*
+.env
+.env.*
