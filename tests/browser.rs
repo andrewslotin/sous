@@ -1182,7 +1182,6 @@ impl Harness {
 /// One centred column of at most 560px on every page kind, with no sidebar and no header "Calendar" button.
 fn assert_one_column(width: u32) {
     let h = Opts::new().width(width).launch();
-    let column = f64::from(width.min(560));
     for path in [
         "/2026/44",
         "/2026-10-28",
@@ -1192,13 +1191,16 @@ fn assert_one_column(width: u32) {
         "/2026",
     ] {
         h.goto_page(path);
+        // Classic scrollbars consume layout width on Linux; overlay scrollbars do not.
+        let viewport = h
+            .js("document.documentElement.clientWidth")
+            .as_f64()
+            .unwrap();
+        let column = viewport.min(560.0);
         let [left, right, _, _] = h.rect(".app");
         assert!(right - left <= 560.0, "{path}: column {}", right - left);
         assert_eq!(right - left, column, "{path}: column width");
-        assert!(
-            (left - (f64::from(width) - right)).abs() <= 1.0,
-            "{path}: centred"
-        );
+        assert!((left - (viewport - right)).abs() <= 1.0, "{path}: centred");
         assert_eq!(h.count(".calendar-toggle"), 0, "{path}: header button");
         assert_eq!(h.count(".sidebar"), 0, "{path}: sidebar");
         assert_eq!(
