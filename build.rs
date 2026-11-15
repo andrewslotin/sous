@@ -13,9 +13,9 @@ use oxc::span::SourceType;
 use oxc::transformer::{JsxRuntime, TransformOptions};
 
 const FONTS: &[&str] = &[
-    "source-serif-4-400.woff2",
-    "source-serif-4-600.woff2",
-    "source-serif-4-700.woff2",
+    "jost-400.woff2",
+    "jost-400-italic.woff2",
+    "jost-600.woff2",
     "jetbrains-mono-400.woff2",
     "jetbrains-mono-600.woff2",
     "jetbrains-mono-700.woff2",

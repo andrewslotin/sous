@@ -49,6 +49,9 @@ fn escape_html(text: &str) -> String {
     out
 }
 
+/// Sets `data-theme` before the first paint: the stored choice, or the device's preference (System).
+const THEME_SCRIPT: &str = r#"<script>(function(){var t=null;try{t=localStorage.getItem("sous-theme")}catch(e){}if(t!=="light"&&t!=="dark")t=matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";document.documentElement.setAttribute("data-theme",t)})()</script>"#;
+
 /// Full HTML document for any page. `title` is plain text (escaped here).
 /// `page_json` is the [`crate::model::Page`] payload, already made script-safe by the caller.
 pub fn page(title: &str, page_json: &str) -> String {
@@ -59,6 +62,7 @@ pub fn page(title: &str, page_json: &str) -> String {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title}</title>
+{THEME_SCRIPT}
 <link rel="stylesheet" href="{CSS_PATH}">
 </head>
 <body>
@@ -141,6 +145,16 @@ mod tests {
             }
         }
         assert!(!page.contains("http://") && !page.contains("https://"));
+    }
+
+    #[test]
+    fn theme_script_runs_in_head_before_the_stylesheet() {
+        let page = page("x", "{}");
+        let script = page.find(THEME_SCRIPT).expect("theme script");
+        let head_end = page.find("</head>").unwrap();
+        let stylesheet = page.find("<link rel=\"stylesheet\"").unwrap();
+        assert!(script < stylesheet && stylesheet < head_end);
+        assert_eq!(page.matches("<script>").count(), 1);
     }
 
     #[test]

@@ -3,7 +3,9 @@
 //! Run with: `cargo test --test browser -- --ignored`
 
 use chrono::TimeZone;
-use headless_chrome::protocol::cdp::Emulation::{SetDeviceMetricsOverride, SetTimezoneOverride};
+use headless_chrome::protocol::cdp::Emulation::{
+    MediaFeature, SetDeviceMetricsOverride, SetEmulatedMedia, SetTimezoneOverride,
+};
 use headless_chrome::{Browser, LaunchOptions, Tab};
 use sous::calendar::Clock;
 use sous::db;
@@ -233,6 +235,8 @@ impl Opts {
             device_posture: None,
         })
         .unwrap();
+        // The page follows the device's colour scheme; start from a known one.
+        emulate_color_scheme(&tab, "light");
         let h = Harness {
             rt,
             _dir: dir,
@@ -242,8 +246,22 @@ impl Opts {
             base,
         };
         h.goto_page(path);
+        // Every launch is a fresh profile on its own origin; clear the theme key anyway so none can leak.
+        h.js("localStorage.removeItem('sous-theme')");
         h
     }
+}
+
+/// Emulate `prefers-color-scheme` ("light" or "dark") in the tab (CDP `Emulation.setEmulatedMedia`).
+fn emulate_color_scheme(tab: &Tab, scheme: &str) {
+    tab.call_method(SetEmulatedMedia {
+        media: None,
+        features: Some(vec![MediaFeature {
+            name: "prefers-color-scheme".to_string(),
+            value: scheme.to_string(),
+        }]),
+    })
+    .unwrap();
 }
 
 fn writer_options(path: &std::path::Path) -> SqliteConnectOptions {
@@ -281,6 +299,14 @@ impl Harness {
                 .unwrap();
             c.close().await.unwrap();
         });
+    }
+
+    /// Switch the emulated colour scheme to "light" or "dark".
+    fn set_color_scheme(&self, scheme: &str) {
+        emulate_color_scheme(&self.tab, scheme);
+        self.wait_for(&format!(
+            "matchMedia('(prefers-color-scheme: {scheme})').matches"
+        ));
     }
 
     /// Override the browser's timezone (CDP `Emulation.setTimezoneOverride`).
@@ -792,8 +818,17 @@ impl Harness {
         serde_json::from_value(v).unwrap()
     }
 
+    /// Click one of the calendar's month buttons, opening the calendar first when it is closed.
     fn cal_click(&self, label: &str) {
+        self.open_calendar();
         self.click(&format!("#calendar button[aria-label='{label}']"));
+    }
+
+    /// Open the calendar with the day heading's button when the page has one and the calendar is closed.
+    fn open_calendar(&self) {
+        self.js("(() => { const t = document.querySelector('.day-toggle'); \
+                 if (t && t.getAttribute('aria-expanded') === 'false') t.click(); })()");
+        self.wait_for("document.querySelector('#calendar').offsetParent !== null");
     }
 }
 
@@ -926,7 +961,10 @@ fn calendar_dates_link_to_date_paths_and_rows_are_not_links() {
     h.wait_page("/2026-11-11");
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
-    assert_eq!(h.count(".day-row"), 0);
+    // The missing-plan page has the day row of its date, with the calendar closed.
+    assert_eq!(h.count(".day-row"), 1);
+    assert_eq!(h.heading(), "Wednesday, November 11");
+    assert!(!h.calendar_shown());
     h.goto_page("/2026/45");
     h.cal_click("Previous month");
     h.click("#calendar a[href='/2026-10-28']");
@@ -936,6 +974,7 @@ fn calendar_dates_link_to_date_paths_and_rows_are_not_links() {
     assert_eq!(h.heading(), "Wednesday, October 28");
     // Sunday, November 1 is a dimmed cell of the November grid but a date of the displayed week.
     h.goto_page("/2026-10-28");
+    h.open_calendar();
     h.click("#calendar a[href='/2026-11-01']");
     h.wait_page("/2026-11-01");
     assert_eq!(h.heading(), "Sunday, November 1");
@@ -969,10 +1008,12 @@ fn calendar_marks_planned_weeks_and_the_displayed_week() {
     );
     // Week rows are not links and carry no label of their own.
     assert_eq!(h.count("#calendar .cal-row[aria-label]"), 0);
-    // The displayed date uses the selected-button gradient.
+    // The displayed date is the blue fill.
     assert_eq!(
-        h.js("getComputedStyle(document.querySelector('#calendar [aria-current]')).backgroundImage.includes('linear-gradient')"),
-        true
+        h.js(
+            "getComputedStyle(document.querySelector('#calendar [aria-current]')).backgroundColor"
+        ),
+        LIGHT.rgb("blue")
     );
     assert_eq!(h.count("#calendar .cal-selected"), 1);
 
@@ -1097,52 +1138,6 @@ fn calendar_reflects_committed_weeks_on_reload() {
     assert_eq!(h.js(planned), serde_json::json!(["43", "44"]));
 }
 
-/// The calendar sidebar beside the 540 px column, centred as a group, without a toggle.
-fn assert_sidebar_layout(width: u32) {
-    let h = Opts::new().width(width).launch();
-    assert_eq!(h.js("window.innerWidth"), width);
-    assert_eq!(
-        h.js("getComputedStyle(document.querySelector('#calendar')).display"),
-        "block"
-    );
-    assert_eq!(
-        h.js("getComputedStyle(document.querySelector('.calendar-toggle')).display"),
-        "none"
-    );
-    assert_eq!(
-        h.js("document.querySelector('.app').getBoundingClientRect().width"),
-        540
-    );
-    assert_eq!(
-        h.js("document.querySelector('#calendar').getBoundingClientRect().right <= document.querySelector('.app').getBoundingClientRect().left"),
-        true
-    );
-    assert_eq!(
-        h.js("Math.abs(document.querySelector('#calendar').getBoundingClientRect().left - (window.innerWidth - document.querySelector('.app').getBoundingClientRect().right)) <= 1"),
-        true
-    );
-    assert_eq!(
-        h.js("document.querySelector('#calendar').getBoundingClientRect().left >= 0"),
-        true
-    );
-    assert_eq!(
-        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
-        true
-    );
-}
-
-#[test]
-#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn calendar_is_a_sidebar_at_1280px() {
-    assert_sidebar_layout(1280);
-}
-
-#[test]
-#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn calendar_is_a_sidebar_at_900px() {
-    assert_sidebar_layout(900);
-}
-
 impl Harness {
     fn calendar_shown(&self) -> bool {
         self.js("getComputedStyle(document.querySelector('#calendar')).display !== 'none'")
@@ -1150,8 +1145,9 @@ impl Harness {
             .unwrap()
     }
 
+    /// The day heading button's `aria-expanded`.
     fn expanded(&self) -> String {
-        self.js("document.querySelector('.calendar-toggle').getAttribute('aria-expanded')")
+        self.js("document.querySelector('.day-toggle').getAttribute('aria-expanded')")
             .as_str()
             .unwrap()
             .to_string()
@@ -1161,91 +1157,183 @@ impl Harness {
     fn toggle_once(&self) {
         assert!(!self.calendar_shown());
         assert_eq!(self.expanded(), "false");
-        self.click(".calendar-toggle");
+        self.click(".day-toggle");
         self.wait_for("document.querySelector('#calendar').offsetParent !== null");
         assert_eq!(self.expanded(), "true");
         assert_eq!(
             self.js("document.documentElement.scrollWidth <= window.innerWidth"),
             true
         );
-        self.click(".calendar-toggle");
+        self.click(".day-toggle");
         self.wait_for("document.querySelector('#calendar').offsetParent === null");
         assert_eq!(self.expanded(), "false");
     }
+
+    /// `[left, right, top, bottom]` of the first element matching `selector`.
+    fn rect(&self, selector: &str) -> [f64; 4] {
+        let v = self.js(&format!(
+            "(() => {{ const r = document.querySelector('{selector}').getBoundingClientRect(); \
+             return [r.left, r.right, r.top, r.bottom]; }})()"
+        ));
+        serde_json::from_value(v).unwrap()
+    }
 }
 
-fn assert_toggle_layout(width: u32) {
+/// One centred column of at most 560px on every page kind, with no sidebar and no header "Calendar" button.
+fn assert_one_column(width: u32) {
+    let h = Opts::new().width(width).launch();
+    let column = f64::from(width.min(560));
+    for path in [
+        "/2026/44",
+        "/2026-10-28",
+        "/2026-11-11",
+        "/2026/54",
+        "/2026-02-30",
+        "/2026",
+    ] {
+        h.goto_page(path);
+        let [left, right, _, _] = h.rect(".app");
+        assert!(right - left <= 560.0, "{path}: column {}", right - left);
+        assert_eq!(right - left, column, "{path}: column width");
+        assert!(
+            (left - (f64::from(width) - right)).abs() <= 1.0,
+            "{path}: centred"
+        );
+        assert_eq!(h.count(".calendar-toggle"), 0, "{path}: header button");
+        assert_eq!(h.count(".sidebar"), 0, "{path}: sidebar");
+        assert_eq!(
+            h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+            true,
+            "{path}: overflow"
+        );
+        if h.count("#calendar") == 1 {
+            // The calendar is inside the column, never beside it.
+            h.open_calendar();
+            let [cl, cr, _, _] = h.rect("#calendar");
+            assert!(cl >= left - 0.5 && cr <= right + 0.5, "{path}: calendar");
+            assert_eq!(
+                h.js("getComputedStyle(document.querySelector('#calendar')).position"),
+                "static",
+                "{path}"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn every_page_is_one_column_of_at_most_560px_at_1280px() {
+    assert_one_column(1280);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn every_page_is_one_column_of_at_most_560px_at_900px() {
+    assert_one_column(900);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn every_page_is_one_column_of_at_most_560px_at_375px() {
+    assert_one_column(375);
+}
+
+/// The calendar is hidden by default on a day page; the day heading's button shows and hides it.
+fn assert_calendar_toggle(width: u32) {
     let h = Opts::new().width(width).launch();
     assert!(!h.calendar_shown());
+    assert_eq!(h.count("#calendar:not(.is-open)"), 1);
     assert_eq!(h.expanded(), "false");
+    assert_eq!(h.count(".calendar-toggle"), 0);
+    // The heading is a button with the heading text, controlling the calendar.
     assert_eq!(
-        h.js("document.querySelector('.calendar-toggle').getAttribute('aria-controls')"),
-        "calendar"
-    );
-    assert_eq!(h.text(".calendar-toggle"), "Calendar");
-    assert_eq!(
-        h.js("document.querySelectorAll('.header .header-meta > .calendar-toggle').length"),
+        h.count("h2.day-heading > button.day-toggle[type=button]"),
         1
     );
-    // Right-aligned in the header row.
     assert_eq!(
-        h.js("Math.abs(document.querySelector('.calendar-toggle').getBoundingClientRect().right - document.querySelector('.header').getBoundingClientRect().right) < 1"),
-        true
+        h.js("document.querySelector('.day-toggle').getAttribute('aria-controls')"),
+        "calendar"
     );
-    let style = "(() => { const s = getComputedStyle(document.querySelector(SEL)); return [s.fontSize, s.color, s.fontFamily, s.fontWeight, s.textDecorationLine]; })()";
-    let toggle = h.js(&style.replace("SEL", "'.calendar-toggle'"));
+    assert_eq!(
+        h.js("document.querySelector('.day-toggle').getAttribute('aria-label')"),
+        format!("{}, calendar", h.heading())
+    );
+    // A dashed underline marks it as a link.
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('.day-toggle')).textDecorationStyle"),
+        "dashed"
+    );
 
-    // Opens between the header and the day row; closes again.
-    h.click(".calendar-toggle");
+    // Pointer: opens below the day row and above the content; closes again.
+    h.click(".day-toggle");
     h.wait_for("document.querySelector('#calendar').offsetParent !== null");
     assert_eq!(h.expanded(), "true");
-    assert_eq!(
-        h.js("document.querySelector('#calendar').getBoundingClientRect().top >= document.querySelector('.header').getBoundingClientRect().bottom"),
-        true
-    );
-    assert_eq!(
-        h.js("document.querySelector('#calendar').getBoundingClientRect().bottom <= document.querySelector('.day-row').getBoundingClientRect().top"),
-        true
-    );
+    assert_eq!(h.count("#calendar.is-open"), 1);
+    assert!(h.rect("#calendar")[2] >= h.rect(".day-row")[3]);
+    assert!(h.rect("#calendar")[3] <= h.rect(".summary")[2]);
     assert_eq!(
         h.js("document.documentElement.scrollWidth <= window.innerWidth"),
         true
     );
-    h.click(".calendar-toggle");
+    h.click(".day-toggle");
     h.wait_for("document.querySelector('#calendar').offsetParent === null");
     assert_eq!(h.expanded(), "false");
 
-    // Enter on the focused button toggles too, and a reload starts closed.
-    h.js("document.querySelector('.calendar-toggle').focus()");
+    // Keyboard: Enter and Space on the focused button toggle too.
+    h.js("document.querySelector('.day-toggle').focus()");
     h.press("Enter");
     h.wait_for("document.querySelector('#calendar').offsetParent !== null");
     assert_eq!(h.expanded(), "true");
-    h.goto("/2026/44");
+    h.press(" ");
+    h.wait_for("document.querySelector('#calendar').offsetParent === null");
+    assert_eq!(h.expanded(), "false");
+    // Picking a date opens that page with the calendar closed, as does a reload.
+    h.press("Enter");
+    h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+    h.click("#calendar a[href='/2026-10-28']");
+    h.wait_page("/2026-10-28");
     assert!(!h.calendar_shown());
     assert_eq!(h.expanded(), "false");
+    h.goto("/2026/44");
+    assert!(!h.calendar_shown());
 
-    // Same look as the year page's links.
-    h.goto_page("/2026");
-    let link = h.js(&style.replace("SEL", "'a.all-weeks'"));
-    assert_eq!(toggle, link);
-
-    // The missing-plan and invalid pages toggle too, and fit when open.
+    // The missing-plan page toggles too, and fits when open.
     h.goto_page("/2026/45");
     h.toggle_once();
-    h.goto_page("/2026/54");
-    h.toggle_once();
 }
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn calendar_toggle_at_899px() {
-    assert_toggle_layout(899);
+fn calendar_toggles_from_the_day_heading_at_375px() {
+    assert_calendar_toggle(375);
 }
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn calendar_toggle_at_375px() {
-    assert_toggle_layout(375);
+fn calendar_toggles_from_the_day_heading_at_1280px() {
+    assert_calendar_toggle(1280);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn invalid_pages_always_show_the_calendar_below_the_message_without_a_toggle() {
+    let h = Opts::new().launch();
+    for path in ["/2026/54", "/2026-02-30"] {
+        h.goto_page(path);
+        assert_eq!(h.status(), 404, "{path}");
+        assert_eq!(h.count(".day-row"), 0, "{path}");
+        assert_eq!(h.count(".day-toggle"), 0, "{path}");
+        assert_eq!(h.count("#calendar.calendar.is-open"), 1, "{path}");
+        assert!(h.calendar_shown(), "{path}");
+        // The message and its "This week" link come first, then the calendar.
+        assert_eq!(
+            h.js("[...document.querySelector('.app').children].map(e => e.className)"),
+            serde_json::json!(["header", "empty", "nav", "calendar is-open", "footer"]),
+            "{path}"
+        );
+        assert!(h.rect(".nav")[3] <= h.rect("#calendar")[2], "{path}");
+        assert_eq!(h.texts("a.nav-link"), ["This week"], "{path}");
+    }
 }
 
 #[test]
@@ -1289,7 +1377,20 @@ fn missing_week_pages_have_the_calendar_and_no_links() {
     assert_eq!(h.js("document.querySelectorAll('a.nav-link').length"), 0);
     assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
     assert_eq!(h.cal_heading(), "December 2026");
-    assert_eq!(h.count(".day-row, .day-heading, .day-step"), 0);
+    // The day row of the displayed date (the week's Monday) with working steps and the calendar closed.
+    assert_eq!(h.count(".day-row"), 1);
+    assert_eq!(h.heading(), "Monday, December 28");
+    assert_eq!(
+        h.js(
+            "[...document.querySelectorAll('.day-row a.day-step')].map(a => a.getAttribute('href'))"
+        ),
+        serde_json::json!(["/2026-12-27", "/2026-12-29"])
+    );
+    assert!(!h.calendar_shown());
+    h.click("a.day-step[aria-label='Next day']");
+    h.wait_page("/2026-12-29");
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.heading(), "Tuesday, December 29");
 
     // `/` with the current week (W49: Nov 30 - Dec 6) not stored is a 200 and stays at `/`.
     h.goto_page("/");
@@ -1303,6 +1404,9 @@ fn missing_week_pages_have_the_calendar_and_no_links() {
     );
     assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
     assert_eq!(h.cal_heading(), "December 2026");
+    // Today is the displayed date.
+    assert_eq!(h.heading(), "Wednesday, December 2");
+    assert_eq!(h.count("a.day-step[href]"), 2);
 }
 
 #[test]
@@ -1359,7 +1463,8 @@ fn invalid_date_page() {
         assert_eq!(h.text(".title"), "Meal Plan", "{path}");
         assert_eq!(h.js("document.title"), "Invalid date — Meal Plan", "{path}");
         assert_eq!(h.count(".day-row, .day-heading, .day-step"), 0, "{path}");
-        // The calendar is there, on today's month (December 2, 2026).
+        // The calendar is there, shown, on today's month (December 2, 2026).
+        assert!(h.calendar_shown(), "{path}");
         assert_eq!(h.cal_heading(), "December 2026", "{path}");
         assert_eq!(h.cal_today_cells(), ["2"], "{path}");
     }
@@ -1484,7 +1589,7 @@ fn list_pages_fit_375px() {
         h.js("document.documentElement.scrollWidth <= window.innerWidth"),
         true
     );
-    h.click(".calendar-toggle");
+    h.click(".day-toggle");
     h.wait_for("document.querySelector('#calendar').offsetParent !== null");
     assert_eq!(
         h.js("document.documentElement.scrollWidth <= window.innerWidth"),
@@ -1572,14 +1677,14 @@ impl Harness {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn monday_shows_two_shopping_cards_before_summary() {
+fn monday_shows_two_shopping_cards_after_the_meals() {
     let h = Harness::start("", 1280);
     assert_eq!(h.texts(".shop-label"), [L2_LABEL, L1_LABEL]);
     assert_eq!(h.count(".shop"), 2);
     assert_eq!(
         h.js(
             "[...document.querySelectorAll('.shop')].every(s => \
-             (s.compareDocumentPosition(document.querySelector('.summary')) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0)"
+             (s.compareDocumentPosition(document.querySelector('.meals')) & Node.DOCUMENT_POSITION_PRECEDING) !== 0)"
         ),
         true
     );
@@ -1607,12 +1712,12 @@ fn shared_list_appears_on_wednesday_and_unassigned_nowhere() {
         )),
         monday_l1
     );
-    // The card comes before the empty-day message.
+    // The card comes after the empty-day message.
     assert_eq!(h.text(".empty"), "No meals planned for this day.");
     assert_eq!(
         h.js(
             "(document.querySelector('.shop').compareDocumentPosition(document.querySelector('.empty')) \
-             & Node.DOCUMENT_POSITION_FOLLOWING) !== 0"
+             & Node.DOCUMENT_POSITION_PRECEDING) !== 0"
         ),
         true
     );
@@ -1667,7 +1772,7 @@ fn shopping_content_matches_fixture_and_reloads_changes() {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn shopping_items_are_plain_bullets() {
+fn shopping_items_are_plain_rows() {
     let h = Harness::start("", 1280);
     h.expand_all_shops();
     assert_eq!(h.count("input[type=checkbox], [role=checkbox]"), 0);
@@ -1677,7 +1782,7 @@ fn shopping_items_are_plain_bullets() {
     );
     assert_eq!(
         h.js("[...document.querySelectorAll('.shop li')].every(li => li.parentElement.tagName === 'UL' \
-              && getComputedStyle(li).listStyleType === 'disc')"),
+              && getComputedStyle(li).listStyleType === 'none')"),
         true
     );
     assert_eq!(
@@ -1755,13 +1860,8 @@ fn shopping_pointer_toggle() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn shopping_keyboard_toggle() {
     let h = Harness::start("", 1280);
-    // Tab from the "Next day" link reaches the first shopping toggle.
-    h.js("document.querySelector(\"a[aria-label='Next day']\").focus()");
-    h.press("Tab");
-    assert_eq!(
-        h.js("document.activeElement === document.querySelector('.shop-toggle')"),
-        true
-    );
+    // Tab reaches the first shopping toggle after the meals.
+    h.tab_to(".shop-toggle");
     let expanded = "document.querySelector('.shop-toggle').getAttribute('aria-expanded')";
     h.press("Enter");
     h.wait_for(&format!("{expanded} === 'true'"));
@@ -1796,17 +1896,24 @@ fn assert_shop_layout(width: u32) {
     let report = h.js(
         "(() => { const app = document.querySelector('.app').getBoundingClientRect(); \
           return { fits: [...document.querySelectorAll('.shop')].every(s => { const r = s.getBoundingClientRect(); \
-            return r.left >= app.left - 0.5 && r.right <= app.right + 0.5 && r.width <= 540; }), \
+            return r.left >= app.left - 0.5 && r.right <= app.right + 0.5 && r.width <= 560; }), \
             appWidth: app.width, \
             noScroll: document.documentElement.scrollWidth <= window.innerWidth, \
             bg: getComputedStyle(document.querySelector('.shop')).backgroundColor, \
+            open: document.querySelector('.shop').classList.contains('is-open'), \
             border: getComputedStyle(document.querySelector('.shop')).borderTopColor }; })()",
     );
     assert_eq!(report["fits"], true);
-    assert!(report["appWidth"].as_f64().unwrap() <= 540.0);
+    assert!(report["appWidth"].as_f64().unwrap() <= 560.0);
     assert_eq!(report["noScroll"], true);
-    assert_eq!(report["bg"], "rgb(255, 240, 246)");
-    assert_eq!(report["border"], "rgb(251, 182, 206)");
+    assert_eq!(report["bg"], LIGHT.rgb("surface"));
+    // A closed card has a line border; an open one is ringed in ink.
+    let border = if report["open"] == true {
+        "ink"
+    } else {
+        "line"
+    };
+    assert_eq!(report["border"], LIGHT.rgb(border));
 }
 
 #[test]
@@ -1945,39 +2052,32 @@ fn app_sources_have_no_tabs_or_day_bar() {
 
 #[test]
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
-fn plan_page_order_is_day_row_shopping_prep_summary_meals_reminder() {
+fn plan_page_order_is_day_row_calendar_summary_meals_then_tasks() {
     let h = Harness::start("", 1280);
     let order = "[...document.querySelector('.app').children].map(e => e.className.split(' ')[0])";
-    let monday = [
-        "header",
-        "calendar",
-        "day-row",
-        "shop",
-        "shop",
-        "prep-intro",
-        "prep",
-        "summary",
-        "meal",
-        "meal",
-        "meal",
-        "meal",
-    ];
+    let tasks =
+        "[...document.querySelector('.tasks').children].map(e => e.className.split(' ')[0])";
     h.goto("/2026-10-26");
-    assert_eq!(h.js(order), serde_json::json!(monday));
+    assert_eq!(
+        h.js(order),
+        serde_json::json!([
+            "header", "day-row", "calendar", "summary", "meals", "tasks", "footer"
+        ])
+    );
+    assert_eq!(h.count(".meals > .meal"), 4);
+    assert_eq!(
+        h.js(tasks),
+        serde_json::json!(["shop", "shop", "prep-intro", "prep"])
+    );
     // The reminder of Monday has no title and is not shown.
     h.goto("/2026-10-28");
     assert_eq!(
         h.js(order),
-        serde_json::json!([
-            "header",
-            "calendar",
-            "day-row",
-            "shop",
-            "prep-intro",
-            "prep",
-            "empty",
-            "reminder"
-        ])
+        serde_json::json!(["header", "day-row", "calendar", "empty", "tasks", "footer"])
+    );
+    assert_eq!(
+        h.js(tasks),
+        serde_json::json!(["shop", "prep-intro", "prep", "reminder"])
     );
     assert_eq!(h.text(".reminder-title"), "Shop day");
 
@@ -2007,19 +2107,13 @@ fn plan_page_order_is_day_row_shopping_prep_summary_meals_reminder() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn prep_sessions_render_and_toggle() {
     let h = Harness::start("", 1280);
-    assert_eq!(
-        h.texts(".prep-title"),
-        ["🔪 Monday Prep Session (~1.5 hours)"]
-    );
+    assert_eq!(h.texts(".prep-title"), ["Monday Prep Session (~1.5 hours)"]);
     // Covers: present for Monday.
     assert_eq!(h.texts(".prep-covers"), ["Covers Monday through Wednesday"]);
     assert_eq!(h.count(".prep-body"), 0);
     // Wednesday shows its own session, which has no covers element at all.
     h.goto("/2026-10-28");
-    assert_eq!(
-        h.texts(".prep-title"),
-        ["🔪 Wednesday Evening Prep (~45 min)"]
-    );
+    assert_eq!(h.texts(".prep-title"), ["Wednesday Evening Prep (~45 min)"]);
     assert_eq!(h.count(".prep-covers"), 0);
     assert_eq!(
         h.text(".prep-intro"),
@@ -2052,34 +2146,27 @@ fn prep_sessions_render_and_toggle() {
         true
     );
 
+    // A square surface card (ringed in ink while open), a solid yellow band and on-yellow text.
     assert_eq!(
         h.styles(
             ".prep",
-            &[
-                "backgroundColor",
-                "borderTopColor",
-                "borderRadius",
-                "padding",
-                "marginBottom"
-            ]
+            &["backgroundColor", "borderTopColor", "borderRadius"]
         ),
-        [
-            "rgb(255, 251, 235)",
-            "rgb(253, 230, 138)",
-            "10px",
-            "16px",
-            "12px"
-        ]
+        [LIGHT.rgb("surface"), LIGHT.rgb("ink"), "0px".to_string()]
+    );
+    assert_eq!(
+        h.styles(".prep-toggle", &["backgroundColor"]),
+        [LIGHT.rgb("yellow")]
     );
     let title = h.styles(
         ".prep-title",
         &["fontSize", "fontWeight", "color", "fontFamily"],
     );
-    assert_eq!(title[..3], ["16px", "700", "rgb(146, 64, 14)"]);
-    assert!(title[3].contains("Source Serif 4"));
+    assert_eq!(title[..3], ["17px", "600", &LIGHT.rgb("on-yellow")]);
+    assert!(title[3].contains("Jost"));
     assert_eq!(
         h.styles(".prep-covers", &["fontSize", "color"]),
-        ["12px", "rgb(180, 83, 9)"]
+        ["14px".to_string(), LIGHT.rgb("on-yellow")]
     );
     let badge = h.styles(
         ".prep-task-time",
@@ -2096,32 +2183,33 @@ fn prep_sessions_render_and_toggle() {
     assert_eq!(
         badge[..6],
         [
-            "10px",
-            "600",
-            "rgb(146, 64, 14)",
-            "rgb(254, 243, 199)",
-            "2px 6px",
-            "4px"
+            "11px".to_string(),
+            "600".to_string(),
+            LIGHT.rgb("ink"),
+            LIGHT.rgb("yellow-soft"),
+            "1px 6px".to_string(),
+            "2px".to_string()
         ]
     );
     assert!(badge[6].contains("JetBrains Mono"));
     assert_eq!(
-        h.styles(
-            ".prep-task",
-            &["backgroundColor", "borderTopColor", "borderRadius"]
-        ),
-        ["rgb(255, 255, 255)", "rgb(254, 243, 199)", "8px"]
+        h.styles(".prep-task", &["backgroundColor", "borderRadius"]),
+        [LIGHT.rgb("surface-sunken"), "0px".to_string()]
     );
     assert_eq!(
         h.styles(".prep-task-name", &["fontSize", "fontWeight", "color"]),
-        ["13px", "600", "rgb(30, 41, 59)"]
+        ["16px".to_string(), "600".to_string(), LIGHT.rgb("ink")]
     );
     assert_eq!(
         h.styles(
             ".prep-task-instructions",
             &["fontSize", "color", "lineHeight"]
         ),
-        ["12px", "rgb(71, 85, 105)", "19.2px"]
+        [
+            "16px".to_string(),
+            LIGHT.rgb("ink-muted"),
+            "24px".to_string()
+        ]
     );
 
     h.click(toggle);
@@ -2186,8 +2274,7 @@ fn page_has_no_strategy_remnants() {
 fn visual_capture_013() {
     let h = Opts::new().width(375).path("/2026-10-26").launch();
     h.capture_file("013-day-375-closed.png");
-    h.click(".calendar-toggle");
-    h.wait_for("document.querySelector('#calendar').offsetParent !== null");
+    h.open_calendar();
     h.capture_file("013-day-375-open.png");
     let h = Opts::new().width(1280).path("/2026-10-26").launch();
     h.capture_file("013-day-1280.png");
@@ -2213,34 +2300,34 @@ fn reminders_show_only_on_days_with_a_title() {
         h.js("!!(document.querySelector('.empty').compareDocumentPosition(document.querySelector('.reminder')) & Node.DOCUMENT_POSITION_FOLLOWING)"),
         true
     );
+    // A sunken, square block with a dashed strong border, no gradient.
     let r = h.styles(
         ".reminder",
         &[
             "backgroundImage",
+            "backgroundColor",
             "borderTopColor",
+            "borderTopStyle",
             "borderRadius",
             "padding",
-            "marginTop",
             "display",
         ],
     );
-    assert_eq!(
-        r[0],
-        "linear-gradient(135deg, rgb(239, 246, 255), rgb(219, 234, 254))"
-    );
-    assert_eq!(r[1], "rgb(147, 197, 253)");
-    assert_eq!(r[2], "10px");
-    assert_eq!(r[3], "14px 16px");
-    assert_eq!(r[4], "8px");
-    assert_eq!(r[5], "flex");
+    assert_eq!(r[0], "none");
+    assert_eq!(r[1], LIGHT.rgb("surface-sunken"));
+    assert_eq!(r[2], LIGHT.rgb("line-strong"));
+    assert_eq!(r[3], "dashed");
+    assert_eq!(r[4], "0px");
+    assert_eq!(r[5], "12px 16px");
+    assert_eq!(r[6], "flex");
     assert_eq!(h.styles(".reminder-icon", &["fontSize"]), ["20px"]);
     assert_eq!(
         h.styles(".reminder-title", &["fontSize", "fontWeight", "color"]),
-        ["13px", "600", "rgb(30, 64, 175)"]
+        ["16px".to_string(), "600".to_string(), LIGHT.rgb("ink")]
     );
     assert_eq!(
-        h.styles(".reminder-body", &["fontSize", "color", "marginTop"]),
-        ["12px", "rgb(59, 130, 246)", "2px"]
+        h.styles(".reminder-body", &["fontSize", "color"]),
+        ["14px".to_string(), LIGHT.rgb("ink-muted")]
     );
 
     // Sunday: title only, no icon or body elements.
@@ -2278,7 +2365,7 @@ fn optional_text_is_omitted_when_null() {
     assert_eq!(h.count(".reminder-icon"), 0);
     assert_eq!(h.count(".prep-intro"), 0);
     assert_eq!(h.count(".prep-covers"), 0);
-    assert_eq!(h.text(".prep-title"), "🔪 Bare session");
+    assert_eq!(h.text(".prep-title"), "Bare session");
 }
 
 /// SQL adding prep sessions (title, has_task, weekday) at positions 0.. to the week made by
@@ -2318,7 +2405,7 @@ fn prep_sessions_without_tasks_are_hidden() {
         );
     let h = Harness::start(&sql, 1280);
     h.goto("/2026/52");
-    assert_eq!(h.texts(".prep-title"), ["🔪 Session A", "🔪 Session C"]);
+    assert_eq!(h.texts(".prep-title"), ["Session A", "Session C"]);
     assert_eq!(
         h.js("document.getElementById('root').textContent.includes('Session B')"),
         false
@@ -2385,7 +2472,7 @@ fn sessions_without_a_weekday_or_tasks_are_never_shown_and_marks_match() {
             "{date}"
         );
         if date == "2026-11-17" {
-            assert_eq!(h.texts(".prep-title"), ["🔪 Tuesday prep"]);
+            assert_eq!(h.texts(".prep-title"), ["Tuesday prep"]);
         } else {
             assert_eq!(h.count(".prep"), 0, "{date}");
         }
@@ -2418,7 +2505,7 @@ fn crafted_week_content_is_what_renders() {
     assert_eq!(h.text(".reminder-body"), "Crafted body");
     assert_eq!(h.text(".reminder-icon"), "🔔");
     assert_eq!(h.text(".prep-intro"), "Crafted intro");
-    assert_eq!(h.text(".prep-title"), "🔪 Crafted session");
+    assert_eq!(h.text(".prep-title"), "Crafted session");
     assert_eq!(h.text(".prep-covers"), "Crafted covers");
     h.click(".prep-toggle");
     h.wait_for("document.querySelector('.prep-body') !== null");
@@ -2468,7 +2555,7 @@ fn weekly_text_renders_literally() {
     assert_eq!(h.text(".reminder-body"), x);
     assert_eq!(h.text(".reminder-icon"), x);
     assert_eq!(h.text(".prep-intro"), x);
-    assert_eq!(h.text(".prep-title"), format!("🔪 {x}"));
+    assert_eq!(h.text(".prep-title"), x);
     assert_eq!(h.text(".prep-covers"), x);
     h.click(".prep-toggle");
     h.wait_for("document.querySelector('.prep-body') !== null");
@@ -2483,10 +2570,11 @@ fn weekly_text_renders_literally() {
 #[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
 fn day_links_work_by_keyboard() {
     let h = Harness::start("", 1280);
-    h.js("[...document.querySelectorAll('#calendar a')].pop().focus()");
+    h.js("document.querySelector(\"a[aria-label='Previous day']\").focus()");
+    // The calendar is closed, so the heading's button sits between the two steps.
     h.press("Tab");
     assert_eq!(
-        h.js("document.activeElement === document.querySelector(\"a[aria-label='Previous day']\")"),
+        h.js("document.activeElement === document.querySelector('.day-toggle')"),
         true
     );
     h.press("Tab");
@@ -2519,14 +2607,14 @@ fn assert_weekly_layout(width: u32) {
     h.goto("/2026-09-30");
     assert_eq!(h.heading(), "Wednesday, September 30");
     assert_eq!(h.js(fits), true, "longest heading");
-    assert_eq!(
-        h.js("(() => { const app = document.querySelector('.app').getBoundingClientRect(); \
+    let row = h.js("(() => { const app = document.querySelector('.app').getBoundingClientRect(); \
               const row = [...document.querySelectorAll('.day-row > *')].map(e => e.getBoundingClientRect()); \
               const h = document.querySelector('.day-heading'); \
-              return row.every(r => r.left >= app.left - 0.5 && r.right <= app.right + 0.5) \
-                && h.getBoundingClientRect().height < 2 * parseFloat(getComputedStyle(h).fontSize); })()"),
-        true
-    );
+              return { inside: row.every(r => r.left >= app.left - 0.5 && r.right <= app.right + 0.5), \
+                height: h.getBoundingClientRect().height, font: parseFloat(getComputedStyle(h).fontSize), \
+                lines: document.querySelector('.day-toggle').getClientRects().length }; })()");
+    assert_eq!(row["inside"], true, "{row}");
+    assert_eq!(row["lines"], 1, "{row}");
 }
 
 #[test]
@@ -2746,30 +2834,17 @@ fn visual_capture(w: u32) {
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["Invalid week."]);
     h.capture(w, "invalid-week");
-    if w < 900 {
-        h.click(".calendar-toggle");
-        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
-        h.capture(w, "invalid-week-calendar-open");
-    }
 
-    // The calendar beside the plan page: closed and open at phone width, always shown at desktop width.
+    // The calendar on the plan page: closed by default, then open from the day heading.
     let sql = bare_weeks(&[(2026, 43), (2026, 46)]);
     let h = Opts::new().width(w).sql(&sql).launch();
+    h.capture(w, "calendar-closed");
+    h.open_calendar();
     assert_eq!(h.cal_heading(), "October 2026");
-    if w < 900 {
-        h.capture(w, "calendar-closed");
-        h.click(".calendar-toggle");
-        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
-        h.capture(w, "calendar-open");
-    } else {
-        h.capture(w, "calendar");
-    }
+    h.capture(w, "calendar-open");
     h.goto_page("/2026/45");
     assert_eq!(h.status(), 404);
-    if w < 900 {
-        h.click(".calendar-toggle");
-        h.wait_for("document.querySelector('#calendar').offsetParent !== null");
-    }
+    h.open_calendar();
     h.capture(w, "missing-week-calendar");
 
     let h = Opts::new().width(w).db(Db::ClosedPool).path("/").launch();
@@ -2875,7 +2950,7 @@ fn week_saved_through_mcp_renders_in_the_browser() {
 
     h.goto("/2026/45");
     assert_eq!(h.heading(), "Monday, November 2");
-    assert_eq!(h.texts(".prep-title"), ["🔪 Sunday prep"]);
+    assert_eq!(h.texts(".prep-title"), ["Sunday prep"]);
     assert_eq!(h.texts(".meal-name"), ["Overnight Oats", "Red Lentil Soup"]);
     assert_eq!(h.texts(".subtitle"), ["Saved by an assistant"]);
     assert_eq!(h.texts(".reminder-title"), ["Soak the oats"]);
@@ -2958,7 +3033,11 @@ fn day_links_cross_week_month_and_year_boundaries() {
     h.step_day("Next day", "/2026-11-02");
     assert_eq!(h.status(), 404);
     assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
-    assert_eq!(h.count(".day-row"), 0);
+    // The missing-plan page keeps the day row, so the steps go on.
+    assert_eq!(h.heading(), "Monday, November 2");
+    h.step_day("Next day", "/2026-11-03");
+    assert_eq!(h.heading(), "Tuesday, November 3");
+    h.step_day("Previous day", "/2026-11-02");
 }
 
 #[test]
@@ -3047,37 +3126,47 @@ fn calendar_marks_have_names_shapes_and_colors() {
     assert_eq!(h.cal_today_cells(), ["28"]);
     assert_eq!(h.count("#calendar .cal-marks[aria-hidden=true]"), 2);
 
+    h.open_calendar();
     let mark = |cell: &str, kind: &str| {
         h.js(&format!(
             "(() => {{ const m = document.querySelector(\"#calendar a[href='{cell}'] .cal-mark-{kind}\"); \
               const s = getComputedStyle(m); const r = m.getBoundingClientRect(); \
-              return [s.backgroundColor, s.borderRadius, r.width, r.height]; }})()"
+              return [s.backgroundColor, s.borderRadius, s.clipPath, r.width, r.height]; }})()"
         ))
     };
-    // Shopping is a round dot, prep a small square; on the selected cell they are lighter but visible.
+    let triangle = "polygon(50% 0px, 100% 100%, 0px 100%)";
+    // Shopping is a small square and prep a small triangle, both ink; on the selected date, on-blue.
     assert_eq!(
         mark("/2026-10-28", "shopping"),
-        serde_json::json!(["rgb(157, 23, 77)", "50%", 5, 5])
+        serde_json::json!([LIGHT.rgb("ink"), "0px", "none", 6, 6])
     );
     assert_eq!(
         mark("/2026-10-28", "prep"),
-        serde_json::json!(["rgb(180, 83, 9)", "1px", 5, 5])
+        serde_json::json!([LIGHT.rgb("ink"), "0px", triangle, 7, 6])
     );
     assert_eq!(
         mark("/2026-10-26", "shopping"),
-        serde_json::json!(["rgb(251, 182, 206)", "50%", 5, 5])
+        serde_json::json!([LIGHT.rgb("on-blue"), "0px", "none", 6, 6])
     );
     assert_eq!(
         mark("/2026-10-26", "prep"),
-        serde_json::json!(["rgb(253, 230, 138)", "1px", 5, 5])
+        serde_json::json!([LIGHT.rgb("on-blue"), "0px", triangle, 7, 6])
     );
-    // The today ring is drawn on the cell, and the selected cell has the gradient.
+    // The planned-week mark is an ink-muted circle.
+    h.cal_click("Next month");
     assert_eq!(
-        h.js(
-            "getComputedStyle(document.querySelector('#calendar .cal-today')).boxShadow !== 'none'"
+        h.styles(
+            ".cal-planned .cal-dot",
+            &["backgroundColor", "borderRadius"]
         ),
-        true
+        [LIGHT.rgb("ink-muted"), "50%".to_string()]
     );
+    h.cal_click("Previous month");
+    // The today ring is an inset ink ring on the cell, and the selected cell is the blue fill.
+    let ring = h.styles("#calendar .cal-today:not(.cal-selected)", &["boxShadow"]);
+    assert!(ring[0].contains(&LIGHT.rgb("ink")), "{ring:?}");
+    assert!(ring[0].contains("inset"), "{ring:?}");
+    assert!(ring[0].contains("1.5px"), "{ring:?}");
     assert_eq!(h.count("#calendar .cal-selected"), 1);
     // Marks do not change the row height.
     assert_eq!(
@@ -3125,8 +3214,868 @@ fn calendar_marks_follow_committed_changes() {
     // The prep session moved to Friday, and Monday no longer shows it.
     assert_eq!(h.count(".prep"), 0);
     h.goto("/2026-10-30");
-    assert_eq!(
-        h.texts(".prep-title"),
-        ["🔪 Monday Prep Session (~1.5 hours)"]
+    assert_eq!(h.texts(".prep-title"), ["Monday Prep Session (~1.5 hours)"]);
+}
+
+// ---- Feature 14: redesign ---------------------------------------------------------------------
+
+/// Every colour token of the design system: name, light hex, dark hex (as written in `web/styles.css`).
+const TOKENS: [(&str, &str, &str); 20] = [
+    ("paper", "#f1e9d8", "#0f1220"),
+    ("surface", "#fbf7ee", "#181c2c"),
+    ("surface-sunken", "#e9e0cc", "#0a0c16"),
+    ("line", "#dcd1ba", "#2b3044"),
+    ("line-strong", "#7a705c", "#737a96"),
+    ("ink", "#17171c", "#f2ede1"),
+    ("ink-muted", "#55514a", "#b0b2bf"),
+    ("ink-faint", "#857c69", "#7f8499"),
+    ("blue", "#1d3f9e", "#86a0ff"),
+    ("blue-soft", "#dde3f4", "#1c2550"),
+    ("on-blue", "#fbf7ee", "#0a0c16"),
+    ("red", "#b8321b", "#ff7a5c"),
+    ("on-red", "#fbf7ee", "#0a0c16"),
+    ("yellow", "#f2c12e", "#f5c84a"),
+    ("on-yellow", "#17171c", "#0a0c16"),
+    ("yellow-soft", "#f8e8b0", "#3b310f"),
+    ("macro-protein", "#a8430e", "#ff9b62"),
+    ("macro-fat", "#755700", "#e6c05c"),
+    ("macro-carbs", "#35652a", "#9fd27f"),
+    ("macro-fiber", "#683d91", "#c8a3f2"),
+];
+
+/// A theme of the design system, by its `prefers-color-scheme` name.
+struct Theme {
+    scheme: &'static str,
+}
+
+const LIGHT: Theme = Theme { scheme: "light" };
+const DARK: Theme = Theme { scheme: "dark" };
+
+impl Theme {
+    /// The token's hex value in this theme.
+    fn hex(&self, name: &str) -> &'static str {
+        let (_, light, dark) = TOKENS
+            .iter()
+            .find(|(n, _, _)| *n == name)
+            .unwrap_or_else(|| panic!("no token --{name}"));
+        if self.scheme == "dark" { dark } else { light }
+    }
+
+    /// The token as a computed `rgb()` string.
+    fn rgb(&self, name: &str) -> String {
+        let hex = self.hex(name).trim_start_matches('#');
+        let channel = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+        format!("rgb({}, {}, {})", channel(0), channel(2), channel(4))
+    }
+}
+
+/// A fixture day (Monday) with shopping, prep, meals with badges and a tip, and a reminder. The shopping
+/// labels lose their emoji: those are household data, and this day checks the interface's own text.
+fn redesign_day_sql() -> String {
+    "UPDATE shopping_lists SET label = trim(replace(replace(label, '🛒', ''), '🧴', ''));\n\
+     UPDATE days SET reminder_title = 'Shop day', reminder_body = 'Pick up the top-up list.', reminder_icon = '🧾' \
+     WHERE id = '00000002-0000-4000-8000-000000000002';"
+        .to_string()
+}
+
+/// Launch on the redesign day (Monday, October 26; today is Wednesday the 28th).
+fn redesign_day(width: u32) -> Harness {
+    Opts::new()
+        .sql(&redesign_day_sql())
+        .width(width)
+        .clock(clock_at(2026, 10, 28, 11, 0, 0))
+        .path("/2026-10-26")
+        .launch()
+}
+
+impl Harness {
+    /// Fetch `url` (same origin) as text in the page.
+    fn fetch_text(&self, url: &str) -> String {
+        self.tab
+            .evaluate(&format!("fetch('{url}').then(r => r.text())"), true)
+            .unwrap()
+            .value
+            .unwrap()
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    /// Press Tab until the focused element matches `selector` (from the top of the page).
+    fn tab_to(&self, selector: &str) {
+        self.js("document.activeElement && document.activeElement.blur()");
+        for _ in 0..150 {
+            self.press("Tab");
+            if self.js(&format!("document.activeElement.matches('{selector}')")) == true {
+                return;
+            }
+        }
+        panic!("Tab never reached {selector}");
+    }
+
+    /// Open the calendar on a narrow page and expand the first meal, every shopping list and every prep card.
+    fn expand_redesign_day(&self) {
+        self.click(".meal-toggle");
+        self.wait_for("document.querySelectorAll('.meal-details').length === 1");
+        self.expand_all(".shop-toggle");
+        self.expand_all(".prep-toggle");
+    }
+}
+
+/// Remove the first brace-delimited block that starts at `marker` (its own braces included).
+fn strip_block(css: &str, marker: &str) -> String {
+    let start = css.find(marker).unwrap_or_else(|| panic!("no {marker}"));
+    let open = start + css[start..].find('{').unwrap();
+    let mut depth = 0;
+    for (i, c) in css[open..].char_indices() {
+        match c {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    return format!("{}{}", &css[..start], &css[open + i + 1..]);
+                }
+            }
+            _ => {}
+        }
+    }
+    panic!("unbalanced braces after {marker}");
+}
+
+/// The custom properties declared in the first block that starts at `marker`.
+fn declared_properties(css: &str, marker: &str) -> Vec<String> {
+    let start = css.find(marker).unwrap_or_else(|| panic!("no {marker}"));
+    let open = start + css[start..].find('{').unwrap();
+    let close = open + css[open..].find('}').unwrap();
+    css[open + 1..close]
+        .split(';')
+        .filter_map(|d| d.trim().strip_prefix("--"))
+        .map(|d| d.split(':').next().unwrap().trim().to_string())
+        .collect()
+}
+
+impl Harness {
+    /// Choose a theme through the footer toggle (as a user would) and wait for it to apply.
+    fn choose_theme(&self, value: &str) {
+        self.js(&format!(
+            "document.querySelector('input[name=theme][value={value}]').click()"
+        ));
+        self.wait_for(&format!(
+            "document.querySelector('input[name=theme]:checked').value === '{value}'"
+        ));
+    }
+
+    /// Choose Light or Dark and wait until `data-theme` follows.
+    fn use_theme(&self, t: &Theme) {
+        self.choose_theme(t.scheme);
+        self.wait_for(&format!(
+            "document.documentElement.getAttribute('data-theme') === '{}'",
+            t.scheme
+        ));
+    }
+
+    fn theme_attr(&self) -> serde_json::Value {
+        self.js("document.documentElement.getAttribute('data-theme')")
+    }
+
+    fn stored_theme(&self) -> serde_json::Value {
+        self.js("localStorage.getItem('sous-theme')")
+    }
+
+    /// A custom property of the root element, as computed.
+    fn token(&self, name: &str) -> String {
+        self.js(&format!(
+            "getComputedStyle(document.documentElement).getPropertyValue('--{name}').trim()"
+        ))
+        .as_str()
+        .unwrap()
+        .to_string()
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn tokens_apply_in_light_and_dark() {
+    let h = redesign_day(1280);
+    h.click(".meal-toggle");
+    h.wait_for("document.querySelectorAll('.meal-details').length === 1");
+    h.open_calendar();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        let s = t.scheme;
+        assert_eq!(
+            h.js("getComputedStyle(document.documentElement).colorScheme"),
+            s
+        );
+        // Every colour token has its design-system value on the root, in this theme.
+        for (name, _, _) in TOKENS {
+            assert_eq!(h.token(name), t.hex(name), "{s} --{name}");
+        }
+        assert_eq!(h.token("focus"), t.hex("ink"), "{s} --focus");
+        // The shared, non-colour tokens are identical in both themes.
+        for (name, value) in [
+            ("space-1", "4px"),
+            ("space-2", "8px"),
+            ("space-3", "12px"),
+            ("space-4", "16px"),
+            ("space-5", "24px"),
+            ("space-6", "32px"),
+            ("radius-square", "0"),
+            ("radius-soft", "2px"),
+            ("radius-circle", "50%"),
+            ("column-width", "560px"),
+        ] {
+            assert_eq!(h.token(name), value, "{s} --{name}");
+        }
+        assert!(h.token("font-sans").starts_with("\"Jost\""), "{s}");
+        assert!(
+            h.token("font-mono").starts_with("\"JetBrains Mono\""),
+            "{s}"
+        );
+        // Components read the tokens.
+        assert_eq!(
+            h.js("getComputedStyle(document.body).backgroundColor"),
+            t.rgb("paper"),
+            "{s} body"
+        );
+        assert_eq!(
+            h.styles(".meal-name", &["color"]),
+            [t.rgb("ink")],
+            "{s} text"
+        );
+        assert_eq!(
+            h.styles(".meal", &["borderTopColor", "borderTopWidth"]),
+            [t.rgb("ink"), "1px".to_string()],
+            "{s} open card"
+        );
+        assert_eq!(
+            h.styles(".shop", &["backgroundColor"]),
+            [t.rgb("surface")],
+            "{s} card"
+        );
+        // The selected date is the blue disc with on-blue text; today is ringed in ink.
+        assert_eq!(
+            h.styles("#calendar .cal-selected", &["backgroundColor", "color"]),
+            [t.rgb("blue"), t.rgb("on-blue")],
+            "{s} selected date"
+        );
+        let ring = h.styles("#calendar .cal-today:not(.cal-selected)", &["boxShadow"]);
+        assert!(ring[0].contains(&t.rgb("ink")), "{s} today ring {ring:?}");
+        // No gradient on any card.
+        assert_eq!(h.styles(".meal", &["backgroundImage"]), ["none"]);
+    }
+}
+
+#[test]
+fn stylesheet_holds_every_colour_in_the_token_blocks() {
+    let css = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web/styles.css"),
+    )
+    .unwrap();
+    let light = declared_properties(&css, ":root {");
+    let dark = declared_properties(&css, ":root[data-theme=\"dark\"] {");
+    // Every colour token is on :root, redefined by the dark block, and agrees with the table here.
+    for (name, light_hex, dark_hex) in TOKENS {
+        assert!(light.iter().any(|p| p == name), "--{name} missing on :root");
+        assert!(dark.iter().any(|p| p == name), "--{name} missing in dark");
+        assert!(css.contains(&format!("--{name}: {light_hex};")), "{name}");
+        assert!(css.contains(&format!("--{name}: {dark_hex};")), "{name}");
+    }
+    // The dark block holds colours only; the sizes and fonts are shared.
+    for p in &dark {
+        assert!(
+            TOKENS.iter().any(|(n, _, _)| n == p) || p == "focus" || p == "shadow",
+            "--{p} in the dark block is not a colour token"
+        );
+    }
+    for token in [
+        "space-1",
+        "space-6",
+        "radius-square",
+        "radius-soft",
+        "radius-circle",
+        "column-width",
+        "font-sans",
+        "font-mono",
+    ] {
+        assert!(light.iter().any(|p| p == token), "--{token} is not a token");
+    }
+    // The theme follows `data-theme`, never a media query, and there is no sidebar width.
+    assert!(!css.contains("prefers-color-scheme"));
+    assert!(!css.contains("sidebar"));
+    assert!(css.contains("color-scheme: light;") && css.contains("color-scheme: dark;"));
+
+    // Outside the two token blocks there is no raw colour.
+    let rest = strip_block(
+        &strip_block(&css, ":root[data-theme=\"dark\"] {"),
+        ":root {",
     );
+    let bytes = rest.as_bytes();
+    for (i, _) in rest.match_indices('#') {
+        let run = bytes[i + 1..]
+            .iter()
+            .take_while(|b| b.is_ascii_alphanumeric())
+            .count();
+        let word = &rest[i + 1..i + 1 + run];
+        assert!(
+            !(matches!(run, 3 | 4 | 6 | 8) && word.bytes().all(|b| b.is_ascii_hexdigit())),
+            "hex colour #{word} outside the token blocks"
+        );
+    }
+    for func in [
+        "rgb(", "rgba(", "hsl(", "hsla(", "hwb(", "lab(", "lch(", "oklab(", "oklch(", "color(",
+        "gradient",
+    ] {
+        assert!(!rest.contains(func), "{func} outside the token blocks");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn theme_toggle_defaults_to_system_and_remembers_the_choice() {
+    let h = Opts::new().launch();
+    // A labelled group of three radios in the footer, System checked, nothing stored.
+    assert_eq!(h.count("footer.footer .theme[role=radiogroup]"), 1);
+    assert_eq!(h.text(".theme-label"), "Theme");
+    assert_eq!(h.texts(".theme-option"), ["Light", "Dark", "System"]);
+    assert_eq!(
+        h.js("[...document.querySelectorAll('input[type=radio][name=theme]')].map(i => i.value)"),
+        serde_json::json!(["light", "dark", "system"])
+    );
+    assert_eq!(
+        h.js("[...document.querySelectorAll('input[name=theme]')].filter(i => i.checked).map(i => i.value)"),
+        serde_json::json!(["system"])
+    );
+    assert_eq!(h.stored_theme(), serde_json::Value::Null);
+    // System resolves through the emulated device preference (light here).
+    assert_eq!(h.theme_attr(), "light");
+
+    // Dark sets data-theme and is stored; it survives a reload even though the device says light.
+    h.choose_theme("dark");
+    h.wait_for("document.documentElement.getAttribute('data-theme') === 'dark'");
+    assert_eq!(h.stored_theme(), "dark");
+    h.goto("/2026/44");
+    assert_eq!(h.theme_attr(), "dark");
+    assert_eq!(h.stored_theme(), "dark");
+    assert_eq!(
+        h.js("document.querySelector('input[name=theme]:checked').value"),
+        "dark"
+    );
+    assert_eq!(
+        h.js("getComputedStyle(document.body).backgroundColor"),
+        DARK.rgb("paper")
+    );
+
+    // Light is stored and wins over a dark device.
+    h.set_color_scheme("dark");
+    h.choose_theme("light");
+    h.wait_for("document.documentElement.getAttribute('data-theme') === 'light'");
+    assert_eq!(h.stored_theme(), "light");
+    h.goto("/2026/44");
+    assert_eq!(h.theme_attr(), "light");
+
+    // System removes the key and follows the device again (dark here).
+    h.choose_theme("system");
+    h.wait_for("document.documentElement.getAttribute('data-theme') === 'dark'");
+    assert_eq!(h.stored_theme(), serde_json::Value::Null);
+    h.goto("/2026/44");
+    assert_eq!(h.theme_attr(), "dark");
+    assert_eq!(
+        h.js("document.querySelector('input[name=theme]:checked').value"),
+        "system"
+    );
+
+    // The footer is last on pages of every kind, and carries the toggle.
+    for path in ["/2026/44", "/2026/45", "/2026-02-30", "/2026"] {
+        h.goto_page(path);
+        assert_eq!(
+            h.js("document.querySelector('.app').lastElementChild.className"),
+            "footer",
+            "{path}"
+        );
+        assert_eq!(h.count(".footer input[name=theme]"), 3, "{path}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn system_theme_follows_the_device_without_a_reload() {
+    let h = Opts::new().launch();
+    h.js("window.__marker = 1");
+    for scheme in ["dark", "light", "dark"] {
+        h.set_color_scheme(scheme);
+        h.wait_for(&format!(
+            "document.documentElement.getAttribute('data-theme') === '{scheme}'"
+        ));
+        assert_eq!(
+            h.js("getComputedStyle(document.body).backgroundColor"),
+            Theme { scheme }.rgb("paper")
+        );
+        // The same document: nothing reloaded.
+        assert_eq!(h.js("window.__marker"), 1);
+    }
+    // A stored choice does not follow the device.
+    h.choose_theme("light");
+    h.set_color_scheme("dark");
+    std::thread::sleep(Duration::from_millis(200));
+    assert_eq!(h.theme_attr(), "light");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn theme_is_set_before_the_stylesheet_and_the_app_script() {
+    let h = Opts::new().launch();
+    let html = h.fetch_text("/2026/44");
+    let theme = html
+        .find("setAttribute(\"data-theme\"")
+        .expect("theme script");
+    let sheet = html.find("rel=\"stylesheet\"").expect("stylesheet");
+    let app = html.find("/app.").expect("app script");
+    assert!(
+        theme < sheet,
+        "the theme script comes before the stylesheet"
+    );
+    assert!(sheet < app);
+    assert!(
+        html[..theme].rfind("<script").is_some() && !html[..theme].contains("defer"),
+        "the theme script is inline and not deferred"
+    );
+    // Before the app runs, the stored choice is already applied: the first thing a reload shows.
+    h.choose_theme("dark");
+    h.navigate("/2026/44");
+    assert_eq!(
+        h.js("document.documentElement.getAttribute('data-theme')"),
+        "dark"
+    );
+    // An unreadable value falls back to the device preference.
+    h.js("localStorage.setItem('sous-theme', 'sepia')");
+    h.goto("/2026/44");
+    assert_eq!(h.theme_attr(), "light");
+    assert_eq!(
+        h.js("document.querySelector('input[name=theme]:checked').value"),
+        "system"
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn interface_has_no_emoji_and_carries_its_labels() {
+    let h = redesign_day(1280);
+    h.expand_redesign_day();
+    h.expand_all(".meal-toggle");
+    // Only the reminder's own icon (household data) is an emoji.
+    assert_eq!(h.text(".reminder-icon"), "🧾");
+    assert_eq!(
+        h.js("(() => { const icon = document.querySelector('.reminder-icon').innerText; \
+              return /\\p{Extended_Pictographic}/u.test(document.body.innerText.split(icon).join('')); })()"),
+        false
+    );
+    // No pictographic character in the interface's own text on the other pages either.
+    for path in ["/2026", "/2026/45", "/2026-02-30"] {
+        h.goto_page(path);
+        assert_eq!(
+            h.js("/\\p{Extended_Pictographic}/u.test(document.body.innerText)"),
+            false,
+            "{path}"
+        );
+    }
+    h.goto("/2026-10-26");
+    h.expand_redesign_day();
+    h.expand_all(".meal-toggle");
+    // Badges and labels are uppercased by CSS; their text stays in sentence case.
+    let inner = |sel: &str| -> Vec<String> {
+        serde_json::from_value(h.js(&format!(
+            "[...document.querySelectorAll('{sel}')].map(e => e.innerText)"
+        )))
+        .unwrap()
+    };
+    assert_eq!(inner(".badge-two"), ["FOR TWO", "FOR TWO"]);
+    assert_eq!(h.texts(".badge-two"), ["For two", "For two"]);
+    assert_eq!(
+        inner(".badge-assembly"),
+        ["ASSEMBLE 2 MIN", "ASSEMBLE 10 MIN", "ASSEMBLE 1 MIN"]
+    );
+    assert_eq!(
+        h.texts(".badge-assembly"),
+        ["Assemble 2 min", "Assemble 10 min", "Assemble 1 min"]
+    );
+    assert_eq!(inner(".badge-cook"), ["COOK 25 MIN"]);
+    assert_eq!(h.texts(".badge-cook"), ["Cook 25 min"]);
+    assert_eq!(inner(".tip-label"), ["TIP", "TIP", "TIP"]);
+    assert_eq!(h.texts(".tip-label"), ["Tip", "Tip", "Tip"]);
+    assert_eq!(h.count(".tip-label .shape.shape-circle"), 3);
+    assert_eq!(h.texts(".tip > span:last-child").len(), 3);
+    assert_eq!(inner(".shop .band-label"), ["SHOPPING", "SHOPPING"]);
+    assert_eq!(h.texts(".shop .band-label"), ["Shopping", "Shopping"]);
+    assert_eq!(h.count(".shop .band-label .shape-square"), 2);
+    assert_eq!(inner(".prep .band-label"), ["PREP"]);
+    assert_eq!(h.texts(".prep .band-label"), ["Prep"]);
+    assert_eq!(h.count(".prep .band-label .shape-triangle"), 1);
+    assert_eq!(
+        inner(".meal-type"),
+        ["BREAKFAST", "LUNCH", "DINNER", "SNACK"]
+    );
+    // The kcal figure has its unit in its own element; no icon element is left.
+    assert_eq!(h.texts(".meal-kcal-unit"), ["kcal", "kcal", "kcal", "kcal"]);
+    assert_eq!(h.count(".meal-icon"), 0);
+    // The expand indicator is a plain plus or minus.
+    assert_eq!(h.texts(".meal-indicator"), ["−", "−", "−", "−"]);
+    // The band label sits above the list label and the prep title.
+    assert_eq!(
+        h.js("(() => { const l = document.querySelector('.shop .band-label').getBoundingClientRect(); \
+              const t = document.querySelector('.shop-label').getBoundingClientRect(); return l.bottom <= t.top + 0.5; })()"),
+        true
+    );
+    assert_eq!(
+        h.js("(() => { const l = document.querySelector('.prep .band-label').getBoundingClientRect(); \
+              const t = document.querySelector('.prep-title').getBoundingClientRect(); return l.bottom <= t.top + 0.5; })()"),
+        true
+    );
+    // The year page's week links carry a decorative arrow.
+    h.goto_page("/2026");
+    assert_eq!(h.count(".week-link .week-link-arrow[aria-hidden=true]"), 1);
+    assert_eq!(h.text(".week-link-arrow"), "›");
+}
+
+/// JS defining the WCAG contrast ratios of the design system's pairs on the current page.
+const CONTRAST_JS: &str = r#"(() => {
+  const parse = c => c.match(/[\d.]+/g).map(Number);
+  const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]);
+  const ratio = (a, b) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
+  const bgOf = el => {
+    for (let e = el; e; e = e.parentElement) {
+      const p = parse(getComputedStyle(e).backgroundColor);
+      if (p.length < 4 || p[3] > 0) return p;
+    }
+    return [255, 255, 255];
+  };
+  const q = sel => document.querySelector(sel);
+  const text = sel => ratio(parse(getComputedStyle(q(sel)).color), bgOf(q(sel)));
+  const bg = (sel, ground) => ratio(parse(getComputedStyle(q(sel)).backgroundColor), ground);
+  const ring = sel => ratio(parse(getComputedStyle(q(sel)).boxShadow), bgOf(q(sel).parentElement));
+  const cal = bgOf(q('#calendar'));
+  const blue = bgOf(q('#calendar .cal-selected'));
+  return {
+    body: text('.meal-name'),
+    bodyOnPaper: text('.day-heading'),
+    mealType: text('.meal-type'),
+    mealKcalUnit: text('.meal-kcal-unit'),
+    subtitle: text('.subtitle'),
+    tip: text('.tip-label'),
+    shopTitle: text('.shop-label'),
+    shopLabel: text('.shop .band-label'),
+    shopNote: text('.shop-note'),
+    prepTitle: text('.prep-title'),
+    prepLabel: text('.prep .band-label'),
+    prepCovers: text('.prep-covers'),
+    badgeTwo: text('.badge-two'),
+    summaryLabel: text('.summary-label'),
+    reminderBody: text('.reminder-body'),
+    footer: text('.theme-label'),
+    selectedDate: text('#calendar .cal-selected'),
+    weekNumber: Math.min(...[...document.querySelectorAll('#calendar .cal-row .cal-wk')]
+      .map(e => ratio(parse(getComputedStyle(e).color), bgOf(e)))),
+    todayRing: ring('#calendar .cal-today:not(.cal-selected)'),
+    stepBorder: ratio(parse(getComputedStyle(q('a.day-step[href]')).borderTopColor), bgOf(q('.day-row'))),
+    shopMark: bg('#calendar a[href="/2026-10-28"] .cal-mark-shopping', cal),
+    prepMark: bg('#calendar a[href="/2026-10-28"] .cal-mark-prep', cal),
+    shopMarkSelected: bg('#calendar .cal-selected .cal-mark-shopping', blue),
+    prepMarkSelected: bg('#calendar .cal-selected .cal-mark-prep', blue),
+  };
+})()"#;
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn text_and_marks_meet_contrast_in_both_themes() {
+    let h = redesign_day(1280);
+    h.open_calendar();
+    h.expand_redesign_day();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        let scheme = t.scheme;
+        let r = h.js(CONTRAST_JS);
+        let ratio = |name: &str| {
+            r[name]
+                .as_f64()
+                .unwrap_or_else(|| panic!("{name} missing: {r}"))
+        };
+        for name in [
+            "body",
+            "bodyOnPaper",
+            "mealType",
+            "mealKcalUnit",
+            "subtitle",
+            "tip",
+            "shopTitle",
+            "shopLabel",
+            "shopNote",
+            "prepTitle",
+            "prepLabel",
+            "prepCovers",
+            "badgeTwo",
+            "summaryLabel",
+            "reminderBody",
+            "footer",
+            "selectedDate",
+            "weekNumber",
+        ] {
+            assert!(ratio(name) >= 4.5, "{scheme}: {name} {}", ratio(name));
+        }
+        for name in [
+            "todayRing",
+            "stepBorder",
+            "shopMark",
+            "prepMark",
+            "shopMarkSelected",
+            "prepMarkSelected",
+        ] {
+            assert!(ratio(name) >= 3.0, "{scheme}: {name} {}", ratio(name));
+        }
+    }
+}
+
+/// The focused element's outline as [style, width, colour]; its offset must be 2px.
+fn focus_outline(h: &Harness, what: &str) -> Vec<String> {
+    let mut o: Vec<String> = serde_json::from_value(h.js(
+        "(() => { const s = getComputedStyle(document.activeElement); \
+          return [s.outlineStyle, s.outlineWidth, s.outlineColor, s.outlineOffset]; })()",
+    ))
+    .unwrap_or_else(|_| panic!("{what}"));
+    assert_eq!(o[3], "2px", "{what} outline offset");
+    o.truncate(3);
+    o
+}
+
+/// No ancestor of the focused element clips (its overflow is `visible`), so an outside outline shows whole.
+fn assert_no_clipping_ancestor(h: &Harness) {
+    let clipped = h.js("(() => { const out = []; \
+        for (let e = document.activeElement.parentElement; e; e = e.parentElement) { \
+          const s = getComputedStyle(e); \
+          if (s.overflowX !== 'visible' || s.overflowY !== 'visible') out.push(e.className || e.tagName); } \
+        return out; })()");
+    assert_eq!(clipped, serde_json::json!([]), "clipping ancestors");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn summary_figures_stay_inside_their_columns_at_every_width() {
+    for width in [320, 375, 421, 480, 768, 900, 1280] {
+        let h = redesign_day(width);
+        let r = h.js("(() => { const items = [...document.querySelectorAll('.summary-item')]; \
+            const boxes = items.map(i => i.getBoundingClientRect()); \
+            const bad = []; \
+            items.forEach((item, k) => { \
+              const v = item.querySelector('.summary-value'); \
+              if (v.scrollWidth > v.clientWidth) bad.push(`scroll ${k}`); \
+              const range = document.createRange(); range.selectNodeContents(v); \
+              const c = range.getBoundingClientRect(); const b = boxes[k]; \
+              if (c.left < b.left - 0.5 || c.right > b.right + 0.5 || c.top < b.top - 2 || c.bottom > b.bottom + 0.5) bad.push(`outside ${k}`); \
+              if (k > 0 && boxes[k - 1].right > b.left + 0.5) bad.push(`overlap ${k}`); }); \
+            return bad; })()");
+        assert_eq!(r, serde_json::json!([]), "width {width}");
+        assert_eq!(h.count(".summary-value"), 5);
+    }
+}
+
+/// The open calendar's layout problems on the current page: overflow of the column or viewport, cells outside
+/// the calendar, and day cells that are not circles.
+const CALENDAR_FIT_JS: &str = r#"(() => {
+  const bad = [];
+  const cal = document.querySelector('#calendar').getBoundingClientRect();
+  const app = document.querySelector('.app');
+  const a = app.getBoundingClientRect(), s = getComputedStyle(app);
+  const left = a.left + parseFloat(s.borderLeftWidth) + parseFloat(s.paddingLeft);
+  const right = a.right - parseFloat(s.borderRightWidth) - parseFloat(s.paddingRight);
+  if (cal.left < left - 0.5 || cal.right > right + 0.5) bad.push(`calendar ${cal.left}..${cal.right} not in ${left}..${right}`);
+  if (document.documentElement.scrollWidth > window.innerWidth) bad.push(`scrollWidth ${document.documentElement.scrollWidth} > ${window.innerWidth}`);
+  const cells = [...document.querySelectorAll('#calendar .cal-row a, #calendar .cal-row span.cal-cell')];
+  if (cells.length < 28) bad.push(`only ${cells.length} cells`);
+  cells.forEach(c => {
+    const b = c.getBoundingClientRect();
+    if (b.left < cal.left - 0.5 || b.right > cal.right + 0.5) bad.push(`cell ${c.textContent} outside calendar`);
+    if (Math.abs(b.width - b.height) > 0.5) bad.push(`cell ${c.textContent} ${b.width}x${b.height}`);
+  });
+  return bad;
+})()"#;
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn open_calendar_fits_the_column_at_phone_widths() {
+    for width in [320, 375] {
+        let h = redesign_day(width);
+        h.open_calendar();
+        assert_eq!(
+            h.js(CALENDAR_FIT_JS),
+            serde_json::json!([]),
+            "day page {width}"
+        );
+        // The marks stay inside their cells.
+        assert_eq!(
+            h.js("[...document.querySelectorAll('#calendar .cal-marks')].filter(m => { \
+                  const c = m.parentElement.getBoundingClientRect(), b = m.getBoundingClientRect(); \
+                  return b.left < c.left - 0.5 || b.right > c.right + 0.5 || b.bottom > c.bottom + 0.5; }).length"),
+            0,
+            "marks {width}"
+        );
+    }
+    let h = Opts::new().width(320).path("/2026-02-30").launch();
+    assert_eq!(h.status(), 404);
+    assert!(h.calendar_shown());
+    assert_eq!(
+        h.js(CALENDAR_FIT_JS),
+        serde_json::json!([]),
+        "invalid date 320"
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn selected_today_keeps_an_on_blue_ring() {
+    let h = Opts::new().path("/").launch();
+    h.open_calendar();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        let cell = "#calendar .cal-selected.cal-today";
+        assert_eq!(h.count(cell), 1, "{}", t.scheme);
+        let shadow = |h: &Harness| h.styles(cell, &["boxShadow"])[0].clone();
+        let resting = shadow(&h);
+        assert_ne!(resting, "none", "{} resting", t.scheme);
+        assert!(
+            resting.contains(&t.rgb("on-blue")),
+            "{} {resting}",
+            t.scheme
+        );
+        assert_eq!(h.styles(cell, &["backgroundColor"]), [t.rgb("blue")]);
+        h.tab.find_element(cell).unwrap().move_mouse_over().unwrap();
+        assert_eq!(shadow(&h), resting, "{} hovered", t.scheme);
+        let ratio = h.js(&format!(
+            "(() => {{ const p = c => c.match(/[\\d.]+/g).map(Number); \
+              const lin = v => {{ v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }}; \
+              const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]); \
+              const [hi, lo] = [lum(p('{}')), lum(p('{}'))].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); }})()",
+            t.rgb("on-blue"),
+            t.rgb("blue")
+        ));
+        assert!(ratio.as_f64().unwrap() >= 3.0, "{} {ratio}", t.scheme);
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keyboard_focus_shows_a_two_pixel_focus_outline() {
+    let h = redesign_day(1280);
+    h.open_calendar();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        let ink = t.rgb("ink");
+        // A link, a button and a radio, each with a 2px solid ink outline offset by 2px.
+        for selector in [
+            "#calendar a.cal-cell",
+            "a.day-step[href]",
+            ".day-toggle",
+            ".meal-toggle",
+            ".shop-toggle",
+            ".prep-toggle",
+            "#calendar button",
+        ] {
+            h.tab_to(selector);
+            let what = format!("{} {selector}", t.scheme);
+            assert_eq!(
+                focus_outline(&h, &what)[..],
+                ["solid", "2px", &ink],
+                "{what}"
+            );
+            assert_no_clipping_ancestor(&h);
+        }
+        // The radio: its own outline and the label text beside it, which is what shows.
+        h.tab_to("input[name=theme]");
+        let what = format!("{} radio", t.scheme);
+        assert_eq!(
+            focus_outline(&h, &what)[..],
+            ["solid", "2px", &ink],
+            "{what}"
+        );
+        assert_eq!(
+            h.js(
+                "(() => { const s = getComputedStyle(document.activeElement.nextElementSibling); \
+                  return [s.outlineStyle, s.outlineWidth, s.outlineColor, s.outlineOffset]; })()"
+            ),
+            serde_json::json!(["solid", "2px", ink, "2px"]),
+            "{what} label"
+        );
+        assert_no_clipping_ancestor(&h);
+    }
+    // A card toggle expands with Enter and collapses again.
+    h.tab_to(".prep-toggle");
+    h.press("Enter");
+    h.wait_for("document.querySelectorAll('.prep-body').length === 1");
+    h.press("Enter");
+    h.wait_for("document.querySelectorAll('.prep-body').length === 0");
+
+    // Header links on the year page.
+    let h = Opts::new().path("/2026").launch();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        for selector in ["a.all-weeks", "a.week-link"] {
+            h.tab_to(selector);
+            let what = format!("{} {selector}", t.scheme);
+            assert_eq!(
+                focus_outline(&h, &what)[..],
+                ["solid", "2px", &t.rgb("ink")],
+                "{what}"
+            );
+            assert_no_clipping_ancestor(&h);
+        }
+    }
+    // The day toggle at a narrow width, and the meal toggle by pointer.
+    let h = redesign_day(375);
+    h.tab_to(".day-toggle");
+    assert_eq!(
+        h.js("(() => { const s = getComputedStyle(document.activeElement); return [s.outlineStyle, s.outlineWidth, s.outlineColor]; })()"),
+        serde_json::json!(["solid", "2px", LIGHT.rgb("ink")])
+    );
+    h.tab_to(".meal-toggle");
+    h.press("Enter");
+    h.wait_for("document.querySelectorAll('.meal-details').length === 1");
+    h.click(".meal-toggle");
+    h.wait_for("document.querySelectorAll('.meal-details').length === 0");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_014() {
+    let sql = bare_weeks(&[(2026, 43), (2026, 46)]);
+    // Capture the page as loaded (light), then again after the toggle switches to dark.
+    let both = |h: &Harness, page: &str, width: u32| {
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture_file(&format!("014-{page}-{width}-{}.png", t.scheme));
+        }
+        h.use_theme(&LIGHT);
+    };
+
+    // The day with shopping, prep, an expanded meal and a reminder: calendar closed, then open.
+    for width in [375, 1280] {
+        let h = redesign_day(width);
+        h.expand_redesign_day();
+        assert!(!h.calendar_shown());
+        both(&h, "day", width);
+        h.open_calendar();
+        both(&h, "day-calendar", width);
+    }
+
+    // The year page, the missing-plan page and an invalid date at phone width.
+    let h = Opts::new().width(375).sql(&sql).path("/2026").launch();
+    assert_eq!(h.count(".week-link"), 3);
+    both(&h, "year", 375);
+    let h = Opts::new().width(375).sql(&sql).path("/2026/45").launch();
+    assert_eq!(h.status(), 404);
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    both(&h, "missing-plan", 375);
+    h.open_calendar();
+    both(&h, "missing-plan-calendar", 375);
+    let h = Opts::new().width(375).path("/2026-02-30").launch();
+    assert_eq!(h.status(), 404);
+    both(&h, "invalid-date", 375);
 }

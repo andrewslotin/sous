@@ -1,9 +1,76 @@
-const { useState } = React;
+const { useState, useEffect } = React;
+
+const THEME_KEY = "sous-theme";
+const DARK_QUERY = "(prefers-color-scheme: dark)";
+
+// The stored choice: "light", "dark" or "system" (nothing stored, an unknown value or unreadable storage).
+function storedTheme() {
+  try {
+    const value = window.localStorage.getItem(THEME_KEY);
+    return value === "light" || value === "dark" ? value : "system";
+  } catch (e) {
+    return "system";
+  }
+}
+
+// Sets data-theme to the theme in effect; "system" resolves through the device's preference.
+function applyTheme(choice) {
+  const theme = choice === "system" ? (window.matchMedia(DARK_QUERY).matches ? "dark" : "light") : choice;
+  document.documentElement.setAttribute("data-theme", theme);
+}
+
+const THEME_OPTIONS = [
+  ["light", "Light"],
+  ["dark", "Dark"],
+  ["system", "System"],
+];
+
+function ThemeToggle() {
+  const [choice, setChoice] = useState(storedTheme);
+  // While the choice is System, follow the device's preference as it changes.
+  useEffect(() => {
+    if (choice !== "system") return undefined;
+    const query = window.matchMedia(DARK_QUERY);
+    const onChange = () => applyTheme("system");
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [choice]);
+  const choose = (next) => {
+    try {
+      if (next === "system") window.localStorage.removeItem(THEME_KEY);
+      else window.localStorage.setItem(THEME_KEY, next);
+    } catch (e) {
+      // Storage is unavailable: the choice still applies to the open page.
+    }
+    setChoice(next);
+    applyTheme(next);
+  };
+  return (
+    <footer className="footer">
+      <div className="theme" role="radiogroup" aria-labelledby="theme-label">
+        <span id="theme-label" className="theme-label">
+          Theme
+        </span>
+        {THEME_OPTIONS.map(([value, label]) => (
+          <label key={value} className="theme-option">
+            <input type="radio" name="theme" value={value} checked={choice === value} onChange={() => choose(value)} />
+            <span>{label}</span>
+          </label>
+        ))}
+      </div>
+    </footer>
+  );
+}
+
+// Circle = Sous, square = shopping, triangle = prep. Decorative: the label beside it carries the meaning.
+function Shape({ kind }) {
+  return <span className={`shape shape-${kind}`} aria-hidden="true"></span>;
+}
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const WEEKDAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-const MEAL_ICONS = { Breakfast: "☀️", Lunch: "🥗", Dinner: "🍽️", Snack: "🥜" };
+const MEAL_KINDS = ["Breakfast", "Lunch", "Dinner", "Snack"];
 
 // Display a number with at most one decimal place, dropping a trailing ".0".
 function fmt(n) {
@@ -61,8 +128,7 @@ function DaySummary({ meals }) {
 
 function MealCard({ meal }) {
   const [expanded, setExpanded] = useState(false);
-  const kind = MEAL_ICONS[meal.type] ? meal.type.toLowerCase() : "snack";
-  const icon = MEAL_ICONS[meal.type] || MEAL_ICONS.Snack;
+  const kind = MEAL_KINDS.includes(meal.type) ? meal.type.toLowerCase() : "snack";
   const detailsId = `meal-${meal.id}`;
   const macros = [
     { label: "P", value: meal.proteinG, cls: "c-protein" },
@@ -79,19 +145,25 @@ function MealCard({ meal }) {
         aria-controls={detailsId}
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="meal-head">
-          <div className="meal-main">
-            <div className="meal-meta">
-              <span className="meal-icon">{icon}</span>
+        <span className="meal-head">
+          <span className="meal-main">
+            <span className="meal-meta">
               <span className="meal-type">{meal.type}</span>
-              {meal.forTwo && <span className="badge badge-two">FOR TWO</span>}
-              {meal.assemblyTime && <span className="badge badge-assembly">⚡ {meal.assemblyTime}</span>}
-              {meal.cookTime && <span className="badge badge-cook">🍳 {meal.cookTime}</span>}
-            </div>
-            <div className="meal-name">{meal.name}</div>
-          </div>
-          {meal.kcal > 0 && <div className="meal-kcal">{fmt(meal.kcal)}</div>}
-        </div>
+              {meal.forTwo && <span className="badge badge-two">For two</span>}
+              {meal.assemblyTime && <span className="badge badge-assembly">Assemble {meal.assemblyTime}</span>}
+              {meal.cookTime && <span className="badge badge-cook">Cook {meal.cookTime}</span>}
+            </span>
+            <span className="meal-name">{meal.name}</span>
+          </span>
+          {meal.kcal > 0 && (
+            <span className="meal-kcal">
+              {fmt(meal.kcal)} <span className="meal-kcal-unit">kcal</span>
+            </span>
+          )}
+          <span className="meal-indicator" aria-hidden="true">
+            {expanded ? "−" : "+"}
+          </span>
+        </span>
       </button>
       {expanded && (
         <div className="meal-details" id={detailsId}>
@@ -113,7 +185,15 @@ function MealCard({ meal }) {
               </ol>
             </div>
           )}
-          {meal.tip && <div className="tip">💡 {meal.tip}</div>}
+          {meal.tip && (
+            <div className="tip">
+              <span className="tip-label">
+                <Shape kind="circle" />
+                Tip
+              </span>
+              <span>{meal.tip}</span>
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -134,6 +214,10 @@ function ShoppingListCard({ list }) {
       >
         <span className="shop-head">
           <span className="shop-main">
+            <span className="band-label">
+              <Shape kind="square" />
+              Shopping
+            </span>
             <span className="shop-label">{list.label}</span>
             {list.note !== null && <span className="shop-note">{list.note}</span>}
           </span>
@@ -177,7 +261,11 @@ function PrepCard({ session }) {
       >
         <span className="prep-head">
           <span className="prep-main">
-            <span className="prep-title">🔪 {session.title}</span>
+            <span className="band-label">
+              <Shape kind="triangle" />
+              Prep
+            </span>
+            <span className="prep-title">{session.title}</span>
             {session.covers !== null && <span className="prep-covers">{session.covers}</span>}
           </span>
           <span className="prep-indicator" aria-hidden="true">
@@ -230,66 +318,111 @@ function DayStep({ target, label, children }) {
   );
 }
 
-function MealPlan({ page }) {
-  const data = page.document;
-  const day = data.days.find((d) => d.date === page.displayedDate);
-  const dayNum = dayNumber(day.date);
-  // A session shows on the day of its weekday; a session without tasks has nothing to show.
-  const prepSessions = data.prepSessions.filter((s) => s.weekday === day.weekday && s.tasks.length > 0);
-  const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
+// The header, the day row whose heading toggles the calendar, the calendar, the page content and the footer.
+function DayShell({ page, week, heading, subtitle, date, children }) {
+  const [open, setOpen] = useState(false);
+  const dayNum = dayNumber(date);
+  const dayHeading = formatDayHeading(dayNum);
   return (
-    <CalendarShell
-      page={page}
-      week={data.week}
-      heading={`Meal Plan: ${formatDateRange(data.week)}`}
-      subtitle={data.week.subtitle}
-    >
+    <div className="app">
+      <Header title={heading} subtitle={subtitle} />
       <div className="day-row">
         <DayStep target={dayNum - 1} label="Previous day">
           ‹
         </DayStep>
-        <h2 className="day-heading">{formatDayHeading(dayNum)}</h2>
+        <h2 className="day-heading">
+          <button
+            type="button"
+            className="day-toggle"
+            aria-expanded={open}
+            aria-controls="calendar"
+            aria-label={`${dayHeading}, calendar`}
+            onClick={() => setOpen(!open)}
+          >
+            {dayHeading}
+          </button>
+        </h2>
         <DayStep target={dayNum + 1} label="Next day">
           ›
         </DayStep>
       </div>
-      {day.shoppingListIds.map((listId) => (
-        <ShoppingListCard key={listId} list={listsById.get(listId)} />
-      ))}
-      {prepSessions.length > 0 && (
-        <>
-          {data.week.prepIntro !== null && <p className="prep-intro">{data.week.prepIntro}</p>}
-          {prepSessions.map((s) => (
-            <PrepCard key={s.id} session={s} />
-          ))}
-        </>
-      )}
+      <Calendar open={open} page={page} week={week} />
+      {children}
+      <ThemeToggle />
+    </div>
+  );
+}
+
+function MealPlan({ page }) {
+  const data = page.document;
+  const day = data.days.find((d) => d.date === page.displayedDate);
+  // A session shows on the day of its weekday; a session without tasks has nothing to show.
+  const prepSessions = data.prepSessions.filter((s) => s.weekday === day.weekday && s.tasks.length > 0);
+  const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
+  const hasTasks = day.shoppingListIds.length > 0 || prepSessions.length > 0 || day.reminder !== null;
+  return (
+    <DayShell
+      page={page}
+      week={data.week}
+      heading={`Meal Plan: ${formatDateRange(data.week)}`}
+      subtitle={data.week.subtitle}
+      date={page.displayedDate}
+    >
       {day.meals.length === 0 ? (
         <p className="empty">No meals planned for this day.</p>
       ) : (
         <>
           <DaySummary meals={day.meals} />
-          {day.meals.map((meal) => (
-            <MealCard key={meal.id} meal={meal} />
-          ))}
+          <div className="meals">
+            {day.meals.map((meal) => (
+              <MealCard key={meal.id} meal={meal} />
+            ))}
+          </div>
         </>
       )}
-      {day.reminder !== null && <Reminder reminder={day.reminder} />}
-    </CalendarShell>
+      {hasTasks && (
+        <div className="tasks">
+          {day.shoppingListIds.map((listId) => (
+            <ShoppingListCard key={listId} list={listsById.get(listId)} />
+          ))}
+          {prepSessions.length > 0 && (
+            <>
+              {data.week.prepIntro !== null && <p className="prep-intro">{data.week.prepIntro}</p>}
+              {prepSessions.map((s) => (
+                <PrepCard key={s.id} session={s} />
+              ))}
+            </>
+          )}
+          {day.reminder !== null && <Reminder reminder={day.reminder} />}
+        </div>
+      )}
+    </DayShell>
   );
 }
 
-function Shell({ title, children }) {
+// The header: the page title, then the subtitle and any links. With neither, the row is not rendered.
+function Header({ title, subtitle, children }) {
   return (
-    <div className="app">
-      <div className="header">{title}</div>
-      {children}
+    <div className="header">
+      <h1 className="title">{title}</h1>
+      {(subtitle || children) && (
+        <div className="header-meta">
+          {subtitle && <p className="subtitle">{subtitle}</p>}
+          {children}
+        </div>
+      )}
     </div>
   );
 }
 
-function PageTitle({ children }) {
-  return <h1 className="title">{children}</h1>;
+// A page without a day row: the content, then the theme toggle.
+function Shell({ children }) {
+  return (
+    <div className="app">
+      {children}
+      <ThemeToggle />
+    </div>
+  );
 }
 
 // Proleptic Gregorian dates as day numbers (0 = 1970-01-01), integer arithmetic only: no Date, so the browser's
@@ -493,28 +626,14 @@ function Calendar({ open, page, week }) {
   );
 }
 
-// The header with the "Calendar" toggle (narrow screens), the calendar, then the page content.
-function CalendarShell({ page, week, heading, subtitle, children }) {
-  const [open, setOpen] = useState(false);
+// Invalid pages: the message and its link, then the calendar, always shown.
+function CalendarPage({ page, children }) {
   return (
-    <div className="app has-calendar">
-      <div className="header">
-        <PageTitle>{heading}</PageTitle>
-        <div className="header-meta">
-          {subtitle && <p className="subtitle">{subtitle}</p>}
-          <button
-            type="button"
-            className="all-weeks calendar-toggle"
-            aria-expanded={open}
-            aria-controls="calendar"
-            onClick={() => setOpen(!open)}
-          >
-            Calendar
-          </button>
-        </div>
-      </div>
-      <Calendar open={open} page={page} week={week} />
+    <div className="app">
+      <Header title="Meal Plan" />
       {children}
+      <Calendar open={true} page={page} week={null} />
+      <ThemeToggle />
     </div>
   );
 }
@@ -545,9 +664,13 @@ function WeekList({ weeks }) {
         <li key={w.path}>
           <a className="week-link" href={w.path}>
             <span className="week-link-title">
-              Week {w.isoWeek} · {w.isoYear}
+              Week {w.isoWeek}
+              <span className="week-link-year"> · {w.isoYear}</span>
             </span>
             <span className="week-link-range">{formatRangeWithYear(w.startDate, w.endDate)}</span>
+            <span className="week-link-arrow" aria-hidden="true">
+              ›
+            </span>
           </a>
         </li>
       ))}
@@ -557,40 +680,35 @@ function WeekList({ weeks }) {
 
 function MissingWeek({ page }) {
   return (
-    <CalendarShell
+    <DayShell
       page={page}
       week={page.week}
       heading={`Meal Plan: ${formatRangeWithYear(page.week.startDate, page.week.endDate)}`}
+      date={page.displayedDate}
     >
       <p className="empty">No meal plan for this week yet.</p>
-    </CalendarShell>
+    </DayShell>
   );
 }
 
 function YearPage({ page }) {
   return (
-    <Shell
-      title={
-        <>
-          <h1 className="title">Meal Plan: {page.year}</h1>
-          <div className="header-meta">
-            {page.previousYear !== null && (
-              <a className="all-weeks" href={yearPath(page.previousYear)}>
-                ← {page.previousYear}
-              </a>
-            )}
-            <a className="all-weeks" href={THIS_WEEK.href}>
-              {THIS_WEEK.label}
-            </a>
-            {page.nextYear !== null && (
-              <a className="all-weeks" href={yearPath(page.nextYear)}>
-                {page.nextYear} →
-              </a>
-            )}
-          </div>
-        </>
-      }
-    >
+    <Shell>
+      <Header title={`Meal Plan: ${page.year}`}>
+        {page.previousYear !== null && (
+          <a className="all-weeks" href={yearPath(page.previousYear)}>
+            ← {page.previousYear}
+          </a>
+        )}
+        <a className="all-weeks" href={THIS_WEEK.href}>
+          {THIS_WEEK.label}
+        </a>
+        {page.nextYear !== null && (
+          <a className="all-weeks" href={yearPath(page.nextYear)}>
+            {page.nextYear} →
+          </a>
+        )}
+      </Header>
       {page.weeks.length === 0 ? (
         <p className="empty">No meal plans available yet.</p>
       ) : (
@@ -602,25 +720,26 @@ function YearPage({ page }) {
 
 function InvalidWeek({ page }) {
   return (
-    <CalendarShell page={page} week={null} heading="Meal Plan">
+    <CalendarPage page={page}>
       <p className="empty">Invalid week.</p>
       <Nav links={[THIS_WEEK]} />
-    </CalendarShell>
+    </CalendarPage>
   );
 }
 
 function InvalidDate({ page }) {
   return (
-    <CalendarShell page={page} week={null} heading="Meal Plan">
+    <CalendarPage page={page}>
       <p className="empty">Invalid date.</p>
       <Nav links={[THIS_WEEK]} />
-    </CalendarShell>
+    </CalendarPage>
   );
 }
 
 function Unavailable() {
   return (
-    <Shell title={<PageTitle>Meal Plan</PageTitle>}>
+    <Shell>
+      <Header title="Meal Plan" />
       <p className="empty">Meal plans are temporarily unavailable.</p>
       <Nav links={[{ href: "/", label: "Try again" }]} />
     </Shell>

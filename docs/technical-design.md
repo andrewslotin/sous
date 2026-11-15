@@ -6,7 +6,7 @@ Service name: **Sous**. Repository and binary name: `sous`.
 
 ## Purpose and scope
 
-Provide a small, single-household HTTP service that stores weekly meal-plan content in SQLite and displays it using the design in [`docs/examples/menu.html`](examples/menu.html). Application authentication is not required.
+Provide a small, single-household HTTP service that stores weekly meal-plan content in SQLite and displays it as the [design system](design-system.md) specifies. Application authentication is not required.
 
 V1 serves existing data. Another tool or process populates the database, outside this project's scope. Changes become visible on the next page load after the writing transaction commits.
 
@@ -81,29 +81,31 @@ The HTML response itself has the correct status; do not serve HTTP 200 for every
 
 ## Interface preservation
 
-[`docs/examples/menu.html`](examples/menu.html) is the visual reference. Retain its 540px maximum content width, background, spacing, fonts, gradients, colors, borders, rounded cards, badges, and responsive behavior. The calendar sidebar sits outside the 540px content column.
+The [design system](design-system.md) is the visual reference. Follow its tokens, type and components: one centred main column of at most 560px on every width, and a light and a dark theme. The [example page](examples/menu.html) is kept as history.
 
 Retain:
 
 - Expandable meal, prep, and shopping cards.
 - Meal descriptions, nutrition values, ordered instructions, and tip callouts.
-- Daily nutrition totals and the existing meal-type colors and icons.
+- Daily nutrition totals.
 - Shopping-list categories and notes; multiple lists can appear on a day in stored order.
 
 Intentional changes:
 
-- Shopping items become ordinary bullet lists. Remove checkbox controls, completion counts, checked colors, and strikethrough state.
+- The interface is redesigned after Kandinsky's Bauhaus years: a cream canvas, thin black lines, Jost and mono type, and a primary per job, each with its shape (a blue circle for Sous, a red square for shopping, a yellow triangle for prep). It has no emoji in its own text (household data is rendered as given).
+- Every page ends with a theme toggle: Light, Dark or System. System is the default and follows the device's color-scheme preference.
+- Shopping items become plain lists: rows separated by hairlines, with no bullets. Remove checkbox controls, completion counts, checked colors, and strikethrough state.
 - Display days in ISO week order.
-- Add year and missing-plan pages using the existing typography and container.
-- Week, date, missing-plan and invalid pages show a month calendar: a sidebar beside the 540px content column at 900px and wider, and a “Calendar” toggle below that. Every date is a link to its date path, week rows show the week number and a dot for planned weeks, and a day with a shopping list or prep session carries a mark (a dot for shopping, a small square for prep).
-- The Daily Plan and Prep Sessions tabs and the day selector are replaced by the day view: a row with previous and next day links around the day's heading (for example “Wednesday, November 11”), then the day's shopping lists, prep sessions, nutrition summary and meals, and reminder.
+- Add year and missing-plan pages using the design system's typography and column.
+- Week, date, missing-plan and invalid pages show a month calendar. On week, date and missing-plan pages it is hidden until the day heading opens it, right below the heading; on invalid pages it is always shown, below the message. Every date is a link to its date path, week rows show the week number and a circle for planned weeks, and a day with a shopping list or prep session carries a mark (a square for shopping, a triangle for prep).
+- The Daily Plan and Prep Sessions tabs and the day selector are replaced by the day view: a row with previous and next day links around the day's heading (for example “Wednesday, November 11”), then the day's nutrition summary and meals, then its shopping lists, prep sessions and reminder. The missing-plan page has the same row for its date.
 - The reference page's Strategy tab is removed.
 
 Move all week-specific text into the database, including the header subtitle, prep introduction, and optional day reminder. Keep “Meal Plan”, weekday and month names, empty-state messages, and nutrition labels as UI text.
 
-Continue using the existing React component structure and styles. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. Match the existing body font fallback behavior rather than introducing a new font.
+Continue using the existing React component structure. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. The interface uses two self-hosted families: Jost for words and JetBrains Mono for numbers.
 
-Expanded cards are transient browser state. No persisted UI state or shopping progress is required. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
+Expanded cards and the open calendar are transient browser state. The theme choice is the only UI state kept, in the browser's local storage. No shopping progress is required. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
 
 ## Database contract
 
@@ -163,12 +165,12 @@ Request handlers use read-only database connections. Mutation requests to define
 
 ## Verification and acceptance criteria
 
-1. A populated fixture renders each day's cards, text, badges, and instructions with the reference styling. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
+1. A populated fixture renders each day's cards, text, badges, and instructions styled as the design system specifies, in light and dark. Compare desktop and narrow mobile screenshots, including expanded states; documented shopping/day-order/archive changes are expected.
 2. `/` resolves the current ISO week in the configured timezone; `/2026/44` shows October 26–November 1, 2026.
 3. Test ISO year boundaries, valid/invalid week 53, timezone midnight boundaries, canonical redirects, date paths, and the day shown for old, current and future weeks.
 4. Missing current plans, missing explicit weeks, empty archives, missing days, and unavailable databases produce their specified messages and HTTP statuses.
 5. Editing a meal through a separate database connection becomes visible on refresh without restarting. An uncommitted transaction is never partially rendered.
-6. Shopping lists render categorized bullets with no checkboxes or progress state. Collection ordering remains stable after edits.
+6. Shopping lists render categorized plain rows with no checkboxes or progress state. Collection ordering remains stable after edits.
 7. Nutrition totals sum stored values once per meal regardless of FOR TWO, and decimal formatting is deterministic.
 8. Database constraints reject invalid references, duplicate sibling positions, and cross-week shopping associations.
 9. User-supplied text is escaped in both React rendering and initial JSON embedding.

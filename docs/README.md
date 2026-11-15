@@ -1,6 +1,6 @@
 # Sous feature tracker
 
-The [technical design](technical-design.md) defines the service contract. The [example page](examples/menu.html) defines the visual reference. The [OpenAPI document](openapi.json) describes the read API.
+The [technical design](technical-design.md) defines the service contract. The [design system](design-system.md) defines the visual reference; the [example page](examples/menu.html) is kept as history. The [OpenAPI document](openapi.json) describes the read API.
 
 Implement features in the order below. Each iteration includes its own verification and leaves a usable service. Status values: Planned, In progress, Done. Mark a feature Done when its acceptance criteria pass.
 
@@ -19,3 +19,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 11 | [Calendar sidebar](features/011-calendar-sidebar.md) | Done | 7 |
 | 12 | [Remove strategy cards](features/012-drop-strategy.md) | Done | 6 |
 | 13 | [Day view](features/013-day-view.md) | Done | 11, 12 |
+| 14 | [Redesign](features/014-redesign.md) | Done | 13 |

@@ -57,6 +57,9 @@
 - When an MCP tool call fails with an error the server state can't explain, first suspect the client's argument
   encoding (Claude Code most likely sent `null` for a `["string","null"]` argument as the text `"null"`). Say so
   instead of blaming the database.
+- Before designing a look ("redesign the app"), ask for the art direction first: style references, palette, type and
+  mood. Don't pick a direction myself and present it as done. I chose a warm cookbook look when the user wanted
+  Kandinsky's style and palette, and the redesign was already applied before they could say so.
 - A short reply right after I list numbered decisions most likely answers one of them. Match it to the item first,
   and if it's unclear which one, ask which item. Don't read it as a new design request and offer redesigns: "I don't
   want calendar to display the month anymore" was about decision 6, the initial month.
