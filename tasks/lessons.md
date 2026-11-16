@@ -67,3 +67,7 @@
   CI on `main` and the Docker workflow pass, then create the GitHub release (`gh release create`) with notes in the
   previous release's style. The Docker workflow doesn't create the GitHub release, so a pushed tag alone is not a
   release. Check how the last release was made (`gh release view`) before calling a release done.
+- "The MCP fails to connect" may mean a deployed server, not localhost: ask which session and URL before probing.
+  Check the client's MCP logs for when it last worked before blaming a release. If the client can't reach a host that
+  curl reaches, suspect the client's network permissions, not the server.
+- `tasks/lessons.md` is public: no host names, user paths, OS details or other facts about the user's setup.
