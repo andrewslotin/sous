@@ -13,7 +13,7 @@ Read the applicable repository instructions, `tasks/lessons.md`, the requested f
 
 Use the available agterm skill for terminal addressing and communication. Discover the live session and panes with `agtermctl tree --json`; identify Claude and Codex from their foreground processes and repository paths. Do not assume Claude is always left, Codex is always right, or that `active` is your session. Prefer discovered stable pane IDs. When `AGTERM_SOCKET` is set, pass `--socket "$AGTERM_SOCKET"` on every call. If session environment variables are missing, use the discovered explicit IDs.
 
-If Claude is still implementing, prepare by reading the spec and existing tests; wait for its ready-for-review handoff before treating unfinished code as final. Do not submit text into a pane containing an unsent user prompt. Ask only if the intended peer cannot be identified safely.
+If Claude is still implementing, prepare by reading the spec and existing tests; wait for its ready-for-review handoff before treating unfinished code as final. A session-level `completed` status is not a handoff: background agents can change that status while Claude is still waiting for their work. Require an explicit ready-for-review message from Claude in the reviewer's own pane. If Claude or the user says that message will arrive via agterm, stop polling session status, pane text and the working tree, yield, and resume only when the message arrives. Do not submit text into a pane containing an unsent user prompt. Ask only if the intended peer cannot be identified safely.
 
 The handoff should identify the spec, changed files or working tree, claimed verification, intentional scope decisions, and reply destination. Infer available details from the repository and live panes rather than repeatedly asking. No fixed session UUID or absolute repository path belongs in this skill.
 
@@ -69,7 +69,7 @@ Add the socket option when set. Execute the text and Enter as separate tool call
 
 ## Re-review and finish
 
-After sending findings, yield for Claude's fix handoff instead of repeatedly polling files or interrupting active implementation. On return, inspect the fixes, added tests, and any new changes. Re-run affected checks; verify that prior blockers are resolved. Evaluate disagreements against the spec and evidence, and withdraw a finding if it was wrong.
+After sending findings, yield for Claude's explicit fix handoff in the reviewer's pane instead of polling status, pane text or files, or interrupting active implementation. On return, inspect the fixes, added tests, and any new changes. Re-run affected checks; verify that prior blockers are resolved. Evaluate disagreements against the spec and evidence, and withdraw a finding if it was wrong.
 
 Continue the review/fix loop until there are no blocking issues. If a required decision or unavailable verification prevents approval, clearly state what remains and who can resolve it; do not keep cycling on the same blocker. Approval is a review verdict, not permission to commit, merge, deploy, or change the feature tracker.
 
