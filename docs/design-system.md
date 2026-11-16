@@ -87,7 +87,7 @@ There are two themes, light and dark. The reader picks Light, Dark or System in 
 
 ## Components
 
-- **Header:** the page title in `display` `ink`, then a row with the subtitle and any links in `small` `ink-muted`. Links are underlined in `line-strong`. With no subtitle and no links, the row isn't rendered. Day pages have no links. Year pages show `← 2025`, `This week`, `2027 →`.
+- **Header:** the page title in `display` `ink`, then a row with the subtitle and any links in `small` `ink-muted`. Links are underlined in `line-strong`. With no subtitle and no links, the row isn't rendered. Day and missing-plan pages show `Today` when the displayed date isn't today. Year pages show `← 2025`, `This week`, `2027 →`.
 - **Day navigation:** the day heading in `heading`, centred between two steppers (`‹ ›` in `mono`, labelled "Previous day" and "Next day"). A disabled stepper has a `line-strong` ring, `ink-faint` chevron and no fill. The heading is a button that shows and hides the calendar: a dashed `ink-muted` underline that turns `ink` on hover and while the calendar is open.
 - **Calendar:** no fill; the month sits on `paper` between two `line` hairlines. The month in `title` between borderless steppers, weekday heads in `label` `ink-faint`, a week-number column with a small `ink-muted` circle for planned weeks, and days as 40px circles with the date in `figure-sm`. Selected, today and marks as under Colour; out-of-month dates are `ink-faint`. Shopping is a small square and prep a small triangle.
 - **Nutrition summary:** a five-column square `surface-sunken` strip with `line` dividers. Each column has a `figure` value, its unit stacked under it, and a `label` under that. Calories are `ink`; the macros take their macro colours.

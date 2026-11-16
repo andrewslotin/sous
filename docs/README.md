@@ -21,4 +21,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 13 | [Day view](features/013-day-view.md) | Done | 11, 12 |
 | 14 | [Redesign](features/014-redesign.md) | Done | 13 |
 | 15 | [Self-contained tool schemas](features/015-inline-tool-schemas.md) | In progress | 6, 10 |
-| 16 | [Today link](features/016-today-link.md) | Planned | 14 |
+| 16 | [Today link](features/016-today-link.md) | Done | 14 |

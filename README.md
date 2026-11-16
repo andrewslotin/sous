@@ -56,7 +56,7 @@ Configure it with environment variables:
 | `/api/<year>` | The year listing as JSON |
 
 Weeks use ISO 8601 numbering (Monday to Sunday). A plan page shows one day at a time, with links to the previous
-and next day and a month calendar that links every date and marks the days with shopping lists or prep sessions. The pages follow the [design system](docs/design-system.md), after Kandinsky's Bauhaus years. They have a light and a dark theme: pick Light, Dark or System at the foot of any page. System follows your device's color-scheme preference. The API is described in the [OpenAPI document](docs/openapi.json).
+and next day, a Today link when you are on another date, and a month calendar that links every date and marks the days with shopping lists or prep sessions. The pages follow the [design system](docs/design-system.md), after Kandinsky's Bauhaus years. They have a light and a dark theme: pick Light, Dark or System at the foot of any page. System follows your device's color-scheme preference. The API is described in the [OpenAPI document](docs/openapi.json).
 
 ### MCP
 

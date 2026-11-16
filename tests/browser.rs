@@ -606,7 +606,9 @@ fn clock_at(y: i32, mo: u32, d: u32, h: u32, mi: u32, sec: u32) -> Clock {
 fn plan_header_range_and_no_all_weeks_link() {
     let h = Harness::start("", 1280);
     assert_eq!(h.text(".title"), "Meal Plan: Oct 26 – Nov 1");
-    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
+    // The only header link is the Today link (the harness's today is another week).
+    assert_eq!(h.texts("a.all-weeks"), ["Today"]);
+    assert_eq!(h.count("a.all-weeks.today-link"), 1);
     assert_eq!(
         h.js("document.body.textContent.includes('All weeks')"),
         false
@@ -1377,7 +1379,9 @@ fn missing_week_pages_have_the_calendar_and_no_links() {
         0
     );
     assert_eq!(h.js("document.querySelectorAll('a.nav-link').length"), 0);
-    assert_eq!(h.js("document.querySelectorAll('a.all-weeks').length"), 0);
+    // The only header link is the Today link.
+    assert_eq!(h.texts("a.all-weeks"), ["Today"]);
+    assert_eq!(h.count("a.all-weeks.today-link"), 1);
     assert_eq!(h.cal_heading(), "December 2026");
     // The day row of the displayed date (the week's Monday) with working steps and the calendar closed.
     assert_eq!(h.count(".day-row"), 1);
@@ -4080,4 +4084,265 @@ fn visual_capture_014() {
     let h = Opts::new().width(375).path("/2026-02-30").launch();
     assert_eq!(h.status(), 404);
     both(&h, "invalid-date", 375);
+}
+
+// ---- Feature 16: today link ----
+
+/// The Today link's `href` on the current page, or `None` when the page has no `.today-link`.
+fn today_href(h: &Harness) -> Option<String> {
+    let v = h.js("(() => { const a = document.querySelector('.today-link'); return a && a.getAttribute('href'); })()");
+    v.as_str().map(str::to_string)
+}
+
+/// Whether the header has a `.header-meta` row.
+fn has_header_meta(h: &Harness) -> bool {
+    h.count(".header .header-meta") == 1
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn today_link_shows_on_other_days_weeks_and_missing_pages() {
+    // The harness's today is Wednesday, December 2 (W49, no plan).
+    let h = Opts::new().path("/2026-10-28").launch();
+    for path in ["/2026-10-28", "/2026/44", "/2026/53", "/2026-11-11"] {
+        h.goto_page(path);
+        assert_eq!(h.count("a.today-link"), 1, "{path}");
+        assert_eq!(
+            h.js("(() => { const a = document.querySelector('a.today-link'); \
+                  return [a.className, a.textContent, a.children.length, a.hasAttribute('aria-label'), \
+                          a.getAttribute('href'), a === document.querySelector('.header-meta').lastElementChild]; })()"),
+            serde_json::json!(["all-weeks today-link", "Today", 0, false, "/2026-12-02", true]),
+            "{path}"
+        );
+    }
+    // Following it opens today's missing-plan page with the calendar closed.
+    h.click("a.today-link");
+    h.wait_page("/2026-12-02");
+    assert_eq!(h.heading(), "Wednesday, December 2");
+    assert_eq!(h.texts(".empty"), ["No meal plan for this week yet."]);
+    assert!(!h.calendar_shown());
+    assert_eq!(h.count(".today-link"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn today_link_leads_to_todays_date_in_a_planned_week() {
+    let h = Opts::new()
+        .sql(&bare_weeks(&[(2026, 43)]))
+        .clock(clock_at(2026, 10, 28, 11, 0, 0))
+        .path("/2026-10-26")
+        .launch();
+    for path in ["/2026-10-26", "/2026/43"] {
+        h.goto_page(path);
+        assert_eq!(today_href(&h).as_deref(), Some("/2026-10-28"), "{path}");
+        h.click("a.today-link");
+        h.wait_page("/2026-10-28");
+        assert_eq!(h.status(), 200, "{path}");
+        assert_eq!(h.heading(), "Wednesday, October 28");
+        assert!(!h.calendar_shown());
+        assert_eq!(h.count(".today-link"), 0);
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn today_link_uses_the_server_today_not_the_browser_clock() {
+    // 2026-11-01T22:30Z is Sunday, November 1 in Berlin.
+    let h = Opts::new()
+        .clock(clock_at(2026, 11, 1, 22, 30, 0))
+        .path("/2026-10-28")
+        .launch();
+    for tz in ["Pacific/Kiritimati", "Pacific/Pago_Pago"] {
+        h.set_browser_timezone(tz);
+        h.goto("/2026-10-28");
+        assert_eq!(today_href(&h).as_deref(), Some("/2026-11-01"), "{tz}");
+        for path in ["/", "/2026-11-01"] {
+            h.goto(path);
+            assert_eq!(today_href(&h), None, "{tz} {path}");
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn no_today_link_when_the_displayed_date_is_today() {
+    // Missing-plan pages for today: no link and no header row at all (no subtitle).
+    let h = Opts::new().path("/").launch();
+    for path in ["/", "/2026/49", "/2026-12-02"] {
+        h.goto_page(path);
+        assert_eq!(today_href(&h), None, "{path}");
+        assert!(!has_header_meta(&h), "{path}");
+    }
+    // A planned today: the row holds only the subtitle.
+    let h = Opts::new()
+        .clock(clock_at(2026, 10, 28, 11, 0, 0))
+        .path("/")
+        .launch();
+    for path in ["/", "/2026/44", "/2026-10-28"] {
+        h.goto_page(path);
+        assert_eq!(today_href(&h), None, "{path}");
+        assert_eq!(
+            h.js("[...document.querySelector('.header-meta').children].map(e => e.tagName + '.' + e.className)"),
+            serde_json::json!(["P.subtitle"]),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn other_pages_have_no_today_link() {
+    let h = Opts::new().path("/2026").launch();
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.count(".today-link"), 0);
+    assert_eq!(h.texts("a.all-weeks"), ["This week"]);
+    for (path, status) in [("/2026/54", 404), ("/2026-02-30", 404), ("/2031", 404)] {
+        h.goto_page(path);
+        assert_eq!(h.status(), status, "{path}");
+        assert_eq!(h.count(".today-link"), 0, "{path}");
+    }
+    let h = Opts::new().db(Db::NoTables).path("/").launch();
+    assert_eq!(h.status(), 503);
+    assert_eq!(h.count(".today-link"), 0);
+}
+
+/// Distance in px between the link's right edge and the header's.
+fn link_right_gap(h: &Harness) -> f64 {
+    (h.rect(".today-link")[1] - h.rect(".header")[1]).abs()
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn today_link_sits_at_the_right_end_of_the_row() {
+    for width in [1280, 375] {
+        let h = Opts::new().width(width).path("/2026/44").launch();
+        // With a subtitle.
+        assert!(h.count(".header-meta > .subtitle") == 1);
+        assert!(link_right_gap(&h) < 1.0, "{width} subtitle");
+        // Without one: the row holds only the link, far from the left edge.
+        h.goto_page("/2026/53");
+        assert_eq!(h.count(".header-meta > *"), 1);
+        assert!(link_right_gap(&h) < 1.0, "{width} no subtitle");
+        assert!(
+            h.rect(".today-link")[0] > h.rect(".header")[0] + 100.0,
+            "{width} left"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn a_long_subtitle_wraps_beside_the_today_link_at_320px() {
+    let long = "A long week of batch cooking with several make-ahead dishes, freezer staples and snacks for school and work, planned around a busy schedule with guests on the weekend and leftovers on Monday evening.";
+    let sql =
+        format!("UPDATE weeks SET subtitle = '{long}' WHERE iso_year = 2026 AND iso_week = 44;");
+    let h = Opts::new().width(320).sql(&sql).path("/2026/44").launch();
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+        true
+    );
+    let sub = h.rect(".subtitle");
+    let link = h.rect(".today-link");
+    assert!(sub[3] - sub[2] > 40.0, "subtitle wraps: {sub:?}");
+    assert!(sub[1] <= link[0], "subtitle ends before the link");
+    assert!(
+        (link[2] - sub[2]).abs() < 20.0,
+        "link on the subtitle's first line"
+    );
+    assert!(link_right_gap(&h) < 1.0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn today_link_matches_header_links_in_both_themes() {
+    let year = Opts::new().path("/2026").launch();
+    let h = Opts::new().path("/2026/44").launch();
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        year.use_theme(&t);
+        // Move the pointer off the link (the previous round left it there).
+        h.tab
+            .find_element(".title")
+            .unwrap()
+            .move_mouse_over()
+            .unwrap();
+        let props = ["color", "fontSize", "textDecorationColor"];
+        assert_eq!(
+            h.styles(".today-link", &props),
+            [t.rgb("ink-muted"), "14px".into(), t.rgb("line-strong")],
+            "{}",
+            t.scheme
+        );
+        assert_eq!(
+            h.styles(".today-link", &["color", "fontSize"]),
+            year.styles("a.all-weeks", &["color", "fontSize"]),
+            "{} like the year page",
+            t.scheme
+        );
+        // Contrast of the text on its background.
+        let ratio = h.js(
+            "(() => { const parse = c => c.match(/[\\d.]+/g).map(Number); \
+              const lin = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); }; \
+              const lum = c => 0.2126 * lin(c[0]) + 0.7152 * lin(c[1]) + 0.0722 * lin(c[2]); \
+              const el = document.querySelector('.today-link'); \
+              let bg = [255, 255, 255]; \
+              for (let e = el; e; e = e.parentElement) { const p = parse(getComputedStyle(e).backgroundColor); \
+                if (p.length < 4 || p[3] > 0) { bg = p; break; } } \
+              const [hi, lo] = [lum(parse(getComputedStyle(el).color)), lum(bg)].sort((x, y) => y - x); \
+              return (hi + 0.05) / (lo + 0.05); })()",
+        );
+        assert!(ratio.as_f64().unwrap() >= 4.5, "{} {ratio}", t.scheme);
+        // Hover turns it ink.
+        h.tab
+            .find_element(".today-link")
+            .unwrap()
+            .move_mouse_over()
+            .unwrap();
+        assert_eq!(
+            h.styles(".today-link", &["color"]),
+            [t.rgb("ink")],
+            "{} hover",
+            t.scheme
+        );
+        // Keyboard focus shows the shared outline.
+        h.tab_to(".today-link");
+        let what = format!("{} today link", t.scheme);
+        assert_eq!(
+            focus_outline(&h, &what)[..],
+            ["solid", "2px", &t.rgb("ink")],
+            "{what}"
+        );
+        assert_no_clipping_ancestor(&h);
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_016() {
+    let both = |h: &Harness, page: &str, width: u32| {
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture_file(&format!("016-{page}-{width}-{}.png", t.scheme));
+        }
+        h.use_theme(&LIGHT);
+    };
+    for width in [375, 1280] {
+        // A day other than today.
+        let h = redesign_day(width);
+        assert_eq!(today_href(&h).as_deref(), Some("/2026-10-28"));
+        both(&h, "other-day", width);
+        // Today.
+        let h = Opts::new()
+            .width(width)
+            .clock(clock_at(2026, 10, 28, 11, 0, 0))
+            .path("/2026-10-28")
+            .launch();
+        assert_eq!(today_href(&h), None);
+        both(&h, "today", width);
+    }
+    // A missing-plan page for another week: the link without a subtitle.
+    let h = Opts::new().width(375).path("/2026/53").launch();
+    assert_eq!(h.status(), 404);
+    assert_eq!(today_href(&h).as_deref(), Some("/2026-12-02"));
+    both(&h, "missing-plan", 375);
 }

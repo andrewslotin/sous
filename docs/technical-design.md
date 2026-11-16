@@ -98,7 +98,7 @@ Intentional changes:
 - Display days in ISO week order.
 - Add year and missing-plan pages using the design system's typography and column.
 - Week, date, missing-plan and invalid pages show a month calendar. On week, date and missing-plan pages it is hidden until the day heading opens it, right below the heading; on invalid pages it is always shown, below the message. Every date is a link to its date path, week rows show the week number and a circle for planned weeks, and a day with a shopping list or prep session carries a mark (a square for shopping, a triangle for prep).
-- The Daily Plan and Prep Sessions tabs and the day selector are replaced by the day view: a row with previous and next day links around the day's heading (for example “Wednesday, November 11”), then the day's nutrition summary and meals, then its shopping lists, prep sessions and reminder. The missing-plan page has the same row for its date.
+- The Daily Plan and Prep Sessions tabs and the day selector are replaced by the day view: a row with previous and next day links around the day's heading (for example “Wednesday, November 11”), then the day's nutrition summary and meals, then its shopping lists, prep sessions and reminder. The missing-plan page has the same row for its date. Day and missing-plan pages show a "Today" link in the header row, to today's date path, when the displayed date isn't today.
 - The reference page's Strategy tab is removed.
 
 Move all week-specific text into the database, including the header subtitle, prep introduction, and optional day reminder. Keep “Meal Plan”, weekday and month names, empty-state messages, and nutrition labels as UI text.

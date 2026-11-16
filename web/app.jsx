@@ -325,7 +325,14 @@ function DayShell({ page, week, heading, subtitle, date, children }) {
   const dayHeading = formatDayHeading(dayNum);
   return (
     <div className="app">
-      <Header title={heading} subtitle={subtitle} />
+      <Header title={heading} subtitle={subtitle}>
+        {/* Today link: the server's today, never the browser's clock; absent on today's own page. */}
+        {page.displayedDate !== page.today && (
+          <a className="all-weeks today-link" href={"/" + page.today}>
+            Today
+          </a>
+        )}
+      </Header>
       <div className="day-row">
         <DayStep target={dayNum - 1} label="Previous day">
           ‹
