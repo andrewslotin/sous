@@ -14,7 +14,7 @@ Implement features in the order below. Each iteration includes its own verificat
 | 6 | [MCP meal planning and recall](features/006-mcp-meal-planning.md) | Done | 5 |
 | 7 | [Year archive pages](features/007-year-archive.md) | Done | 2 |
 | 8 | [API routes matching page routes](features/008-api-routes.md) | Done | 7 |
-| 9 | [Docker image and CI](features/009-docker-image.md) | In progress | — |
+| 9 | [Docker image and CI](features/009-docker-image.md) | Done | — |
 | 10 | [Create weeks without a null revision](features/010-save-week-optional-revision.md) | Done | 6 |
 | 11 | [Calendar sidebar](features/011-calendar-sidebar.md) | Done | 7 |
 | 12 | [Remove strategy cards](features/012-drop-strategy.md) | Done | 6 |
