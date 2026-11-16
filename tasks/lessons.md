@@ -63,3 +63,7 @@
 - A short reply right after I list numbered decisions most likely answers one of them. Match it to the item first,
   and if it's unclear which one, ask which item. Don't read it as a new design request and offer redesigns: "I don't
   want calendar to display the month anymore" was about decision 6, the initial month.
+- A release has four steps: bump the version in `Cargo.toml` and `Cargo.lock`, push a signed `vX.Y.Z` tag, wait until
+  CI on `main` and the Docker workflow pass, then create the GitHub release (`gh release create`) with notes in the
+  previous release's style. The Docker workflow doesn't create the GitHub release, so a pushed tag alone is not a
+  release. Check how the last release was made (`gh release view`) before calling a release done.
