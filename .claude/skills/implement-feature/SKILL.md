@@ -31,7 +31,9 @@ Settled project decisions. Do not ask about them again:
 
 Write a brief to the scratchpad (`brief-NNN.md`), never into the repo. Subagents start with no context, so it must
 stand on its own:
-- **Docs to read:** the spec, the design, and the relevant reference such as `docs/examples/menu.html`.
+- **Docs to read:** the spec and the technical design. For any change to `web/`, also `docs/design-system.md`, the
+  visual reference. Its tokens, type, shapes and component rules bind the worker. If the feature needs something
+  the design system lacks, the spec must say how to extend it, and one owner updates `docs/design-system.md`.
 - **Ground rules:** cargo commands allowed; never run the server; never commit; never edit `docs/`, except the docs the
   spec says to update, each assigned to one owner (the tracker stays yours). Use runtime
   `sqlx::query`/`query_as` and no `query!` macros. Do not build later features' scope. Write files with the
@@ -45,7 +47,8 @@ stand on its own:
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
   integration tests and `tests/browser.rs` for anything the user sees: rendering, keyboard/pointer, layout widths,
   text safety. When the feature has visual criteria, also have a browser test write full-page screenshots at 375
-  and 1280 px to `target/visual/`, and look at them in step 4. Brief workers to write files only with Write/Edit,
+  and 1280 px, in light and in dark, to `target/visual/`. Look at them in step 4 and compare them with
+  `docs/design-system.md`. Brief workers to write files only with Write/Edit,
   never `cat`/heredoc appends. For migration-preservation tests, keep earlier features' fixture files frozen and put new content in
   a separate fixture, so the upgrade test loads real earlier-iteration data into the old schema.
 
