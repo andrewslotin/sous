@@ -19,6 +19,7 @@ use rmcp::service::{RequestContext, RoleServer};
 use rmcp::transport::streamable_http_server::session::never::NeverSessionManager;
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService};
 use schemars::JsonSchema;
+use schemars::generate::SchemaSettings;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -272,16 +273,33 @@ fn read_only() -> ToolAnnotations {
         .open_world(false)
 }
 
-fn definition<I: JsonSchema + 'static, O: JsonSchema + 'static>(
+/// A draft 2020-12 schema with every subschema written in place, so it has no `$ref` or `$defs` for
+/// clients that cannot resolve them. Like rmcp's own, minus the wrapper type's `title` and `description`.
+fn schema<T: JsonSchema>() -> JsonObject {
+    let mut settings = SchemaSettings::draft2020_12();
+    settings.inline_subschemas = true;
+    let root = settings.into_generator().into_root_schema_for::<T>();
+    let Ok(Value::Object(mut object)) = serde_json::to_value(root) else {
+        panic!("tool schema is not a JSON object");
+    };
+    object.remove("title");
+    object.remove("description");
+    object
+}
+
+fn definition<I: JsonSchema, O: JsonSchema>(
     name: &'static str,
     title: &'static str,
     description: &'static str,
     annotations: ToolAnnotations,
 ) -> Tool {
-    Tool::new(name, description, Arc::new(JsonObject::new()))
+    let input = schema::<I>();
+    if input.get("type") != Some(&json!("object")) {
+        panic!("Invalid input schema for tool '{name}': the root type must be 'object'.");
+    }
+    Tool::new(name, description, Arc::new(input))
         .with_title(title)
-        .with_input_schema::<I>()
-        .with_output_schema::<O>()
+        .with_raw_output_schema(Arc::new(schema::<O>()))
         .with_annotations(annotations)
 }
 
@@ -528,6 +546,63 @@ mod tests {
             assert_eq!(tool.input_schema["type"], "object", "{}", tool.name);
             let output = tool.output_schema.expect("output schema");
             assert_eq!(output["type"], "object", "{}", tool.name);
+        }
+    }
+
+    /// Inlining must not change which values a schema accepts, only where its parts are written.
+    #[test]
+    fn inlined_schemas_accept_what_rmcp_schemas_accept() {
+        let compile =
+            |schema: JsonObject| jsonschema::validator_for(&Value::Object(schema)).unwrap();
+        let rmcp_input = rmcp::handler::server::tool::schema_for_input::<SaveWeekArgs>().unwrap();
+        let (old, new) = (
+            compile((*rmcp_input).clone()),
+            compile(schema::<SaveWeekArgs>()),
+        );
+
+        let example: Value =
+            serde_json::from_str(include_str!("../docs/examples/save-week.json")).unwrap();
+        let args = |edit: &dyn Fn(&mut Value)| {
+            let mut args = json!({"isoYear": 2026, "isoWeek": 45, "document": example.clone()});
+            edit(&mut args);
+            args
+        };
+        let cases = [
+            (args(&|_| {}), true),
+            (args(&|a| a["expectedRevision"] = Value::Null), true),
+            (args(&|a| a["expectedRevision"] = json!("0123abcd")), true),
+            (args(&|a| a["expectedRevision"] = json!(7)), false),
+            (args(&|a| a["document"] = json!(example.to_string())), false),
+            (args(&|a| a["document"]["unknown"] = json!(1)), false),
+            (
+                args(&|a| {
+                    a["document"]
+                        .as_object_mut()
+                        .unwrap()
+                        .remove("prepSessions");
+                }),
+                false,
+            ),
+            (
+                args(&|a| a["document"]["prepSessions"][0]["weekday"] = json!(0)),
+                false,
+            ),
+            (
+                args(&|a| a["document"]["prepSessions"][0]["weekday"] = json!(8)),
+                false,
+            ),
+            (
+                args(&|a| a["document"]["prepSessions"][0]["weekday"] = json!("1")),
+                false,
+            ),
+            (
+                args(&|a| a["document"]["prepSessions"][0]["weekday"] = Value::Null),
+                true,
+            ),
+        ];
+        for (value, valid) in &cases {
+            assert_eq!(old.is_valid(value), *valid, "rmcp schema: {value}");
+            assert_eq!(new.is_valid(value), *valid, "inline schema: {value}");
         }
     }
 }

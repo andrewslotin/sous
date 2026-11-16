@@ -7,6 +7,8 @@ whatever an assistant saves appears in the web pages and the read API on the nex
 
 The full machine-readable definition of every tool (input and output JSON Schema, annotations) is in the
 [tool list](mcp-tools.json). It is the exact `tools` array returned by `tools/list`, and a test keeps the two in step.
+The schemas are self-contained (no `$ref` or `$defs`), so clients that do not resolve references still see the full
+`document` shape.
 
 ## Endpoint and protocols
 

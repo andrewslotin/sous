@@ -1758,17 +1758,9 @@ async fn prep_weekday_appears_in_the_tool_schemas() {
             .unwrap()
             .clone()
     };
-    // Find the `PrepSession*` definition that has `covers`.
-    let session_def = |schema: &Value| -> Value {
-        schema["$defs"]
-            .as_object()
-            .unwrap()
-            .values()
-            .find(|d| d["properties"].get("covers").is_some())
-            .unwrap_or_else(|| panic!("no prep session definition in {schema}"))
-            .clone()
-    };
-    let input = session_def(&tool("save_week")["inputSchema"]);
+    let input = tool("save_week")["inputSchema"]["properties"]["document"]["properties"]
+        ["prepSessions"]["items"]
+        .clone();
     let weekday = &input["properties"]["weekday"];
     assert_eq!(weekday["type"], json!(["integer", "null"]));
     assert_eq!(
@@ -1782,7 +1774,8 @@ async fn prep_weekday_appears_in_the_tool_schemas() {
             .contains(&json!("weekday"))
     );
 
-    let output = session_def(&tool("get_week")["outputSchema"]);
+    let output = &tool("get_week")["outputSchema"]["properties"]["document"]["properties"]["prepSessions"]
+        ["items"];
     let weekday = &output["properties"]["weekday"];
     assert!(weekday.to_string().contains("integer"), "{weekday}");
     assert!(weekday.to_string().contains("null"), "{weekday}");
@@ -1858,6 +1851,153 @@ async fn save_week_schema_admits_null_expected_revision_for_create() {
         "create example without expectedRevision must validate"
     );
     assert!(!validator.is_valid(&args(Some(json!(7)))));
+    let mut as_string = args(None);
+    as_string["document"] = json!(serde_json::to_string(&example).unwrap());
+    assert!(
+        !validator.is_valid(&as_string),
+        "a document sent as a JSON string must not validate"
+    );
+}
+
+#[tokio::test]
+async fn save_week_document_schema_is_inline() {
+    let env = Env::empty().await;
+    let app = env.app(journey_clock());
+    let result = modern(&app, "tools/list", json!({})).await;
+    let tool = result["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "save_week")
+        .unwrap();
+    let document = &tool["inputSchema"]["properties"]["document"];
+    assert_eq!(document["type"], "object");
+    assert_eq!(document["additionalProperties"], false);
+    let mut required: Vec<&str> = document["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap())
+        .collect();
+    required.sort_unstable();
+    assert_eq!(required, ["days", "prepSessions", "shoppingLists", "week"]);
+    assert_eq!(
+        document["description"],
+        "The complete week. Everything not listed here is deleted from the stored week."
+    );
+    let session = &document["properties"]["prepSessions"]["items"];
+    let weekday = &session["properties"]["weekday"];
+    assert_eq!(weekday["type"], json!(["integer", "null"]));
+    assert_eq!(weekday["minimum"], 1);
+    assert_eq!(weekday["maximum"], 7);
+    assert!(
+        session["required"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("weekday"))
+    );
+}
+
+#[tokio::test]
+async fn tool_schemas_are_self_contained() {
+    fn walk(value: &Value, path: &str, tool: &str) {
+        match value {
+            Value::Object(map) => {
+                for (key, child) in map {
+                    assert!(key != "$ref" && key != "$defs", "{tool}: `{key}` at {path}");
+                    walk(child, &format!("{path}/{key}"), tool);
+                }
+            }
+            Value::Array(items) => {
+                for (i, child) in items.iter().enumerate() {
+                    walk(child, &format!("{path}/{i}"), tool);
+                }
+            }
+            _ => {}
+        }
+    }
+    let env = Env::empty().await;
+    let app = env.app(journey_clock());
+    let result = modern(&app, "tools/list", json!({})).await;
+    for tool in result["tools"].as_array().unwrap() {
+        let name = tool["name"].as_str().unwrap();
+        walk(&tool["inputSchema"], "/inputSchema", name);
+        walk(&tool["outputSchema"], "/outputSchema", name);
+    }
+}
+
+/// Real results of all seven tools are valid against the published (inline) `outputSchema` and
+/// against rmcp's old `$defs` schema, and a result with one wrongly typed value is rejected by both.
+#[tokio::test]
+async fn tool_results_match_old_and_inline_output_schemas() {
+    use rmcp::handler::server::tool::schema_for_output as old;
+    use sous::model::{Context, MealPage, MealRecord, RevisedWeek, ShoppingDay, WeekPage};
+    let validator = |schema: &Value| jsonschema::validator_for(schema).unwrap();
+    let old_schemas = |tool: &str| -> Value {
+        match tool {
+            "get_context" => serde_json::to_value(old::<Context>()),
+            "list_weeks" => serde_json::to_value(old::<WeekPage>()),
+            "search_meals" => serde_json::to_value(old::<MealPage>()),
+            "get_meal" => serde_json::to_value(old::<MealRecord>()),
+            "get_shopping_lists" => serde_json::to_value(old::<ShoppingDay>()),
+            _ => serde_json::to_value(old::<RevisedWeek>()),
+        }
+        .unwrap()
+    };
+
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    let listed = modern(&app, "tools/list", json!({})).await["tools"].clone();
+    let example: Value = serde_json::from_str(SAVE_EXAMPLE).unwrap();
+    // (tool, arguments, JSON pointer to a value that is set to a wrong type)
+    let calls = [
+        ("get_context", json!({}), "/today"),
+        ("list_weeks", json!({}), "/weeks/0/isoYear"),
+        ("get_week", week_args(44), "/document/week/id"),
+        ("search_meals", json!({"query": "casserole"}), "/meals/0/id"),
+        ("get_meal", json!({"mealId": CASSEROLE_DINNER}), "/weekday"),
+        (
+            "get_shopping_lists",
+            json!({"date": "2026-10-26"}),
+            "/planExists",
+        ),
+        (
+            "save_week",
+            save_args_omitting_revision(46, example),
+            "/document/prepSessions/0/weekday",
+        ),
+    ];
+    for (tool, args, pointer) in calls {
+        let published = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == tool)
+            .unwrap()["outputSchema"]
+            .clone();
+        let validators = [validator(&published), validator(&old_schemas(tool))];
+        let result = ok(&app, tool, args).await;
+        let mut broken = result.clone();
+        *broken
+            .pointer_mut(pointer)
+            .unwrap_or_else(|| panic!("{tool}: no {pointer}")) = json!(7.5);
+        for v in &validators {
+            assert!(v.is_valid(&result), "{tool}: {result}");
+            assert!(!v.is_valid(&broken), "{tool}: {broken}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn save_week_rejects_a_document_sent_as_a_string() {
+    let example: Value = serde_json::from_str(SAVE_EXAMPLE).unwrap();
+    let env = Env::with_fixtures().await;
+    let app = env.app(journey_clock());
+    let before = env.dump().await;
+    let mut args = week_args(46);
+    args["document"] = json!(serde_json::to_string(&example).unwrap());
+    assert_eq!(err(&app, "save_week", args).await, "invalid_input");
+    assert_eq!(env.dump().await, before);
 }
 
 fn week_args(iso_week: u32) -> Value {
