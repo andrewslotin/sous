@@ -22,3 +22,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 14 | [Redesign](features/014-redesign.md) | Done | 13 |
 | 15 | [Self-contained tool schemas](features/015-inline-tool-schemas.md) | In progress | 6, 10 |
 | 16 | [Today link](features/016-today-link.md) | Done | 14 |
+| 17 | [Household profile](features/017-household-profile.md) | Planned | 6 |
