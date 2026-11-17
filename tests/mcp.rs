@@ -2222,7 +2222,7 @@ fn profile_revision(key: &str, text: &str) -> String {
 
 const KEYS: [&str; 5] = ["household", "food", "kitchen", "planning", "other"];
 const TITLES: [&str; 5] = [
-    "Household",
+    "People",
     "Food preferences",
     "Kitchen",
     "Planning habits",
@@ -2306,7 +2306,7 @@ async fn ac1_a_fresh_agent_gets_texts_saved_over_mcp_and_http() {
     )
     .await;
     assert_eq!(saved["key"], "household");
-    assert_eq!(saved["title"], "Household");
+    assert_eq!(saved["title"], "People");
     assert_eq!(saved["text"], "Two adults, one child.\nNo pork.");
     let reply = put_json(
         &app,
@@ -2638,6 +2638,85 @@ async fn ac5_an_empty_profile_is_normal() {
             .iter()
             .all(|s| s["text"] == "")
     );
+}
+
+const HOUSEHOLD_EMPTY_REVISION: &str =
+    "b917a034b171297d58219707fac1eb9699d8479627683283b1590c7f4e90db0e";
+
+#[tokio::test]
+async fn feature_18_household_section_is_titled_people_everywhere() {
+    let env = Env::empty().await;
+    let app = env.app(journey_clock());
+
+    // get_context and GET /api/profile, on an empty database.
+    let context = ok(&app, "get_context", json!({})).await;
+    assert_eq!(context["profile"]["sections"][0]["key"], "household");
+    assert_eq!(context["profile"]["sections"][0]["title"], "People");
+    let http = http_profile(&app).await;
+    assert_eq!(section(&http, "household")["title"], "People");
+    assert_eq!(http, context["profile"]);
+
+    // The revision hashes key and text, never the title: it equals the pre-change value.
+    assert_eq!(
+        context["profile"]["sections"][0]["revision"],
+        HOUSEHOLD_EMPTY_REVISION
+    );
+    assert_eq!(
+        section(&http, "household")["revision"],
+        HOUSEHOLD_EMPTY_REVISION
+    );
+
+    // The profile page's initial JSON.
+    let page = send(
+        &app,
+        Request::get("/profile")
+            .header("host", "localhost")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert_eq!(page_json(&page.text)["sections"][0]["title"], "People");
+
+    // The server instructions name the sections by title.
+    let server = modern(&app, "server/discover", json!({})).await;
+    assert!(
+        server["instructions"]
+            .as_str()
+            .unwrap()
+            .contains("(people, food preferences, kitchen, planning habits, other context)")
+    );
+
+    // A PUT with the pre-change revision succeeds, and its 200 body says "People".
+    let reply = put_json(
+        &app,
+        "household",
+        put_body("Two adults.", HOUSEHOLD_EMPTY_REVISION),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::OK, "{}", reply.text);
+    assert_eq!(reply.json()["title"], "People");
+    assert_eq!(reply.json()["key"], "household");
+
+    // The 409 body's current section.
+    let reply = put_json(
+        &app,
+        "household",
+        put_body("Late.", HOUSEHOLD_EMPTY_REVISION),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::CONFLICT);
+    assert_eq!(reply.json()["current"]["title"], "People");
+
+    // The MCP update result.
+    let revision = profile_revision("household", "Two adults.");
+    let saved = ok(
+        &app,
+        "update_profile_section",
+        json!({"section": "household", "text": "Three.", "expectedRevision": revision}),
+    )
+    .await;
+    assert_eq!(saved["title"], "People");
 }
 
 #[tokio::test]

@@ -294,7 +294,7 @@ impl SectionKey {
     /// The section's UI title.
     pub fn title(self) -> &'static str {
         match self {
-            SectionKey::Household => "Household",
+            SectionKey::Household => "People",
             SectionKey::Food => "Food preferences",
             SectionKey::Kitchen => "Kitchen",
             SectionKey::Planning => "Planning habits",

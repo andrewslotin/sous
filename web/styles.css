@@ -294,21 +294,23 @@ a.day-step[href]:hover { background: var(--ink); color: var(--surface); }
 .empty { padding: var(--space-5) var(--space-4); border: 1px dashed var(--line-strong); border-radius: var(--radius-square); text-align: center; color: var(--ink-muted); }
 .nav { display: flex; justify-content: center; gap: var(--space-4); }
 
-/* Household profile: a stack of labelled text fields, each with a Save button and a live status. */
+/* Household profile: a stack of sections, each read-first (title, Edit, text) with an in-place text field and a live status. */
 .fields { display: flex; flex-direction: column; gap: var(--space-5); }
-.field { display: flex; flex-direction: column; gap: var(--space-2); }
-.field-title { font-size: 17px; line-height: 23px; font-weight: 600; color: var(--ink); }
-.field-hint { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
+.field-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.field-title { display: block; min-width: 0; margin: 0; font-size: 17px; line-height: 23px; font-weight: 600; color: var(--ink); }
+.field-text { margin: var(--space-2) 0 0; font-size: 16px; line-height: 24px; color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.field-hint { margin: var(--space-2) 0 0; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
 .text-field {
-  display: block; width: 100%; min-height: calc(4 * 24px + 2 * var(--space-3)); padding: var(--space-3);
+  display: block; width: 100%; margin-top: var(--space-2); min-height: calc(4 * 24px + 2 * var(--space-3)); padding: var(--space-3);
   border: 1px solid var(--line); border-radius: var(--radius-square); background: var(--surface); resize: vertical;
   font-family: var(--font-sans); font-size: 16px; line-height: 24px; color: var(--ink);
 }
 .text-field:focus { border-color: var(--ink); }
 .text-field:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.field-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.field-status { flex: 1 1 0; min-width: 0; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
-.field-status.is-notice { flex-basis: 100%; font-size: 16px; line-height: 24px; }
+.field-actions { display: flex; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+.field-status { min-width: 0; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
+.field-status.is-notice { font-size: 16px; line-height: 24px; }
+.field-status:not(:empty) { margin-top: var(--space-3); }
 .button {
   padding: var(--space-2) var(--space-4); border: 1.5px solid var(--ink); border-radius: var(--radius-square);
   background: var(--surface); cursor: pointer;

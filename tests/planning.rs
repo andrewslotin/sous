@@ -1953,7 +1953,7 @@ fn section_keys_have_fixed_order_titles_and_exact_parsing() {
     assert_eq!(
         titles,
         [
-            "Household",
+            "People",
             "Food preferences",
             "Kitchen",
             "Planning habits",

@@ -1,4 +1,4 @@
-const { useState, useEffect } = React;
+const { useState, useEffect, useRef } = React;
 
 const THEME_KEY = "sous-theme";
 const DARK_QUERY = "(prefers-color-scheme: dark)";
@@ -760,25 +760,49 @@ function Unavailable() {
 }
 
 const SECTION_HINTS = {
-  household: "People, portions and dietary restrictions.",
+  household: "Who eats, portions and dietary restrictions.",
   food: "Likes, dislikes and cuisines.",
   kitchen: "Equipment, storage and limitations.",
   planning: "Cooking time, shopping, budget, leftovers and batch prep.",
   other: "Anything else worth knowing.",
 };
 
-// One profile section: a labelled text field, a Save button and one live region for the save status, an error
-// or the conflict notice. `saved` is the last saved text and revision; `onSaved` reports a new one to the page.
+// One profile section. Read mode shows the title, an Edit button and the saved text (or the hint while it's empty);
+// Edit opens the text field in place, with Save and Cancel. One live region ends the section in both modes, for the
+// save status, an error or the conflict notice. `saved` is the last saved text and revision; `onSaved` reports a new
+// one to the page.
 function ProfileSection({ section, saved, onSaved }) {
   const { key, title } = section;
+  const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(saved.text);
   const [busy, setBusy] = useState(false);
   // What the live region shows: null, "saved", "error" or { text, revision } (a conflict with the saved section).
   const [status, setStatus] = useState(null);
+  // Where focus goes after the next render: the field after opening, the Edit button after closing.
+  const [focusTarget, setFocusTarget] = useState(null);
+  const editRef = useRef(null);
+  const fieldRef = useRef(null);
   const fieldId = `profile-${key}`;
   const hintId = `${fieldId}-hint`;
   const conflict = status !== null && typeof status === "object" ? status : null;
 
+  useEffect(() => {
+    if (focusTarget === "field" && fieldRef.current) fieldRef.current.focus();
+    if (focusTarget === "edit" && editRef.current) editRef.current.focus();
+    if (focusTarget !== null) setFocusTarget(null);
+  }, [focusTarget]);
+
+  const open = () => {
+    setDraft(saved.text);
+    setStatus(null);
+    setEditing(true);
+    setFocusTarget("field");
+  };
+  const close = (next) => {
+    setEditing(false);
+    setStatus(next);
+    setFocusTarget("edit");
+  };
   const save = async (revision) => {
     setBusy(true);
     try {
@@ -790,7 +814,7 @@ function ProfileSection({ section, saved, onSaved }) {
       if (response.status === 200) {
         const next = await response.json();
         onSaved(key, next);
-        setStatus("saved");
+        close("saved");
       } else if (response.status === 409) {
         const { current } = await response.json();
         setStatus({ text: current.text, revision: current.revision });
@@ -805,55 +829,74 @@ function ProfileSection({ section, saved, onSaved }) {
   };
   const useSaved = () => {
     onSaved(key, { text: conflict.text, revision: conflict.revision });
-    setDraft(conflict.text);
-    setStatus(null);
+    close(null);
   };
 
   return (
-    <section className="field">
-      <label className="field-title" htmlFor={fieldId}>
-        {title}
-      </label>
-      <p className="field-hint" id={hintId}>
-        {SECTION_HINTS[key]}
-      </p>
-      <textarea
-        id={fieldId}
-        className="text-field"
-        rows={4}
-        value={draft}
-        aria-describedby={hintId}
-        onChange={(e) => {
-          setDraft(e.target.value);
-          setStatus(conflict);
-        }}
-      />
-      <div className="field-actions">
-        <button type="button" className="button" disabled={busy || draft === saved.text} onClick={() => save(saved.revision)}>
-          Save
-        </button>
-        <div role="status" className={status === "saved" || status === null ? "field-status" : "field-status is-notice"}>
-          {status === "saved" && "Saved."}
-          {status === "error" && <p className="notice">Couldn't save. Try again.</p>}
-          {conflict !== null && (
-            <div className="notice">
-              <p>This section was changed elsewhere.</p>
-              {conflict.text !== "" ? (
-                <p className="notice-text">{conflict.text}</p>
-              ) : (
-                <p className="notice-text notice-empty">The saved version is empty.</p>
-              )}
-              <div className="notice-actions">
-                <button type="button" className="button" disabled={busy} onClick={() => save(conflict.revision)}>
-                  Keep mine
-                </button>
-                <button type="button" className="button" disabled={busy} onClick={useSaved}>
-                  Use saved
-                </button>
-              </div>
+    <section className="field" data-key={key}>
+      {editing ? (
+        <>
+          <label className="field-title" htmlFor={fieldId}>
+            {title}
+          </label>
+          <p className="field-hint" id={hintId}>
+            {SECTION_HINTS[key]}
+          </p>
+          <textarea
+            id={fieldId}
+            ref={fieldRef}
+            className="text-field"
+            rows={4}
+            value={draft}
+            aria-describedby={hintId}
+            onChange={(e) => {
+              setDraft(e.target.value);
+              setStatus(conflict);
+            }}
+          />
+          {conflict === null && (
+            <div className="field-actions">
+              <button type="button" className="button" disabled={busy || draft === saved.text} onClick={() => save(saved.revision)}>
+                Save
+              </button>
+              <button type="button" className="button" disabled={busy} onClick={() => close(null)}>
+                Cancel
+              </button>
             </div>
           )}
-        </div>
+        </>
+      ) : (
+        <>
+          <div className="field-row">
+            <h2 className="field-title">{title}</h2>
+            <button type="button" className="button" ref={editRef} aria-label={`Edit ${title}`} onClick={open}>
+              Edit
+            </button>
+          </div>
+          {saved.text !== "" ? <p className="field-text">{saved.text}</p> : <p className="field-hint">{SECTION_HINTS[key]}</p>}
+        </>
+      )}
+      <div role="status" className={status === "saved" || status === null ? "field-status" : "field-status is-notice"}>
+        {status === "saved" && "Saved."}
+        {status === "error" && <p className="notice">Couldn't save. Try again.</p>}
+        {conflict !== null && (
+          <div className="notice">
+            <p>This section was changed elsewhere.</p>
+            {conflict.text !== "" ? (
+              <p className="notice-text">{conflict.text}</p>
+            ) : (
+              <p className="notice-text notice-empty">The saved version is empty.</p>
+            )}
+            <div className="notice-actions">
+              <button type="button" className="button" disabled={busy} onClick={() => save(conflict.revision)}>
+                Keep mine
+              </button>
+              <button type="button" className="button" disabled={busy} onClick={useSaved}>
+                Use saved
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
@@ -862,7 +905,6 @@ function ProfileSection({ section, saved, onSaved }) {
 function ProfilePage({ page }) {
   const [saved, setSaved] = useState(() => Object.fromEntries(page.sections.map((s) => [s.key, s])));
   const onSaved = (key, next) => setSaved((all) => ({ ...all, [key]: { ...all[key], text: next.text, revision: next.revision } }));
-  const allEmpty = page.sections.every((s) => saved[s.key].text === "");
   return (
     <div className="app">
       <Header title="Household">
@@ -870,7 +912,6 @@ function ProfilePage({ page }) {
           {THIS_WEEK.label}
         </a>
       </Header>
-      {allEmpty && <p className="empty">No household details yet.</p>}
       <div className="fields">
         {page.sections.map((s) => (
           <ProfileSection key={s.key} section={s} saved={saved[s.key]} onSaved={onSaved} />

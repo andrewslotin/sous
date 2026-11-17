@@ -610,7 +610,7 @@
                   "sections": [
                     {
                       "key": "household",
-                      "title": "Household",
+                      "title": "People",
                       "text": "",
                       "revision": "b917a034b171297d58219707fac1eb9699d8479627683283b1590c7f4e90db0e"
                     },
@@ -1784,7 +1784,7 @@
           },
           "title": {
             "type": "string",
-            "description": "The section's title: Household, Food preferences, Kitchen, Planning habits or Other context."
+            "description": "The section's title: People, Food preferences, Kitchen, Planning habits or Other context."
           },
           "text": {
             "type": "string",
