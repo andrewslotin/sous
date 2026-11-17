@@ -41,7 +41,9 @@ stand on its own:
 - **Ownership:** which agent owns which files. Agents that run in parallel must never share a file, and that includes
   sections of `Cargo.toml`: one agent owns `[dependencies]`, another owns `[build-dependencies]`.
 - **The contract between agents:** exact Rust signatures and the JSON document shape, extended from the existing
-  `src/model.rs`. Pin any fixture rows (ids, positions, text) that more than one agent's tests rely on.
+  `src/model.rs`. Pin any fixture rows (ids, positions, text) that more than one agent's tests rely on. For
+  `web/` work, pin the DOM tree, class names and the CSS spacing (margins or gaps) the tests will measure.
+  Reread the brief for self-contradictions before launch.
 - **Tasks:** a numbered list per agent. Quote spec phrases verbatim and take the narrowest reading of an ambiguous
   one. Feature 2's "available-week links" grew into a full week list that the user then had removed.
 - **Required tests:** map every acceptance criterion to at least one test. Use temporary SQLite databases for
@@ -93,7 +95,8 @@ MCP guide) for every route, payload and test name the feature changed. Fix stale
 Find Codex's pane. It is usually the split pane of this session (`splitForeground` contains `codex`). If the user
 names a pane UUID, address it with `--pane-id <uuid>` (`--pane` takes only left/right/scratch), and give Codex your
 own pane UUID for its reply (`agtermctl tree --json | grep -o '"paneID":"[^"]*"'`). Check it is idle before typing.
-If it shows an approval prompt, do not type (keystrokes would answer it): ask the user to resolve it first.
+If it shows `Working` (for example, waiting on your pane), typing is still safe: Enter queues the request ("Messages
+to be submitted after next tool call"), and it is delivered when that banner clears. If it shows an approval prompt, do not type (keystrokes would answer it): ask the user to resolve it first.
 
 ```bash
 agtermctl tree --json --socket "$AGTERM_SOCKET"     # find the session or pane running codex
