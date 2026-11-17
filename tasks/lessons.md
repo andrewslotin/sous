@@ -15,7 +15,8 @@
 - When a tool call fails, or a hook stops or blocks one, tell the user at once in one line: what fired and what I'll
   do next. Never end a turn silently. Keep exploratory command chains short (at most three calls before a status
   line), and post a one-line status after loading context (before writing a brief) and before a multi-call handoff
-  such as typing a review request.
+  such as typing a review request. Context loading counts as exploration: in feature 19 I made seven reads in a row
+  and the harness had to prompt me for a status line.
 - Change files with Edit/Write, never shell heredocs or inline scripts, and that includes `cat >>` appends. Run a
   multi-line script from a scratchpad file: multi-line inline Bash (`python3 -c`, heredocs) can trip the
   commit-message hook. Never run a placeholder or no-op command either: every Bash call needs a purpose.

@@ -66,6 +66,8 @@ Launch them with `Agent`, `subagent_type: general-purpose`, `model: sonnet`, in 
 independent area, for example backend and frontend. Each prompt should:
 - point the agent at the brief and name its role;
 - forbid progress text: "Keep calling tools without sending text; your only text message is the final report";
+- repeat the file-writing rule in the prompt itself ("change files only with Write/Edit, never scripts or
+  heredocs"): a worker that read it only in the brief still edited `web/` with a Python script;
 - require `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` to pass before it reports;
 - ask for a report covering the files it changed, decisions beyond the brief, exact test counts and open issues.
 
@@ -89,6 +91,8 @@ and the reference, and catch scope creep or gaps before asking Codex to review.
 
 Sweep the docs, not just the files the spec names. Grep the README and `docs/` (design, OpenAPI,
 MCP guide) for every route, payload and test name the feature changed. Fix stale current-contract references.
+Also look for prose the feature makes false without naming anything it changed, such as "no page links to them"
+about year pages once the household back link could. Grepping names doesn't catch these.
 
 ## 5. Ask Codex to review
 
