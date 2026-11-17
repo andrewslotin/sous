@@ -1,11 +1,11 @@
 //! The household profile over HTTP: the `/profile` page, `GET /api/profile` and `PUT /api/profile/{key}`.
 use crate::api::{self, ErrorBody};
-use crate::model::{Page, ProfileSection, SectionKey};
+use crate::model::{Back, Page, ProfileSection, SectionKey};
 use crate::profile::{self, UpdateError};
 use crate::{AppState, mcp, page_response};
 use axum::Router;
-use axum::extract::rejection::PathRejection;
-use axum::extract::{Path, Request, State};
+use axum::extract::rejection::{PathRejection, QueryRejection};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::uri::Authority;
 use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -76,13 +76,26 @@ async fn method_not_allowed_put() -> Response {
     (StatusCode::METHOD_NOT_ALLOWED, [(header::ALLOW, "PUT")]).into_response()
 }
 
-async fn page(State(state): State<AppState>) -> Response {
+/// The household page's query. Unknown parameters are ignored.
+#[derive(Deserialize)]
+struct FromQuery {
+    from: Option<String>,
+}
+
+async fn page(
+    State(state): State<AppState>,
+    query: Result<Query<FromQuery>, QueryRejection>,
+) -> Response {
+    let today = state.clock.today();
+    // An unreadable query (bad UTF-8, a repeated `from`) is the same as no `from`.
+    let from = query.ok().and_then(|Query(query)| query.from);
     match profile::load_profile(&state.pool).await {
         Ok(profile) => page_response(
             StatusCode::OK,
             "Household — Meal Plan",
             &Page::Profile {
                 sections: profile.sections,
+                back: Back::from_query(from.as_deref(), today),
             },
         ),
         Err(error) => crate::unavailable(&error),

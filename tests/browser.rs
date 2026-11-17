@@ -4569,11 +4569,9 @@ fn profile_page_has_five_labelled_sections_in_order() {
     assert_eq!(h.status(), 200);
     assert_eq!(h.js("document.title"), "Household — Meal Plan");
     assert_eq!(h.text(".title"), "Household");
-    assert_eq!(h.texts(".header-meta a"), ["This week"]);
-    assert_eq!(
-        h.js("document.querySelector('.header-meta a').getAttribute('href')"),
-        "/"
-    );
+    assert_eq!(h.count(".header-meta"), 0);
+    assert_eq!(h.texts(".header > a.back-link"), ["Back to today"]);
+    assert_eq!(h.count("a.all-weeks"), 0);
     assert_eq!(h.texts("h2.field-title"), SECTION_TITLES);
     assert_eq!(h.count("textarea"), 0);
     assert_eq!(h.count("[role=status]"), 5);
@@ -5082,24 +5080,25 @@ fn footer_link_is_on_every_page_but_the_profile() {
         (
             Db::Fixture,
             vec![
-                "/2026/44",
-                "/2026-10-28",
-                "/2026/53",
-                "/2026",
-                "/2026/54",
-                "/2026-02-30",
+                ("/2026/44", "/profile?from=/2026-10-26"),
+                ("/2026-10-28", "/profile?from=/2026-10-28"),
+                ("/2026/53", "/profile?from=/2026-12-28"),
+                ("/", "/profile?from=/2026-12-02"),
+                ("/2026", "/profile?from=/2026"),
+                ("/2026/54", "/profile"),
+                ("/2026-02-30", "/profile"),
             ],
         ),
-        (Db::ClosedPool, vec!["/2026/44"]),
+        (Db::ClosedPool, vec![("/2026/44", "/profile")]),
     ] {
-        let h = Opts::new().db(mode).mcp().path(paths[0]).launch();
-        for path in paths {
+        let h = Opts::new().db(mode).mcp().path(paths[0].0).launch();
+        for (path, href) in paths {
             h.goto_page(path);
             assert_eq!(h.count("a.footer-link"), 1, "{path}");
             assert_eq!(h.text("a.footer-link"), "Household", "{path}");
             assert_eq!(
                 h.js("document.querySelector('a.footer-link').getAttribute('href')"),
-                "/profile",
+                href,
                 "{path}"
             );
             // Inside the footer, above the theme toggle, centred in the column.
@@ -5494,5 +5493,163 @@ fn visual_capture_018() {
             .launch();
         assert_eq!(h.count("a.footer-link"), 1);
         both(&h, "day-footer", width);
+    }
+}
+
+// ---- Feature 19: back link on the household page ------------------------------------------
+
+/// The household page with a 2026-11-17 clock (today is Tuesday 2026-11-17).
+fn back_page(path: &'static str, width: u32) -> Harness {
+    Opts::new()
+        .db(Db::Empty)
+        .mcp()
+        .width(width)
+        .clock(clock_at(2026, 11, 17, 12, 0, 0))
+        .path(path)
+        .launch()
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn household_back_link_names_where_it_goes() {
+    for (path, label, href) in [
+        (
+            "/profile?from=/2026-11-11",
+            "Back to Wednesday, November 11",
+            "/2026-11-11",
+        ),
+        ("/profile?from=/2026-11-17", "Back to today", "/2026-11-17"),
+        ("/profile", "Back to today", "/2026-11-17"),
+        (
+            "/profile?from=//example.com",
+            "Back to today",
+            "/2026-11-17",
+        ),
+        ("/profile?from=/2026", "Back to 2026", "/2026"),
+    ] {
+        let h = back_page(path, 1280);
+        assert_eq!(h.status(), 200, "{path}");
+        assert_eq!(h.count("a.back-link"), 1, "{path}");
+        assert_eq!(h.text("a.back-link"), label, "{path}");
+        assert_eq!(
+            h.js("document.querySelector('a.back-link').getAttribute('href')"),
+            href,
+            "{path}"
+        );
+        assert_eq!(
+            h.js("(() => { const l = document.querySelector('a.back-link'); \
+                  return l === document.querySelector('.header').firstElementChild \
+                  && l.nextElementSibling === document.querySelector('h1'); })()"),
+            true,
+            "{path}"
+        );
+        assert_eq!(h.count(".header-meta"), 0, "{path}");
+        assert_eq!(h.count("a.all-weeks"), 0, "{path}");
+        assert_eq!(
+            h.js("[...document.querySelectorAll('*')].filter(e => e.textContent.trim() === 'This week').length"),
+            0,
+            "{path}"
+        );
+        let text = h.text("a.back-link");
+        assert!(!text.contains(['←', '‹', '→']), "{path}: {text}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn household_back_link_follows_the_design_system() {
+    let h = back_page("/profile?from=/2026-11-11", 1280);
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        assert_eq!(
+            h.js(
+                "(() => { const s = getComputedStyle(document.querySelector('a.back-link')); \
+                  return [s.fontSize, s.color, s.textDecorationLine, s.textDecorationColor]; })()"
+            ),
+            serde_json::json!([
+                "14px",
+                t.rgb("ink-muted"),
+                "underline",
+                t.rgb("line-strong")
+            ]),
+            "{}",
+            t.scheme
+        );
+        let [ll, lr, _, lb] = h.rect("a.back-link");
+        let [tl, _, tt, tb] = h.rect(".title");
+        let [hl, hr, _, _] = h.rect(".header");
+        let [_, _, ft, _] = h.rect(".fields");
+        assert!(
+            (tt - lb - 8.0).abs() <= 0.5,
+            "{}: gap {}",
+            t.scheme,
+            tt - lb
+        );
+        assert!((ll - tl).abs() <= 0.5, "{}: left", t.scheme);
+        assert!(lr - ll < hr - hl, "{}: sized to its text", t.scheme);
+        assert!((ft - tb - 24.0).abs() <= 0.5, "{}: {}", t.scheme, ft - tb);
+    }
+    // Hover turns it ink (after the resting checks, as the pointer stays on the link).
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        h.tab
+            .find_element("a.back-link")
+            .unwrap()
+            .move_mouse_over()
+            .unwrap();
+        assert_eq!(
+            h.styles("a.back-link", &["color"]),
+            [t.rgb("ink")],
+            "{} hover",
+            t.scheme
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn household_back_link_fits_at_320px() {
+    let h = back_page("/profile?from=/2026-09-30", 320);
+    assert_eq!(h.text("a.back-link"), "Back to Wednesday, September 30");
+    let [_, _, top, bottom] = h.rect("a.back-link");
+    assert_eq!(bottom - top, 20.0);
+    assert_eq!(
+        h.js("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
+        true
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn footer_link_and_back_link_round_trip() {
+    for (start, from) in [("/2026-10-28", "/2026-10-28"), ("/2026", "/2026")] {
+        let h = Opts::new().mcp().path(start).launch();
+        h.click("a.footer-link");
+        h.wait_page("/profile");
+        assert_eq!(
+            h.js("location.pathname + location.search"),
+            format!("/profile?from={from}")
+        );
+        h.click("a.back-link");
+        h.wait_page(from);
+        if start == "/2026" {
+            assert_eq!(h.text(".title"), "Meal Plan: 2026");
+        } else {
+            assert_eq!(h.text(".day-heading"), "Wednesday, October 28");
+        }
+    }
+}
+
+/// Full-page PNGs of the household page with its back link, at 375 and 1280 px, light and dark.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_019() {
+    for width in [375, 1280] {
+        let h = back_page("/profile?from=/2026-11-11", width);
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture_file(&format!("profile-back-{width}-{}.png", t.scheme));
+        }
+        h.use_theme(&LIGHT);
     }
 }

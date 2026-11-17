@@ -53,13 +53,13 @@ The [feature tracker](README.md) links the incremental implementation specs. Fea
 | `/api/<year>/<week>` | Return a complete, ordered week document as JSON. |
 | `/api/<date>` | Return the document of the week containing the date as JSON. |
 | `/api/<year>` | Return the year page's listing as JSON. |
-| `/profile` | Render the household profile page. Matched before `/<year>` and `/<date>`. |
+| `/profile` | Render the household profile page. Matched before `/<year>` and `/<date>`. Reads an optional `from` query, a day or year page path (`/2026-11-11`, `/2026`); a missing or bad one falls back to today. |
 | `/api/profile` | Return the five profile sections as JSON. Matched before the other `/api` routes, so it is never `not_found`. |
 | `/api/profile/<key>` | `PUT` saves one profile section (`household`, `food`, `kitchen`, `planning` or `other`). Matched before the week routes, so it is never `invalid_week`. |
 
 For example, `/2026/44` represents October 26–November 1, 2026. Validate that the requested week exists in the ISO calendar; some years have no week 53. Accept four-digit years from 0001–9999 only when the entire seven-day date range is representable. Redirect zero-padded valid week paths to their canonical form.
 
-A year path is exactly four ASCII digits from 0001 to 9999, the same form as the year in week URLs. A single-segment path that is neither a year nor shaped like a date (see below), such as `/weeks` or `/2026-11`, is a plain 404. A year page lists the weeks whose ISO week-year is in its URL, so `/2026/1` (December 29, 2025–January 4, 2026) is on `/2026`. It links to the previous and next year only when that adjacent year has at least one stored plan. The current year is the ISO week-year of today in the configured timezone, resolved on every request. Year pages are still served at `/<year>`, but no page links to them.
+A year path is exactly four ASCII digits from 0001 to 9999, the same form as the year in week URLs. A single-segment path that is neither a year nor shaped like a date (see below), such as `/weeks` or `/2026-11`, is a plain 404. A year page lists the weeks whose ISO week-year is in its URL, so `/2026/1` (December 29, 2025–January 4, 2026) is on `/2026`. It links to the previous and next year only when that adjacent year has at least one stored plan. The current year is the ISO week-year of today in the configured timezone, resolved on every request. Year pages are still served at `/<year>`, but only other year pages and the household page's back link, when it was opened from a year page, link to them.
 
 The root route retains `/` in the address bar. On each navigation or reload it resolves the current week again. Explicit week URLs always retain their requested week, regardless of today's date.
 
@@ -148,6 +148,8 @@ The schema is a documented integration contract; implementing data entry is outs
 The page handler reads a complete week in one read transaction and embeds its initial JSON document safely into the HTML shell. This avoids a second initial data request and ensures status, headings, dates, and content describe the same snapshot. Escape embedded JSON appropriately so text such as `</script>` cannot terminate its container.
 
 The week, date, missing-plan and invalid pages also embed `today` (the server's today in `APP_TIMEZONE`), `plannedWeeks` (every stored week, ascending by ISO week-year and week), `displayedDate` (the shown day, or null) and `markedDays` (`{ date, shopping, prep }` for every date of every stored week that has a shopping list or a shown prep session, ascending). On week and missing-plan pages these are read in the same read transaction as the week. The JSON API returns the week document only.
+
+The profile page embeds `sections` and `back`, the target of its back link: `{ kind, href }` with `kind` `day` (plus `date`), `year` (plus `year`) or `today`. The server parses `from` and builds `href` itself, so it never echoes the query; a day equal to today is `today`, and a missing, malformed or unreadable `from` (including a repeated one) is `today`. The page stays 200.
 
 The JSON endpoint exposes the same document shape:
 

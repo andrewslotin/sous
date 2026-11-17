@@ -1,4 +1,6 @@
 //! Week document served to the page (serde camelCase).
+use crate::calendar::{self, DatePath};
+use chrono::NaiveDate;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
@@ -219,10 +221,50 @@ pub enum Page {
         marked_days: Vec<MarkedDay>,
         displayed_date: Option<String>,
     },
-    /// `/profile`: the five household profile sections, in display order.
-    Profile { sections: Vec<ProfileSection> },
+    /// `/profile`: the five household profile sections, in display order, and the back link's target.
+    Profile {
+        sections: Vec<ProfileSection>,
+        back: Back,
+    },
     /// Database failure.
     Unavailable,
+}
+
+/// Where the household page's back link goes. The server builds `href`; it never echoes the `from` query.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Back {
+    /// A valid date path other than today: `href` is `date_path(date)`, `date` is `YYYY-MM-DD`.
+    Day { href: String, date: String },
+    /// A valid year path: `href` is `year_path(year)`.
+    Year { href: String, year: i32 },
+    /// Fallback, and a day equal to today: `href` is today's date path.
+    Today { href: String },
+}
+
+impl Back {
+    /// Classify the raw `from` value (already query-decoded; `None` when absent or unreadable) against `today`.
+    pub fn from_query(from: Option<&str>, today: NaiveDate) -> Back {
+        if let Some(rest) = from.and_then(|value| value.strip_prefix('/')) {
+            if let Some(year) = calendar::parse_year_path(rest) {
+                return Back::Year {
+                    href: calendar::year_path(year),
+                    year,
+                };
+            }
+            if let Some(DatePath::Valid(date)) = calendar::classify_date_path(rest)
+                && date != today
+            {
+                return Back::Day {
+                    href: calendar::date_path(date),
+                    date: date.format("%Y-%m-%d").to_string(),
+                };
+            }
+        }
+        Back::Today {
+            href: calendar::date_path(today),
+        }
+    }
 }
 
 impl Page {
@@ -593,4 +635,68 @@ pub struct PrepTaskInput {
     pub name: String,
     pub time: String,
     pub instructions: String,
+}
+
+#[cfg(test)]
+mod back_tests {
+    use super::*;
+
+    fn today() -> NaiveDate {
+        NaiveDate::from_ymd_opt(2026, 11, 17).unwrap()
+    }
+
+    fn today_back() -> Back {
+        Back::Today {
+            href: "/2026-11-17".into(),
+        }
+    }
+
+    #[test]
+    fn back_from_query() {
+        let day = Back::Day {
+            href: "/2026-11-11".into(),
+            date: "2026-11-11".into(),
+        };
+        let year = |year: i32, href: &str| Back::Year {
+            href: href.into(),
+            year,
+        };
+        for (from, expected) in [
+            (Some("/2026-11-11"), day),
+            (Some("/2026-11-17"), today_back()),
+            (Some("/2026"), year(2026, "/2026")),
+            (Some("/0001"), year(1, "/0001")),
+            (None, today_back()),
+            (Some(""), today_back()),
+            (Some("/"), today_back()),
+            (Some("2026-11-11"), today_back()),
+            (Some("/2026/44"), today_back()),
+            (Some("/2026-02-30"), today_back()),
+            (Some("//example.com"), today_back()),
+            (Some("https://example.com/2026-11-11"), today_back()),
+            (Some("/2026-11-11/extra"), today_back()),
+            (Some("//2026-11-11"), today_back()),
+            (Some("/9999-12-31"), today_back()),
+            (Some("/2026-11-11 "), today_back()),
+        ] {
+            assert_eq!(Back::from_query(from, today()), expected, "{from:?}");
+        }
+    }
+
+    #[test]
+    fn back_serializes_to_the_documented_shapes() {
+        let json = |back: Back| serde_json::to_string(&back).unwrap();
+        assert_eq!(
+            json(Back::from_query(Some("/2026-11-11"), today())),
+            r#"{"kind":"day","href":"/2026-11-11","date":"2026-11-11"}"#
+        );
+        assert_eq!(
+            json(Back::from_query(Some("/0001"), today())),
+            r#"{"kind":"year","href":"/0001","year":1}"#
+        );
+        assert_eq!(
+            json(Back::from_query(None, today())),
+            r#"{"kind":"today","href":"/2026-11-17"}"#
+        );
+    }
 }

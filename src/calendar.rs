@@ -132,6 +132,11 @@ pub fn week_path(iso_year: i32, iso_week: u32) -> String {
     format!("/{iso_year:04}/{iso_week}")
 }
 
+/// Page path of a year, e.g. `/2026`; zero-padded to four digits (`/0001`), accepted by [`parse_year_path`].
+pub fn year_path(year: i32) -> String {
+    format!("/{year:04}")
+}
+
 /// Outcome of matching a single path segment as a date.
 #[derive(Debug, PartialEq, Eq)]
 pub enum DatePath {
@@ -304,6 +309,16 @@ mod tests {
             let mut parts = path.trim_start_matches('/').split('/');
             let (ys, ws) = (parts.next().unwrap(), parts.next().unwrap());
             assert_eq!(classify_week_path(ys, ws), WeekPath::Canonical(y, w));
+        }
+    }
+
+    #[test]
+    fn year_paths_round_trip() {
+        assert_eq!(year_path(1), "/0001");
+        assert_eq!(year_path(2026), "/2026");
+        for year in [1, 999, 2026, 9999] {
+            let path = year_path(year);
+            assert_eq!(parse_year_path(path.trim_start_matches('/')), Some(year));
         }
     }
 

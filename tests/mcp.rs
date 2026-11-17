@@ -2749,6 +2749,61 @@ async fn profile_page_embeds_the_sections() {
     assert_eq!(payload["sections"][4]["text"], text);
 }
 
+#[tokio::test]
+async fn profile_page_back_is_built_by_the_server() {
+    let env = Env::empty().await;
+    // Tuesday 2026-11-17 in Berlin.
+    let app = env.app(clock_at("Europe/Berlin", 2026, 11, 17, 12, 0, 0));
+    let today = json!({"kind": "today", "href": "/2026-11-17"});
+    let day = json!({"kind": "day", "href": "/2026-11-11", "date": "2026-11-11"});
+    let cases: Vec<(&str, Value)> = vec![
+        ("?from=/2026-11-11", day.clone()),
+        ("?from=/2026-11-17", today.clone()),
+        (
+            "?from=/2026",
+            json!({"kind": "year", "href": "/2026", "year": 2026}),
+        ),
+        (
+            "?from=/0001",
+            json!({"kind": "year", "href": "/0001", "year": 1}),
+        ),
+        ("", today.clone()),
+        ("?from=", today.clone()),
+        ("?from=/2026/44", today.clone()),
+        ("?from=/2026-02-30", today.clone()),
+        ("?from=//example.com", today.clone()),
+        ("?from=https://example.com/2026-11-11", today.clone()),
+        ("?from=/2026-11-11/extra", today.clone()),
+        ("?from=%2F2026-11-11", day.clone()),
+        ("?from=%FF", today.clone()),
+        ("?from=/2026-11-11&from=/2026", today.clone()),
+        ("?from=/2026-11-11%3Cscript%3E", today.clone()),
+    ];
+    for (query, expected) in cases {
+        let uri = format!("/profile{query}");
+        let page = send(
+            &app,
+            Request::get(uri.as_str())
+                .header("host", "localhost")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+        assert_eq!(page.status, StatusCode::OK, "{uri}");
+        let payload = page_json(&page.text);
+        assert_eq!(payload["kind"], "profile", "{uri}");
+        assert_eq!(payload["back"], expected, "{uri}");
+        let href = payload["back"]["href"].as_str().unwrap();
+        assert!(
+            ["/2026-11-11", "/2026", "/0001", "/2026-11-17"].contains(&href),
+            "{uri}: {href}"
+        );
+        for needle in ["example.com", "2026-11-11<script>", "/extra"] {
+            assert!(!page.text.contains(needle), "{uri} echoes {needle}");
+        }
+    }
+}
+
 // ---- the PUT contract, in the spec's order ----
 
 #[tokio::test]

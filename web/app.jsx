@@ -26,7 +26,8 @@ const THEME_OPTIONS = [
 ];
 
 // The footer: a link to the household profile (every page but the profile's own), then the theme toggle.
-function ThemeToggle({ profileLink = true }) {
+// `from` is the page path the link carries, so the household page can link back to it.
+function ThemeToggle({ profileLink = true, from = null }) {
   const [choice, setChoice] = useState(storedTheme);
   // While the choice is System, follow the device's preference as it changes.
   useEffect(() => {
@@ -49,7 +50,7 @@ function ThemeToggle({ profileLink = true }) {
   return (
     <footer className="footer">
       {profileLink && (
-        <a className="footer-link" href="/profile">
+        <a className="footer-link" href={from === null ? "/profile" : "/profile?from=" + from}>
           Household
         </a>
       )}
@@ -361,7 +362,7 @@ function DayShell({ page, week, heading, subtitle, date, children }) {
       </div>
       <Calendar open={open} page={page} week={week} />
       {children}
-      <ThemeToggle />
+      <ThemeToggle from={datePath(dayNum)} />
     </div>
   );
 }
@@ -414,9 +415,15 @@ function MealPlan({ page }) {
 }
 
 // The header: the page title, then the subtitle and any links. With neither, the row is not rendered.
-function Header({ title, subtitle, children }) {
+// `back` is an optional link above the title: `{ href, label }`.
+function Header({ title, subtitle, back = null, children }) {
   return (
     <div className="header">
+      {back !== null && (
+        <a className="back-link" href={back.href}>
+          {back.label}
+        </a>
+      )}
       <h1 className="title">{title}</h1>
       {(subtitle || children) && (
         <div className="header-meta">
@@ -429,11 +436,11 @@ function Header({ title, subtitle, children }) {
 }
 
 // A page without a day row: the content, then the theme toggle.
-function Shell({ children }) {
+function Shell({ from = null, children }) {
   return (
     <div className="app">
       {children}
-      <ThemeToggle />
+      <ThemeToggle from={from} />
     </div>
   );
 }
@@ -706,7 +713,7 @@ function MissingWeek({ page }) {
 
 function YearPage({ page }) {
   return (
-    <Shell>
+    <Shell from={yearPath(page.year)}>
       <Header title={`Meal Plan: ${page.year}`}>
         {page.previousYear !== null && (
           <a className="all-weeks" href={yearPath(page.previousYear)}>
@@ -902,16 +909,19 @@ function ProfileSection({ section, saved, onSaved }) {
   );
 }
 
+// "Back to Wednesday, November 11", "Back to 2026" or "Back to today".
+function backLabel(back) {
+  if (back.kind === "day") return "Back to " + formatDayHeading(dayNumber(back.date));
+  if (back.kind === "year") return `Back to ${back.year}`;
+  return "Back to today";
+}
+
 function ProfilePage({ page }) {
   const [saved, setSaved] = useState(() => Object.fromEntries(page.sections.map((s) => [s.key, s])));
   const onSaved = (key, next) => setSaved((all) => ({ ...all, [key]: { ...all[key], text: next.text, revision: next.revision } }));
   return (
     <div className="app">
-      <Header title="Household">
-        <a className="all-weeks" href={THIS_WEEK.href}>
-          {THIS_WEEK.label}
-        </a>
-      </Header>
+      <Header title="Household" back={{ href: page.back.href, label: backLabel(page.back) }} />
       <div className="fields">
         {page.sections.map((s) => (
           <ProfileSection key={s.key} section={s} saved={saved[s.key]} onSaved={onSaved} />

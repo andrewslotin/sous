@@ -102,13 +102,14 @@ a:focus-visible, button:focus-visible, input[type="radio"]:focus-visible {
 .title { margin: 0; font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
 .header-meta { display: flex; align-items: baseline; gap: var(--space-4); flex-wrap: wrap; }
 .subtitle { flex: 1; min-width: 0; margin: 0; font-size: 14px; line-height: 20px; color: var(--ink-muted); }
-.all-weeks, .nav-link {
+.all-weeks, .nav-link, .back-link {
   padding: 0; border: 0; background: none; cursor: pointer;
   font-family: var(--font-sans); font-size: 14px; line-height: 20px; color: var(--ink-muted);
   text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
 }
-.all-weeks:hover, .nav-link:hover { color: var(--ink); text-decoration-color: var(--ink); }
+.all-weeks:hover, .nav-link:hover, .back-link:hover { color: var(--ink); text-decoration-color: var(--ink); }
 .header-meta .all-weeks:first-of-type { margin-left: auto; }
+.back-link { align-self: flex-start; margin-bottom: var(--space-1); }
 
 /* Day row */
 .day-row { display: flex; align-items: center; gap: var(--space-3); }
