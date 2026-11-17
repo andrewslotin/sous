@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "Sous read API",
+    "title": "Sous API",
     "version": "1",
-    "description": "Read-only JSON API for weekly meal plans. The document format version is the `schemaVersion` field. Every response carries `Cache-Control: no-store`. No cross-origin access is enabled."
+    "description": "JSON API for weekly meal plans and the household profile. The week and year routes only read; the one write route saves a section of the household profile. The week document format version is the `schemaVersion` field. Every response carries `Cache-Control: no-store`. No cross-origin access is enabled, and Sous never answers a CORS preflight."
   },
   "paths": {
     "/api/{year}/{week}": {
@@ -553,6 +553,420 @@
           },
           "503": {
             "description": "The database is unavailable. The body never contains database details.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "service_unavailable": {
+                    "summary": "Database error",
+                    "value": {
+                      "error": {
+                        "code": "service_unavailable",
+                        "message": "Meal plans are temporarily unavailable."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile": {
+      "get": {
+        "operationId": "getProfile",
+        "summary": "Get the household profile.",
+        "description": "The five profile sections with their texts and revisions, read from one database snapshot. Sections that were never saved have empty text.",
+        "responses": {
+          "200": {
+            "description": "The profile.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Profile"
+                },
+                "example": {
+                  "sections": [
+                    {
+                      "key": "household",
+                      "title": "Household",
+                      "text": "",
+                      "revision": "b917a034b171297d58219707fac1eb9699d8479627683283b1590c7f4e90db0e"
+                    },
+                    {
+                      "key": "food",
+                      "title": "Food preferences",
+                      "text": "",
+                      "revision": "05a1239ad2e2a18a83ef82500aa8b572595060ca152b3fac4eee4efa9f5e053c"
+                    },
+                    {
+                      "key": "kitchen",
+                      "title": "Kitchen",
+                      "text": "",
+                      "revision": "c3a4d9e86abf075bc0e34b8b583f04055dcf6df3b4998b2da329c6a3b8e6256a"
+                    },
+                    {
+                      "key": "planning",
+                      "title": "Planning habits",
+                      "text": "",
+                      "revision": "c5be72aefe91419b04c234c9813f4d1bba11dcc2bba0af7c7c11152292e2e60d"
+                    },
+                    {
+                      "key": "other",
+                      "title": "Other context",
+                      "text": "",
+                      "revision": "ad078230adfc0e57aaeed46440b311ad29ee9902c33ed27a8ca1aef2e1ddacc8"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only GET is supported (`Allow: GET,HEAD`). No JSON body is guaranteed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable. The body never contains database details.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "service_unavailable": {
+                    "summary": "Database error",
+                    "value": {
+                      "error": {
+                        "code": "service_unavailable",
+                        "message": "Meal plans are temporarily unavailable."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/profile/{key}": {
+      "put": {
+        "operationId": "putProfileSection",
+        "summary": "Replace the text of one profile section.",
+        "description": "Optimistic concurrency: send the `revision` last read for the section as `expectedRevision`. If the section changed since, nothing is written and the response is 409 with the section as now saved. Saving the same text under the current revision succeeds and returns the same revision. The request must pass the same Host and Origin checks as `/mcp` (403 `forbidden` otherwise), must be `application/json` (case-insensitive, parameters allowed), and the body must be at most 64 KiB. CRLF line breaks in `text` are saved as LF. Checks run in this order: 403, 404, 415, 413, 400, 409, 503.",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "description": "The section key.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "household",
+                "food",
+                "kitchen",
+                "planning",
+                "other"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string",
+                    "maxLength": 4000,
+                    "description": "The new text, at most 4,000 characters as submitted. Not trimmed."
+                  },
+                  "expectedRevision": {
+                    "type": "string",
+                    "description": "The `revision` of the section as last read."
+                  }
+                },
+                "required": [
+                  "text",
+                  "expectedRevision"
+                ],
+                "additionalProperties": false
+              },
+              "example": {
+                "text": "Vegetarian.",
+                "expectedRevision": "05a1239ad2e2a18a83ef82500aa8b572595060ca152b3fac4eee4efa9f5e053c"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The section as saved.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Section"
+                },
+                "example": {
+                  "key": "food",
+                  "title": "Food preferences",
+                  "text": "Vegetarian.",
+                  "revision": "940c1bc6a82a5ade31d98c0f903a370d2ae2bf9fe48c4f43e45ec13ae5191686"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The body is not a JSON object with exactly the strings `text` and `expectedRevision`, or the text is longer than 4,000 characters.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "invalid_input": {
+                    "summary": "Malformed body",
+                    "value": {
+                      "error": {
+                        "code": "invalid_input",
+                        "message": "The body must be a JSON object with text and expectedRevision strings, and no other fields."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "The Host or Origin header is not allowed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "forbidden": {
+                    "summary": "Host or Origin not allowed",
+                    "value": {
+                      "error": {
+                        "code": "forbidden",
+                        "message": "This request is not allowed."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The key is not one of the five section keys.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "section_not_found": {
+                    "summary": "Unknown section key",
+                    "value": {
+                      "error": {
+                        "code": "section_not_found",
+                        "message": "No such profile section."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "405": {
+            "description": "Only PUT is supported (`Allow: PUT`). No JSON body is guaranteed.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The section changed since `expectedRevision` was read. Nothing was written.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevisionConflict"
+                },
+                "examples": {
+                  "revision_conflict": {
+                    "summary": "Stale revision",
+                    "value": {
+                      "error": {
+                        "code": "revision_conflict",
+                        "message": "The section changed since it was read."
+                      },
+                      "current": {
+                        "key": "food",
+                        "title": "Food preferences",
+                        "text": "Vegetarian.",
+                        "revision": "940c1bc6a82a5ade31d98c0f903a370d2ae2bf9fe48c4f43e45ec13ae5191686"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "The body is larger than 64 KiB, with or without a `Content-Length` header.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "payload_too_large": {
+                    "summary": "Body over 64 KiB",
+                    "value": {
+                      "error": {
+                        "code": "payload_too_large",
+                        "message": "The request body must be at most 64 KiB."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "The `Content-Type` is not `application/json`.",
+            "headers": {
+              "Cache-Control": {
+                "description": "Always `no-store`.",
+                "schema": {
+                  "type": "string",
+                  "const": "no-store"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                },
+                "examples": {
+                  "unsupported_media_type": {
+                    "summary": "Wrong media type",
+                    "value": {
+                      "error": {
+                        "code": "unsupported_media_type",
+                        "message": "The request body must be application/json."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable, or this instance has no write configuration. The body never contains database details.",
             "headers": {
               "Cache-Control": {
                 "description": "Always `no-store`.",
@@ -1328,7 +1742,12 @@
                   "invalid_date",
                   "year_not_found",
                   "not_found",
-                  "service_unavailable"
+                  "service_unavailable",
+                  "forbidden",
+                  "section_not_found",
+                  "unsupported_media_type",
+                  "payload_too_large",
+                  "invalid_input"
                 ]
               },
               "message": {
@@ -1345,6 +1764,97 @@
         },
         "required": [
           "error"
+        ],
+        "additionalProperties": false
+      },
+      "Section": {
+        "type": "object",
+        "description": "One section of the household profile.",
+        "properties": {
+          "key": {
+            "type": "string",
+            "enum": [
+              "household",
+              "food",
+              "kitchen",
+              "planning",
+              "other"
+            ],
+            "description": "The section's fixed key."
+          },
+          "title": {
+            "type": "string",
+            "description": "The section's title: Household, Food preferences, Kitchen, Planning habits or Other context."
+          },
+          "text": {
+            "type": "string",
+            "maxLength": 4000,
+            "description": "Plain text with LF line breaks, at most 4,000 characters. Empty until saved."
+          },
+          "revision": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "Opaque content hash of the section's key and text. Send it back as `expectedRevision`."
+          }
+        },
+        "required": [
+          "key",
+          "title",
+          "text",
+          "revision"
+        ],
+        "additionalProperties": false
+      },
+      "Profile": {
+        "type": "object",
+        "description": "The household profile.",
+        "properties": {
+          "sections": {
+            "type": "array",
+            "description": "Always five sections, in the order household, food, kitchen, planning, other.",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": {
+              "$ref": "#/components/schemas/Section"
+            }
+          }
+        },
+        "required": [
+          "sections"
+        ],
+        "additionalProperties": false
+      },
+      "RevisionConflict": {
+        "type": "object",
+        "description": "The 409 body: the section changed since it was read.",
+        "properties": {
+          "error": {
+            "type": "object",
+            "description": "Error details.",
+            "properties": {
+              "code": {
+                "type": "string",
+                "const": "revision_conflict"
+              },
+              "message": {
+                "type": "string",
+                "description": "Human-readable message."
+              }
+            },
+            "required": [
+              "code",
+              "message"
+            ],
+            "additionalProperties": false
+          },
+          "current": {
+            "$ref": "#/components/schemas/Section",
+            "description": "The section as now saved."
+          }
+        },
+        "required": [
+          "error",
+          "current"
         ],
         "additionalProperties": false
       }

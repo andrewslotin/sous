@@ -1,6 +1,6 @@
 # 17. Household profile
 
-Status: Planned; product scope and interface contract agreed.
+Status: Done.
 
 ## Outcome
 

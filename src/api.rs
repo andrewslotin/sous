@@ -1,4 +1,4 @@
-//! Read-only JSON API.
+//! JSON API: week, year and date reads and the household profile read and write routes (see `profile_api`).
 use crate::{
     AppState, calendar,
     calendar::{DatePath, WeekPath},
@@ -45,7 +45,7 @@ pub fn is_api_path(path: &str) -> bool {
 }
 
 /// Serialize `body` as `application/json` (exactly, without a charset) with `status`.
-fn json<T: Serialize>(status: StatusCode, body: &T) -> Response {
+pub(crate) fn json<T: Serialize>(status: StatusCode, body: &T) -> Response {
     let mut res = (status, Json(body)).into_response();
     res.headers_mut().insert(
         header::CONTENT_TYPE,
@@ -54,7 +54,7 @@ fn json<T: Serialize>(status: StatusCode, body: &T) -> Response {
     res
 }
 
-fn error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
+pub(crate) fn error(status: StatusCode, code: &'static str, message: &'static str) -> Response {
     json(
         status,
         &ApiError {
@@ -71,7 +71,7 @@ fn invalid() -> Response {
     error(StatusCode::NOT_FOUND, "invalid_week", "Invalid week.")
 }
 
-fn unavailable(db_error: &sqlx::Error) -> Response {
+pub(crate) fn unavailable(db_error: &sqlx::Error) -> Response {
     tracing::error!(error = %db_error, "database error");
     error(
         StatusCode::SERVICE_UNAVAILABLE,

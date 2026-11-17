@@ -4346,3 +4346,676 @@ fn visual_capture_016() {
     assert_eq!(today_href(&h).as_deref(), Some("/2026-12-02"));
     both(&h, "missing-plan", 375);
 }
+
+// ---- Feature 17: household profile ----
+
+const SECTION_KEYS: [&str; 5] = ["household", "food", "kitchen", "planning", "other"];
+const SECTION_TITLES: [&str; 5] = [
+    "Household",
+    "Food preferences",
+    "Kitchen",
+    "Planning habits",
+    "Other context",
+];
+const SECTION_HINTS: [&str; 5] = [
+    "People, portions and dietary restrictions.",
+    "Likes, dislikes and cuisines.",
+    "Equipment, storage and limitations.",
+    "Cooking time, shopping, budget, leftovers and batch prep.",
+    "Anything else worth knowing.",
+];
+const PROFILE_XSS: &str = "</script><img src=x onerror=alert(1)>\nsecond line";
+
+fn section_key(key: &str) -> sous::model::SectionKey {
+    sous::model::SectionKey::parse(key).unwrap()
+}
+
+/// An empty database with the writer on, opened on the profile page.
+fn profile_page(width: u32) -> Harness {
+    Opts::new()
+        .db(Db::Empty)
+        .mcp()
+        .width(width)
+        .path("/profile")
+        .launch()
+}
+
+impl Harness {
+    /// The stored text of a section, read through a separate connection.
+    fn profile_text(&self, key: &str) -> String {
+        self.rt.block_on(async {
+            let pool = db::open_read_pool(&self.db_path).await.unwrap();
+            let profile = sous::profile::load_profile(&pool).await.unwrap();
+            pool.close().await;
+            profile
+                .sections
+                .into_iter()
+                .find(|s| s.key.as_str() == key)
+                .unwrap()
+                .text
+        })
+    }
+
+    /// Another writer replaces a section's text (with the right revision) through `profile::update_section`.
+    fn profile_write(&self, key: &str, text: &str) {
+        self.rt.block_on(async {
+            let read = db::open_read_pool(&self.db_path).await.unwrap();
+            let write = db::open_write_pool(&self.db_path).await.unwrap();
+            let profile = sous::profile::load_profile(&read).await.unwrap();
+            let current = profile
+                .sections
+                .into_iter()
+                .find(|s| s.key.as_str() == key)
+                .unwrap();
+            sous::profile::update_section(&write, section_key(key), text, &current.revision)
+                .await
+                .unwrap_or_else(|_| panic!("update_section {key}"));
+            read.close().await;
+            write.close().await;
+        });
+    }
+
+    /// Set a section's textarea as a user's edit would (React sees an input event).
+    fn fill(&self, key: &str, text: &str) {
+        self.js(&format!(
+            "(() => {{ const t = document.getElementById('profile-{key}'); \
+             const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; \
+             set.call(t, {}); t.dispatchEvent(new Event('input', {{ bubbles: true }})); }})()",
+            serde_json::to_string(text).unwrap()
+        ));
+        self.wait_for(&format!(
+            "document.getElementById('profile-{key}').value === {}",
+            serde_json::to_string(text).unwrap()
+        ));
+    }
+
+    fn draft(&self, key: &str) -> String {
+        self.js(&format!("document.getElementById('profile-{key}').value"))
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn save_selector(key: &str) -> String {
+        format!("#profile-{key} ~ .field-actions > button.button")
+    }
+
+    fn save_disabled(&self, key: &str) -> bool {
+        self.js(&format!(
+            "document.querySelector('{}').disabled",
+            Self::save_selector(key)
+        ))
+        .as_bool()
+        .unwrap()
+    }
+
+    /// The text of a section's live region.
+    fn status_text(&self, key: &str) -> String {
+        self.js(&format!(
+            "document.getElementById('profile-{key}').closest('.field').querySelector('[role=status]').textContent"
+        ))
+        .as_str()
+        .unwrap()
+        .to_string()
+    }
+
+    /// The selector of the conflict notice's "Keep mine" or "Use saved" button.
+    fn notice_button(key: &str, label: &str) -> String {
+        format!(
+            "#profile-{key} ~ .field-actions .notice-actions button:nth-child({})",
+            if label == "Keep mine" { 1 } else { 2 }
+        )
+    }
+
+    /// The conflict notice's saved text, or `None` while no notice is open.
+    fn notice_text(&self, key: &str) -> Option<String> {
+        self.js(&format!(
+            "(() => {{ const n = document.querySelector('#profile-{key} ~ .field-actions .notice-text'); \
+             return n ? n.textContent : null; }})()"
+        ))
+        .as_str()
+        .map(str::to_string)
+    }
+
+    fn wait_notice(&self, key: &str, text: &str) {
+        self.wait_for(&format!(
+            "(() => {{ const n = document.querySelector('#profile-{key} ~ .field-actions .notice-text'); \
+             return n !== null && n.textContent === {}; }})()",
+            serde_json::to_string(text).unwrap()
+        ));
+    }
+
+    fn wait_status(&self, key: &str, text: &str) {
+        self.wait_for(&format!(
+            "document.getElementById('profile-{key}').closest('.field').querySelector('[role=status]').textContent === {}",
+            serde_json::to_string(text).unwrap()
+        ));
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_page_has_five_labelled_sections_in_order() {
+    let h = profile_page(1280);
+    assert_eq!(h.status(), 200);
+    assert_eq!(h.js("document.title"), "Household — Meal Plan");
+    assert_eq!(h.text(".title"), "Household");
+    assert_eq!(h.texts(".header-meta a"), ["This week"]);
+    assert_eq!(
+        h.js("document.querySelector('.header-meta a').getAttribute('href')"),
+        "/"
+    );
+    assert_eq!(h.texts(".field-title"), SECTION_TITLES);
+    assert_eq!(h.texts(".field-hint"), SECTION_HINTS);
+    assert_eq!(h.count("textarea"), 5);
+    assert_eq!(h.count("[role=status]"), 5);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_fields_are_labelled_described_and_announce_status() {
+    let h = profile_page(1280);
+    for (i, key) in SECTION_KEYS.iter().enumerate() {
+        // The title is the textarea's label (its accessible name), the hint its description.
+        assert_eq!(
+            h.js(&format!(
+                "(() => {{ const t = document.getElementById('profile-{key}'); \
+                 return [t.labels.length, t.labels[0].textContent, \
+                 document.getElementById(t.getAttribute('aria-describedby')).textContent, \
+                 t.closest('.field').querySelectorAll('[role=status]').length]; }})()"
+            )),
+            serde_json::json!([1, SECTION_TITLES[i], SECTION_HINTS[i], 1]),
+            "{key}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn typing_and_saving_a_section_persists_it_and_leaves_the_others() {
+    let h = profile_page(1280);
+    assert!(h.save_disabled("food"));
+    // A real click and real typing.
+    h.click("#profile-food");
+    h.tab.type_str("Loves soup").unwrap();
+    h.wait_for("document.getElementById('profile-food').value === 'Loves soup'");
+    assert!(!h.save_disabled("food"));
+    h.click(&Harness::save_selector("food"));
+    h.wait_status("food", "Saved.");
+    assert!(h.save_disabled("food"));
+    assert_eq!(h.profile_text("food"), "Loves soup");
+    // A multi-line edit in another section, kept with its line breaks.
+    h.fill("kitchen", "Oven\nSlow cooker\n\nSmall fridge");
+    h.click(&Harness::save_selector("kitchen"));
+    h.wait_status("kitchen", "Saved.");
+    assert_eq!(h.status_text("food"), "Saved.");
+    // The next edit clears "Saved." in that section only.
+    h.fill("food", "Loves soup and bread");
+    assert_eq!(h.status_text("food"), "");
+    assert_eq!(h.status_text("kitchen"), "Saved.");
+    // Reload: the text persists, the other sections stay empty, Save is disabled.
+    h.goto_page("/profile");
+    assert_eq!(h.draft("food"), "Loves soup");
+    assert_eq!(h.draft("kitchen"), "Oven\nSlow cooker\n\nSmall fridge");
+    for key in ["household", "planning", "other"] {
+        assert_eq!(h.draft(key), "", "{key}");
+    }
+    for key in SECTION_KEYS {
+        assert!(h.save_disabled(key), "{key}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn save_is_enabled_only_while_the_draft_differs_from_the_saved_text() {
+    let h = profile_page(1280);
+    assert!(h.save_disabled("other"));
+    h.fill("other", "x");
+    assert!(!h.save_disabled("other"));
+    h.fill("other", "");
+    assert!(h.save_disabled("other"));
+    h.fill("other", "x");
+    h.click(&Harness::save_selector("other"));
+    h.wait_status("other", "Saved.");
+    assert!(h.save_disabled("other"));
+    h.fill("other", "xy");
+    assert!(!h.save_disabled("other"));
+    h.fill("other", "x");
+    assert!(h.save_disabled("other"));
+    // A save in flight disables Save: hold the request and look at the button.
+    h.js("(() => { window.__release = null; const real = window.fetch; \
+          window.fetch = (...args) => new Promise((resolve) => { window.__release = () => resolve(real(...args)); }); \
+          return true; })()");
+    h.fill("other", "xyz");
+    h.click(&Harness::save_selector("other"));
+    h.wait_for("window.__release !== null");
+    assert!(h.save_disabled("other"));
+    h.js("window.__release()");
+    h.wait_status("other", "Saved.");
+    assert_eq!(h.profile_text("other"), "xyz");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keyboard_reaches_every_field_and_enter_or_space_saves() {
+    let h = profile_page(1280);
+    for (i, key) in SECTION_KEYS.iter().enumerate() {
+        h.tab_to(&format!("#profile-{key}"));
+        h.tab.type_str("x").unwrap();
+        h.wait_for(&format!(
+            "document.getElementById('profile-{key}').value === 'x'"
+        ));
+        h.press("Tab");
+        assert_eq!(
+            h.js("document.activeElement.matches('button.button') && document.activeElement.textContent === 'Save'"),
+            true,
+            "{key}: Save follows its field"
+        );
+        h.press(if i % 2 == 0 { "Enter" } else { " " });
+        h.wait_status(key, "Saved.");
+        assert_eq!(h.profile_text(key), "x", "{key}");
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn empty_state_shows_until_a_save_and_returns_when_all_are_cleared() {
+    let h = profile_page(1280);
+    assert_eq!(h.texts(".empty"), ["No household details yet."]);
+    h.fill("planning", "Cook on Sundays");
+    assert_eq!(h.count(".empty"), 1, "a draft is not saved text");
+    h.click(&Harness::save_selector("planning"));
+    h.wait_for("document.querySelector('.empty') === null");
+    h.goto_page("/profile");
+    assert_eq!(h.count(".empty"), 0);
+    // Saving the only text away restores the empty state.
+    h.fill("planning", "");
+    h.click(&Harness::save_selector("planning"));
+    h.wait_for("document.querySelector('.empty') !== null");
+    assert_eq!(h.texts(".empty"), ["No household details yet."]);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn conflict_notice_shows_the_other_writers_text_and_use_saved_replaces_the_draft() {
+    let h = profile_page(1280);
+    h.fill("household", "mine");
+    h.profile_write("household", "theirs\nsecond line");
+    h.click(&Harness::save_selector("household"));
+    h.wait_notice("household", "theirs\nsecond line");
+    assert!(
+        h.status_text("household")
+            .starts_with("This section was changed elsewhere.")
+    );
+    assert_eq!(h.draft("household"), "mine", "the draft stays");
+    assert_eq!(h.profile_text("household"), "theirs\nsecond line");
+    // Line breaks are preserved in the display.
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('.notice-text')).whiteSpace"),
+        "pre-wrap"
+    );
+    assert_eq!(
+        h.js("document.querySelector('.notice-text').getBoundingClientRect().height >= 2 * 24"),
+        true
+    );
+    h.click(&Harness::notice_button("household", "Use saved"));
+    h.wait_for("document.querySelector('.notice') === null");
+    assert_eq!(h.draft("household"), "theirs\nsecond line");
+    assert!(h.save_disabled("household"));
+    // The revision is the other writer's: the next edit saves without a conflict.
+    h.fill("household", "later");
+    h.click(&Harness::save_selector("household"));
+    h.wait_status("household", "Saved.");
+    assert_eq!(h.profile_text("household"), "later");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn conflict_notice_says_so_when_the_saved_version_is_empty() {
+    let h = profile_page(1280);
+    h.profile_write("kitchen", "Oven");
+    h.goto_page("/profile");
+    assert_eq!(h.draft("kitchen"), "Oven");
+    // Another writer clears the section; then this page edits and saves.
+    h.profile_write("kitchen", "");
+    h.fill("kitchen", "Oven and hob");
+    h.click(&Harness::save_selector("kitchen"));
+    h.wait_notice("kitchen", "The saved version is empty.");
+    assert_eq!(
+        h.js("getComputedStyle(document.querySelector('#profile-kitchen ~ .field-actions .notice-text')).color"),
+        LIGHT.rgb("ink-muted")
+    );
+    assert_eq!(h.draft("kitchen"), "Oven and hob");
+    h.click(&Harness::notice_button("kitchen", "Use saved"));
+    h.wait_for("document.querySelector('.notice') === null");
+    assert_eq!(h.draft("kitchen"), "");
+    assert!(h.save_disabled("kitchen"));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_mine_stays_open_on_a_second_conflict_and_closes_on_success() {
+    let h = profile_page(1280);
+    h.fill("food", "mine");
+    h.profile_write("food", "second writer");
+    h.click(&Harness::save_selector("food"));
+    h.wait_notice("food", "second writer");
+    // A third writer changes the section before "Keep mine" is pressed.
+    h.profile_write("food", "third writer");
+    h.click(&Harness::notice_button("food", "Keep mine"));
+    h.wait_notice("food", "third writer");
+    assert_eq!(h.draft("food"), "mine");
+    assert_eq!(h.profile_text("food"), "third writer");
+    assert!(h.notice_text("food").is_some(), "the notice stays open");
+    // A further "Keep mine" saves against the newer revision and closes the notice.
+    h.click(&Harness::notice_button("food", "Keep mine"));
+    h.wait_status("food", "Saved.");
+    assert_eq!(h.notice_text("food"), None);
+    assert_eq!(h.count(".notice"), 0);
+    assert_eq!(h.profile_text("food"), "mine");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn a_failed_save_shows_the_error_and_keeps_the_draft() {
+    let h = profile_page(1280);
+    // Every profile update now aborts: the endpoint answers 503.
+    h.exec(
+        "CREATE TRIGGER no_profile_updates BEFORE UPDATE ON profile_sections \
+         BEGIN SELECT RAISE(ABORT, 'x'); END;",
+    );
+    h.fill("kitchen", "Gas hob");
+    h.click(&Harness::save_selector("kitchen"));
+    h.wait_status("kitchen", "Couldn't save. Try again.");
+    assert_eq!(h.draft("kitchen"), "Gas hob");
+    assert!(!h.save_disabled("kitchen"), "Save can be pressed again");
+    assert_eq!(h.profile_text("kitchen"), "");
+    assert_eq!(h.count(".empty"), 1);
+    // Once the failure is gone the same draft saves.
+    h.exec("DROP TRIGGER no_profile_updates");
+    h.click(&Harness::save_selector("kitchen"));
+    h.wait_status("kitchen", "Saved.");
+    assert_eq!(h.profile_text("kitchen"), "Gas hob");
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn a_network_error_shows_the_error_and_keeps_the_draft() {
+    let h = profile_page(1280);
+    h.js("(window.fetch = () => Promise.reject(new TypeError('offline')), true)");
+    h.fill("other", "Draft");
+    h.click(&Harness::save_selector("other"));
+    h.wait_status("other", "Couldn't save. Try again.");
+    assert_eq!(h.draft("other"), "Draft");
+    assert!(!h.save_disabled("other"));
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_text_renders_as_literal_text_with_line_breaks() {
+    let h = profile_page(1280);
+    h.profile_write("other", PROFILE_XSS);
+    h.goto_page("/profile");
+    assert_eq!(h.draft("other"), PROFILE_XSS);
+    assert_eq!(h.count("img"), 0);
+    assert_eq!(h.js("window.pwned === undefined"), true);
+    // The conflict notice shows another writer's text just as literally.
+    h.fill("household", "mine");
+    h.profile_write("household", PROFILE_XSS);
+    h.click(&Harness::save_selector("household"));
+    h.wait_notice("household", PROFILE_XSS);
+    assert_eq!(h.count("img"), 0);
+    assert_eq!(
+        h.js("document.querySelector('.notice-text').innerText"),
+        PROFILE_XSS
+    );
+    assert_eq!(
+        h.js("document.querySelector('.notice-text').children.length"),
+        0
+    );
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn footer_link_is_on_every_page_but_the_profile() {
+    for (mode, paths) in [
+        (
+            Db::Fixture,
+            vec![
+                "/2026/44",
+                "/2026-10-28",
+                "/2026/53",
+                "/2026",
+                "/2026/54",
+                "/2026-02-30",
+            ],
+        ),
+        (Db::ClosedPool, vec!["/2026/44"]),
+    ] {
+        let h = Opts::new().db(mode).mcp().path(paths[0]).launch();
+        for path in paths {
+            h.goto_page(path);
+            assert_eq!(h.count("a.footer-link"), 1, "{path}");
+            assert_eq!(h.text("a.footer-link"), "Household", "{path}");
+            assert_eq!(
+                h.js("document.querySelector('a.footer-link').getAttribute('href')"),
+                "/profile",
+                "{path}"
+            );
+            // Inside the footer, above the theme toggle, centred in the column.
+            assert_eq!(
+                h.js("(() => { const f = document.querySelector('.footer'); \
+                      return f.firstElementChild === f.querySelector('a.footer-link') \
+                      && f.children[1].classList.contains('theme'); })()"),
+                true,
+                "{path}"
+            );
+            let [l, r, _, _] = h.rect("a.footer-link");
+            let [al, ar, _, _] = h.rect(".app");
+            assert!(
+                ((l + r) / 2.0 - (al + ar) / 2.0).abs() <= 1.0,
+                "{path}: centred"
+            );
+            assert_eq!(
+                h.js("(() => { const s = getComputedStyle(document.querySelector('a.footer-link')); \
+                      return [s.fontSize, s.color, s.textDecorationLine, s.textDecorationColor]; })()"),
+                serde_json::json!(["14px", LIGHT.rgb("ink-muted"), "underline", LIGHT.rgb("line-strong")]),
+                "{path}"
+            );
+        }
+    }
+    let h = Opts::new().mcp().path("/profile").launch();
+    assert_eq!(h.count("a.footer-link"), 0);
+    assert_eq!(h.count(".footer .theme"), 1);
+    // The link leads to the profile page.
+    h.goto_page("/2026/44");
+    h.click("a.footer-link");
+    h.wait_page("/profile");
+    assert_eq!(h.text(".title"), "Household");
+    assert_eq!(h.count("a.footer-link"), 0);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_page_is_one_column_without_overflow() {
+    for width in [375, 1280] {
+        let h = profile_page(width);
+        h.fill("household", "A long line with words ".repeat(30).trim());
+        h.profile_write("food", &"unbroken".repeat(40));
+        h.click(&Harness::save_selector("household"));
+        h.wait_status("household", "Saved.");
+        h.fill("food", "mine");
+        h.click(&Harness::save_selector("food"));
+        h.wait_for("document.querySelector('.notice-text') !== null");
+        let viewport = h
+            .js("document.documentElement.clientWidth")
+            .as_f64()
+            .unwrap();
+        let [left, right, _, _] = h.rect(".app");
+        assert!(right - left <= 560.0, "{width}: column {}", right - left);
+        assert_eq!(right - left, viewport.min(560.0), "{width}");
+        assert_eq!(
+            h.js("document.documentElement.scrollWidth <= window.innerWidth"),
+            true,
+            "{width}: overflow"
+        );
+        for sel in ["textarea", ".notice", ".button"] {
+            assert_eq!(
+                h.js(&format!(
+                    "[...document.querySelectorAll('{sel}')].every(e => {{ const r = e.getBoundingClientRect(); \
+                     return r.left >= {left} - 0.5 && r.right <= {right} + 0.5; }})"
+                )),
+                true,
+                "{width}: {sel} inside the column"
+            );
+        }
+        assert_eq!(
+            h.js("getComputedStyle(document.querySelector('textarea')).resize"),
+            "vertical"
+        );
+        assert_eq!(
+            h.js("document.querySelector('textarea').getBoundingClientRect().height >= 4 * 24"),
+            true
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_controls_use_the_design_system_tokens_in_both_themes() {
+    let h = profile_page(1280);
+    h.fill("household", "x");
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        h.js("(document.activeElement && document.activeElement.blur(), true)");
+        let style = |sel: &str, props: &str| {
+            h.js(&format!(
+                "(() => {{ const s = getComputedStyle(document.querySelector('{sel}')); return [{props}]; }})()"
+            ))
+        };
+        // Text field: surface fill, 1px line border, body type in ink.
+        assert_eq!(
+            style(
+                "#profile-food",
+                "s.backgroundColor, s.borderTopColor, s.borderTopWidth, s.color, s.fontSize, s.borderRadius"
+            ),
+            serde_json::json!([
+                t.rgb("surface"),
+                t.rgb("line"),
+                "1px",
+                t.rgb("ink"),
+                "16px",
+                "0px"
+            ]),
+            "{}",
+            t.scheme
+        );
+        // Button, enabled: a 1.5px ink ring on surface.
+        assert_eq!(
+            style(
+                &Harness::save_selector("household"),
+                "s.backgroundColor, s.borderTopColor, s.borderTopStyle, s.color, s.fontWeight, s.fontSize"
+            ),
+            serde_json::json!([
+                t.rgb("surface"),
+                t.rgb("ink"),
+                "solid",
+                t.rgb("ink"),
+                "600",
+                "14px"
+            ]),
+            "{}",
+            t.scheme
+        );
+        // Button, disabled: line-strong ring, ink-faint text, no fill.
+        assert_eq!(
+            style(
+                &Harness::save_selector("food"),
+                "s.backgroundColor, s.borderTopColor, s.color"
+            ),
+            serde_json::json!(["rgba(0, 0, 0, 0)", t.rgb("line-strong"), t.rgb("ink-faint")]),
+            "{}",
+            t.scheme
+        );
+        // Focus: the border turns ink and the standard outline shows.
+        h.tab_to("#profile-food");
+        assert_eq!(
+            style(
+                "#profile-food",
+                "s.borderTopColor, s.outlineStyle, s.outlineWidth, s.outlineColor"
+            ),
+            serde_json::json!([t.rgb("ink"), "solid", "2px", t.rgb("ink")]),
+            "{}",
+            t.scheme
+        );
+    }
+    h.use_theme(&LIGHT);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn profile_page_has_no_emoji() {
+    let h = profile_page(1280);
+    h.fill("household", "x");
+    h.click(&Harness::save_selector("household"));
+    h.wait_status("household", "Saved.");
+    assert_eq!(
+        h.js("/\\p{Extended_Pictographic}/u.test(document.body.innerText)"),
+        false
+    );
+}
+
+/// Full-page PNGs of the profile page and a day page, at 375 and 1280 px, light and dark.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_017() {
+    let both = |h: &Harness, name: &str, width: u32| {
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture_file(&format!("{name}-{width}-{}.png", t.scheme));
+        }
+        h.use_theme(&LIGHT);
+    };
+    for width in [375, 1280] {
+        // Empty.
+        let h = profile_page(width);
+        assert_eq!(h.texts(".empty"), ["No household details yet."]);
+        both(&h, "profile-empty", width);
+
+        // Filled with multi-line text.
+        h.profile_write(
+            "household",
+            "Two adults and a toddler.\nPortions: 2.5 adults.\nNo peanuts at home.",
+        );
+        h.profile_write(
+            "food",
+            "We like soups and stews.\n\nThe toddler avoids anything spicy.",
+        );
+        h.profile_write("kitchen", "Oven, hob, slow cooker.\nSmall freezer.");
+        h.profile_write(
+            "planning",
+            "Shop on Saturday.\nBatch cook on Sunday evening.\nLeftovers for lunch.",
+        );
+        h.profile_write("other", "Friends visit on the first Friday of the month.");
+        h.goto_page("/profile");
+        assert_eq!(h.count(".empty"), 0);
+        both(&h, "profile-filled", width);
+
+        // The conflict notice open.
+        let theirs = "We like soups and stews.\nThe toddler now eats mild curry.";
+        h.fill("food", "We like soups, stews and bread.\nNo mushrooms.");
+        h.profile_write("food", theirs);
+        h.click(&Harness::save_selector("food"));
+        h.wait_notice("food", theirs);
+        both(&h, "profile-conflict", width);
+
+        // A day page with the footer link.
+        let h = Opts::new()
+            .width(width)
+            .clock(clock_at(2026, 10, 28, 11, 0, 0))
+            .path("/2026-10-28")
+            .launch();
+        assert_eq!(h.count("a.footer-link"), 1);
+        both(&h, "day-footer", width);
+    }
+}

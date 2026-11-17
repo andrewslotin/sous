@@ -20,7 +20,7 @@ The schemas come from `Tool::with_input_schema` and `Tool::with_output_schema` i
 
 - Generate every tool's `inputSchema` and `outputSchema` with schemars `SchemaSettings::draft2020_12()` and `inline_subschemas = true`, in one helper in `src/mcp.rs` used by `definition`. Do not call rmcp's `with_input_schema` and `with_output_schema`.
 - Keep the post-processing rmcp does today: remove the root `title` and `description`, and require root `type: "object"` for input schemas (panic at startup otherwise, as rmcp does). Keep `$schema`.
-- Apply this to output schemas as well, so all seven tools follow one rule. The inlined schemas accept and reject exactly the same JSON values as the current ones; only `$ref` targets are replaced by their contents. The `nullable` helper in `src/model.rs` works unchanged, because it asks the generator for the inner schema.
+- Apply this to output schemas as well, so all tools follow one rule. The inlined schemas accept and reject exactly the same JSON values as the current ones; only `$ref` targets are replaced by their contents. The `nullable` helper in `src/model.rs` works unchanged, because it asks the generator for the inner schema.
 - A `document` sent as a JSON string stays `invalid_input`, and nothing is written. The server does not parse a string as a fallback: the schema is the contract, and quietly accepting strings would hide client bugs.
 - Tool names, titles, descriptions, annotations and the server instructions do not change.
 - Regenerate the [tool list](../mcp-tools.json) (`SOUS_REGEN_TOOLS_DOC=1 cargo test --test mcp mcp_tools_doc_matches_server`).

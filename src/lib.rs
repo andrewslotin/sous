@@ -4,6 +4,8 @@ pub mod calendar;
 pub mod db;
 pub mod mcp;
 pub mod model;
+pub mod profile;
+pub mod profile_api;
 pub mod queries;
 pub mod save;
 
@@ -17,45 +19,71 @@ use calendar::{Clock, DatePath, WeekPath};
 use chrono::NaiveDate;
 use model::Page;
 use sqlx::SqlitePool;
+use std::sync::Arc;
 
 /// Shared request state: the read-only pool and the service clock.
 #[derive(Clone)]
 pub struct AppState {
     pub pool: SqlitePool,
     pub clock: Clock,
+    /// Present only in `app_with_mcp`; without it `PUT /api/profile/{key}` is `service_unavailable`.
+    pub profile_write: Option<Arc<profile_api::ProfileWrite>>,
 }
 
 /// Build the application router around the read-only pool and the service clock.
+///
+/// This router has no write configuration: `GET /profile` and `GET /api/profile` work, but a `PUT` to
+/// `/api/profile/{key}` answers 503 `service_unavailable`. It exists for read-only tests; use
+/// [`app_with_mcp`] to serve the profile endpoint.
 pub fn app(read_pool: SqlitePool, clock: Clock) -> Router {
+    build(read_pool, clock, None)
+}
+
+fn build(
+    read_pool: SqlitePool,
+    clock: Clock,
+    profile_write: Option<Arc<profile_api::ProfileWrite>>,
+) -> Router {
     Router::new()
         .route("/", get(root_handler))
+        .merge(profile_api::page_routes())
         .route(
             "/{segment}",
             get(segment_handler).fallback(year_method_fallback),
         )
         .route("/{year}/{week}", get(week_handler))
+        .merge(profile_api::api_routes())
         .merge(api::routes())
         .fallback(fallback)
         .layer(middleware::map_response(no_store))
         .with_state(AppState {
             pool: read_pool,
             clock,
+            profile_write,
         })
         .merge(assets::routes())
 }
 
-/// Write pool and request-validation settings for `/mcp`.
+/// Write pool and request-validation settings for `/mcp`. The same write pool, host list and origin
+/// list also serve `PUT /api/profile/{key}`.
 pub struct McpConfig {
-    /// Dedicated writable pool; used only by `save_week`.
+    /// Dedicated writable pool; used only by `save_week` and the profile writes (`update_profile_section`
+    /// and `PUT /api/profile/{key}`).
     pub write_pool: SqlitePool,
     /// Accepted `Host` values; empty means the loopback defaults.
     pub allowed_hosts: Vec<String>,
-    /// Accepted `Origin` values; empty rejects every request that carries an `Origin` header.
+    /// Accepted `Origin` values; empty rejects every request that carries an `Origin` header
+    /// other than the request's own origin, which only the profile endpoint accepts.
     pub allowed_origins: Vec<String>,
 }
 
-/// `app(read_pool, clock)` plus the `/mcp` endpoint.
+/// `app(read_pool, clock)` plus the `/mcp` endpoint and `PUT /api/profile/{key}`.
 pub fn app_with_mcp(read_pool: SqlitePool, clock: Clock, mcp: McpConfig) -> Router {
+    let write = profile_api::ProfileWrite::new(
+        mcp.write_pool.clone(),
+        mcp.allowed_hosts.clone(),
+        mcp.allowed_origins.clone(),
+    );
     let service = mcp::service(
         read_pool.clone(),
         mcp.write_pool,
@@ -63,7 +91,7 @@ pub fn app_with_mcp(read_pool: SqlitePool, clock: Clock, mcp: McpConfig) -> Rout
         mcp.allowed_hosts,
         mcp.allowed_origins,
     );
-    app(read_pool, clock).nest_service("/mcp", service)
+    build(read_pool, clock, Some(Arc::new(write))).nest_service("/mcp", service)
 }
 
 /// Dynamic HTML and JSON are never cached; assets keep their own headers.
@@ -106,11 +134,11 @@ async fn fallback(uri: Uri) -> Response {
     }
 }
 
-fn page_response(status: StatusCode, title: &str, page: &Page) -> Response {
+pub(crate) fn page_response(status: StatusCode, title: &str, page: &Page) -> Response {
     html(status, assets::page(title, &page.to_script_json()))
 }
 
-fn unavailable(error: &sqlx::Error) -> Response {
+pub(crate) fn unavailable(error: &sqlx::Error) -> Response {
     tracing::error!(%error, "database error");
     page_response(
         StatusCode::SERVICE_UNAVAILABLE,

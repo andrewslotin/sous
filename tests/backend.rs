@@ -2688,6 +2688,80 @@ fn without_weekday_column(rows: Vec<String>) -> Vec<String> {
         .collect()
 }
 
+/// Feature 17 upgrade: a database at migration 0005 holding all fixtures gains five empty profile
+/// sections and every existing row is unchanged.
+#[tokio::test]
+async fn upgrade_from_version_5_adds_five_empty_profile_sections() {
+    const CONTENT_TABLES: [&str; 10] = [
+        "weeks",
+        "days",
+        "meals",
+        "meal_steps",
+        "shopping_lists",
+        "day_shopping_lists",
+        "shopping_categories",
+        "shopping_items",
+        "prep_sessions",
+        "prep_tasks",
+    ];
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let mut old = sqlx::migrate!();
+    old.migrations = old
+        .migrations
+        .iter()
+        .filter(|m| m.version <= 5)
+        .cloned()
+        .collect::<Vec<_>>()
+        .into();
+    assert_eq!(old.migrations.len(), 5);
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .journal_mode(SqliteJournalMode::Wal)
+        .foreign_keys(true);
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    old.run(&mut c).await.unwrap();
+    for sql in [FIXTURE, WEEKLY_FIXTURE, HISTORY_FIXTURE] {
+        sqlx::raw_sql(sql).execute(&mut c).await.unwrap();
+    }
+    let before_rows = row_snapshot(&mut c, &CONTENT_TABLES).await;
+    assert!(
+        sqlx::query("SELECT 1 FROM pragma_table_info('profile_sections')")
+            .fetch_optional(&mut c)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop(c);
+
+    db::migrate(&path).await.unwrap();
+
+    let mut c = SqliteConnection::connect_with(&opts).await.unwrap();
+    assert_eq!(row_snapshot(&mut c, &CONTENT_TABLES).await, before_rows);
+    assert_eq!(
+        row_snapshot(&mut c, &["profile_sections"]).await,
+        [
+            "== profile_sections: 5 rows",
+            "'food',''",
+            "'household',''",
+            "'kitchen',''",
+            "'other',''",
+            "'planning',''",
+        ]
+    );
+    drop(c);
+
+    // Migrating again changes nothing.
+    db::migrate(&path).await.unwrap();
+    let pool = db::open_read_pool(&path).await.unwrap();
+    let profile = sous::profile::load_profile(&pool).await.unwrap();
+    assert_eq!(profile.sections.len(), 5);
+    assert!(profile.sections.iter().all(|s| s.text.is_empty()));
+    let (status, _, _) = get(&pool, "/2026/44").await;
+    assert_eq!(status, StatusCode::OK);
+}
+
 /// Feature 13 upgrade: a database at migration 0004 holding all fixtures gets `weekday` as NULL on
 /// every session and nothing else changes.
 #[tokio::test]
@@ -3867,7 +3941,7 @@ async fn openapi_matches_api() {
     let spec: Value = serde_json::from_str(OPENAPI).unwrap();
     assert_eq!(spec["openapi"], "3.1.0");
     let paths = spec["paths"].as_object().unwrap();
-    assert_eq!(paths.len(), 2);
+    assert_eq!(paths.len(), 4);
     assert!(paths.keys().all(|p| !p.contains("/weeks")));
     assert!(!OPENAPI.contains("/api/weeks"));
     let responses = &spec["paths"]["/api/{year}/{week}"]["get"]["responses"];
@@ -3937,6 +4011,9 @@ async fn openapi_matches_api() {
         "YearDocument",
         "WeekSummary",
         "Error",
+        "Section",
+        "Profile",
+        "RevisionConflict",
     ] {
         assert!(schemas.contains_key(name), "{name}");
     }

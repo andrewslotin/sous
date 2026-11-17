@@ -22,6 +22,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
+futures-util = "0.3"
 headless_chrome = "1.0.22"
 rmcp = { version = "3.8", default-features = false, features = ["server", "client", "transport-streamable-http-server", "transport-streamable-http-client-reqwest"] }
 jsonschema = { version = "0.60.2", default-features = false }

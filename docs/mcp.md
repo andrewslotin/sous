@@ -43,7 +43,8 @@ web pages. Sous sends no CORS headers, so browsers cannot call `/mcp` from anoth
 
 Sous has no authentication. Keep it on the loopback address. To reach it from another machine, put it behind a
 trusted layer that authenticates callers (a VPN, or a reverse proxy with its own login) and add the public host name
-to `SOUS_MCP_ALLOWED_HOSTS`. Anyone who can reach `/mcp` can read and replace every saved week.
+to `SOUS_MCP_ALLOWED_HOSTS`. Anyone who can reach `/mcp` can read and replace every saved week and edit the household
+profile. The profile's `PUT /api/profile/<key>` route is just as open, and uses the same host and origin allowlists.
 
 ## Connecting a client
 
@@ -80,18 +81,19 @@ curl -s http://127.0.0.1:3000/mcp \
 
 ## Tools
 
-Seven tools. Six only read; `save_week` is the only tool that writes. All dates are explicit `YYYY-MM-DD` values:
+Eight tools. Six only read; `save_week` and `update_profile_section` write. All dates are explicit `YYYY-MM-DD` values:
 the server never interprets words such as "yesterday". Call `get_context` first to learn today's date.
 
 | Tool | Purpose | Arguments (all optional unless marked) |
 | --- | --- | --- |
-| `get_context` | Today's date, the timezone and the current ISO week | none |
+| `get_context` | Today's date, the timezone, the current ISO week and the household profile | none |
 | `list_weeks` | Stored weeks, newest first | `fromDate`, `toDate`, `limit` (1 to 100, default 20), `cursor` |
 | `get_week` | One complete week document and its `revision` | `isoYear` and `isoWeek` together, or neither for the current week |
 | `search_meals` | Find saved meals by name or description and by date | `query`, `fromDate`, `toDate`, `limit` (1 to 100), `cursor`; at least one of `query`, `fromDate`, `toDate` |
 | `get_meal` | One meal with every field and its source date | `mealId` (required) |
 | `get_shopping_lists` | Lists assigned to one day | `date` (default: today) |
 | `save_week` | Create or replace one whole week | `isoYear`, `isoWeek`, `document` (required); `expectedRevision` (omit to create, the `get_week` revision to replace) |
+| `update_profile_section` | Replace the text of one household profile section | `section`, `text`, `expectedRevision` (all required) |
 
 ### Results and errors
 
@@ -104,15 +106,30 @@ block holding the same JSON, for clients that only show text. A failed call has 
 | `invalid_input` | A missing, unknown or malformed argument, a bad date or cursor, or an invalid document. Nothing was changed. |
 | `week_not_found` | No plan is saved for that ISO week. |
 | `meal_not_found` | No meal has that id. |
-| `revision_conflict` | The week is already saved, has no saved plan, or changed since it was read; the message says which. Call `get_week`, merge, and save again. |
+| `revision_conflict` | The week is already saved, has no saved plan, or changed since it was read; the message says which. Call `get_week`, merge, and save again. For a profile section: the section changed since it was read; call `get_context` again, reconcile with the user, and resubmit. |
 | `service_unavailable` | The database could not be used. The message is deliberately generic. |
 
 An unknown tool name is a JSON-RPC protocol error (`-32602`), not a tool error.
 
 ### `get_context`
 
-Returns `today`, `timezone` (the IANA name from `APP_TIMEZONE`) and `currentWeek` (`isoYear`, `isoWeek`,
-`startDate`, `endDate`, `path`).
+Returns `today`, `timezone` (the IANA name from `APP_TIMEZONE`), `currentWeek` (`isoYear`, `isoWeek`,
+`startDate`, `endDate`, `path`) and `profile`: the household profile as `sections`, always five entries in the order
+`household`, `food`, `kitchen`, `planning`, `other`, each with `key`, `title`, `text` and `revision`. A section that was
+never saved has empty `text`. Read the profile before planning a week, and plan around it.
+
+### `update_profile_section`
+
+Replaces the whole text of one profile section. Pass the section's `revision` from `get_context` as
+`expectedRevision`. The text is plain text of at most 4,000 characters; CRLF line breaks are saved as LF and nothing is
+trimmed. Saving the same text under the current revision succeeds. If the section changed since it was read, nothing
+is written and the call fails with `revision_conflict`; call `get_context` again, reconcile with the user and
+resubmit. There is no force option. The result is the saved section (`key`, `title`, `text`, `revision`). Other
+sections and all weeks are untouched.
+
+Save only preferences and corrections the user stated or confirmed, never ones you inferred. To bootstrap the profile
+from a conversation, show the proposed text to the user and save it only after they agree. The household can also
+edit the profile on the `/profile` page; the same revision check covers both.
 
 ### `list_weeks`
 

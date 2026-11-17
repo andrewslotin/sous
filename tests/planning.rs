@@ -4,7 +4,8 @@ use axum::http::{Request, StatusCode};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use sous::calendar::{Clock, week_dates};
-use sous::model::{RevisedWeek, WeekInput};
+use sous::model::{RevisedWeek, SectionKey, WeekInput};
+use sous::profile::{self, UpdateError};
 use sous::queries::{self, Conflict, PageRequest, QueryError};
 use sous::{db, save};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode};
@@ -1922,6 +1923,304 @@ async fn save_is_atomic_with_concurrent_readers_and_writers() {
     assert_eq!(last.revision, saved_a.revision);
     assert_eq!(to_json(&last.document)["week"]["subtitle"], "From A");
     assert_eq!(to_json(&last.document), to_json(&saved_a.document));
+}
+
+// ---- Feature 17: household profile, data layer ----
+
+fn profile_revision(key: &str, text: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(key.as_bytes());
+    hasher.update([0u8]);
+    hasher.update(text.as_bytes());
+    hasher
+        .finalize()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+async fn section_of(pool: &SqlitePool, key: SectionKey) -> sous::model::ProfileSection {
+    let profile = profile::load_profile(pool).await.unwrap();
+    profile.sections.into_iter().find(|s| s.key == key).unwrap()
+}
+
+#[test]
+fn section_keys_have_fixed_order_titles_and_exact_parsing() {
+    let keys: Vec<&str> = SectionKey::ALL.iter().map(|k| k.as_str()).collect();
+    assert_eq!(keys, ["household", "food", "kitchen", "planning", "other"]);
+    let titles: Vec<&str> = SectionKey::ALL.iter().map(|k| k.title()).collect();
+    assert_eq!(
+        titles,
+        [
+            "Household",
+            "Food preferences",
+            "Kitchen",
+            "Planning habits",
+            "Other context"
+        ]
+    );
+    for key in SectionKey::ALL {
+        assert_eq!(SectionKey::parse(key.as_str()), Some(key));
+        assert_eq!(
+            serde_json::to_value(key).unwrap(),
+            json!(key.as_str()),
+            "serialized as the lowercase key"
+        );
+    }
+    for bad in [
+        "Household",
+        "FOOD",
+        "",
+        " food",
+        "food ",
+        "meals",
+        "kitchen/",
+    ] {
+        assert_eq!(SectionKey::parse(bad), None, "{bad:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_fresh_profile_has_five_empty_sections_with_hash_revisions() {
+    let t = TestDb::migrated().await;
+    let rp = t.reader().await;
+    let profile = profile::load_profile(&rp).await.unwrap();
+    assert_eq!(profile.sections.len(), 5);
+    for (section, key) in profile.sections.iter().zip(SectionKey::ALL) {
+        assert_eq!(section.key, key);
+        assert_eq!(section.title, key.title());
+        assert_eq!(section.text, "");
+        assert_eq!(section.revision.len(), 64);
+        assert!(
+            section
+                .revision
+                .chars()
+                .all(|c| matches!(c, '0'..='9' | 'a'..='f'))
+        );
+        assert_eq!(section.revision, profile_revision(key.as_str(), ""));
+    }
+    let revisions: std::collections::HashSet<_> =
+        profile.sections.iter().map(|s| &s.revision).collect();
+    assert_eq!(revisions.len(), 5, "the key is part of the hash");
+}
+
+#[tokio::test]
+async fn the_database_only_accepts_the_five_keys() {
+    let t = TestDb::migrated().await;
+    let mut c = t.writer().await;
+    assert!(
+        sqlx::query("INSERT INTO profile_sections (key, text) VALUES ('Food', '')")
+            .execute(&mut c)
+            .await
+            .is_err()
+    );
+    assert!(
+        sqlx::query("INSERT INTO profile_sections (key, text) VALUES ('extra', '')")
+            .execute(&mut c)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn update_section_saves_and_returns_the_new_revision() {
+    let t = TestDb::migrated().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+    let before = section_of(&rp, SectionKey::Food).await;
+    let saved = profile::update_section(&wp, SectionKey::Food, "No cilantro.", &before.revision)
+        .await
+        .unwrap();
+    assert_eq!(saved.key, SectionKey::Food);
+    assert_eq!(saved.title, "Food preferences");
+    assert_eq!(saved.text, "No cilantro.");
+    assert_eq!(saved.revision, profile_revision("food", "No cilantro."));
+    assert_eq!(section_of(&rp, SectionKey::Food).await, saved);
+
+    // Saving the same text again with the right revision succeeds with the same revision.
+    let again = profile::update_section(&wp, SectionKey::Food, "No cilantro.", &saved.revision)
+        .await
+        .unwrap();
+    assert_eq!(again, saved);
+
+    // An old revision no longer matches; the other sections keep their text and revisions.
+    let stale = profile::update_section(&wp, SectionKey::Food, "x", &before.revision).await;
+    let Err(UpdateError::Conflict { current }) = stale else {
+        panic!("expected a conflict");
+    };
+    assert_eq!(current, saved);
+    for key in [
+        SectionKey::Household,
+        SectionKey::Kitchen,
+        SectionKey::Planning,
+        SectionKey::Other,
+    ] {
+        let section = section_of(&rp, key).await;
+        assert_eq!(section.text, "");
+        assert_eq!(section.revision, profile_revision(key.as_str(), ""));
+    }
+}
+
+#[tokio::test]
+async fn update_section_counts_characters_as_submitted_then_normalizes_crlf() {
+    let t = TestDb::migrated().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+    let rev = |text: &str| profile_revision("kitchen", text);
+
+    // 4,000 two-byte characters are fine; 4,001 are not, and nothing is stored for them.
+    let ok = "é".repeat(profile::MAX_TEXT_CHARS);
+    let saved = profile::update_section(&wp, SectionKey::Kitchen, &ok, &rev(""))
+        .await
+        .unwrap();
+    assert_eq!(saved.text, ok);
+    let long = "é".repeat(profile::MAX_TEXT_CHARS + 1);
+    let Err(UpdateError::InvalidInput(message)) =
+        profile::update_section(&wp, SectionKey::Kitchen, &long, &saved.revision).await
+    else {
+        panic!("expected invalid input");
+    };
+    assert!(
+        message.contains("4000") || message.contains("4,000"),
+        "{message}"
+    );
+    assert_eq!(section_of(&rp, SectionKey::Kitchen).await, saved);
+
+    // Length is counted before CRLF becomes LF: 2,001 pairs are 4,002 characters.
+    let pairs = "\r\n".repeat(2001);
+    assert!(matches!(
+        profile::update_section(&wp, SectionKey::Kitchen, &pairs, &saved.revision).await,
+        Err(UpdateError::InvalidInput(_))
+    ));
+    // 2,000 pairs fit, and are stored as 2,000 LF.
+    let pairs = "\r\n".repeat(2000);
+    let saved = profile::update_section(&wp, SectionKey::Kitchen, &pairs, &saved.revision)
+        .await
+        .unwrap();
+    assert_eq!(saved.text, "\n".repeat(2000));
+    assert_eq!(saved.revision, rev(&saved.text));
+
+    // Nothing else changes: no trimming, a lone CR and Unicode line separators stay.
+    let odd = "  a\rb\u{2028}c\n\r\n ";
+    let saved = profile::update_section(&wp, SectionKey::Kitchen, odd, &saved.revision)
+        .await
+        .unwrap();
+    assert_eq!(saved.text, "  a\rb\u{2028}c\n\n ");
+}
+
+#[tokio::test]
+async fn update_section_failures_report_database_errors() {
+    let t = TestDb::migrated().await;
+    let wp = t.write_pool().await;
+    wp.close().await;
+    assert!(matches!(
+        profile::update_section(&wp, SectionKey::Food, "x", "rev").await,
+        Err(UpdateError::Database(_))
+    ));
+    let (_dir, empty) = tableless_pool().await;
+    assert!(profile::load_profile(&empty).await.is_err());
+}
+
+#[tokio::test]
+async fn profile_writes_leave_weeks_alone_and_weeks_leave_the_profile_alone() {
+    let t = TestDb::full().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+    let weeks_before = dump(&rp).await;
+    let revision_before = queries::get_week(&rp, 2026, 44).await.unwrap().revision;
+    let rev = profile_revision("household", "");
+    let saved = profile::update_section(&wp, SectionKey::Household, "Two adults.", &rev)
+        .await
+        .unwrap();
+    assert_eq!(dump(&rp).await, weeks_before);
+    assert_eq!(
+        queries::get_week(&rp, 2026, 44).await.unwrap().revision,
+        revision_before
+    );
+
+    // Saving a week does not touch the profile.
+    let created = save_w45(&wp, None, sample()).await.unwrap();
+    assert!(!created.revision.is_empty());
+    assert_eq!(section_of(&rp, SectionKey::Household).await, saved);
+}
+
+#[tokio::test]
+async fn profile_edits_to_different_sections_never_conflict() {
+    let t = TestDb::migrated().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+    let all = profile::load_profile(&rp).await.unwrap();
+    // Every section is saved from the revision read before any of the saves.
+    for section in &all.sections {
+        let text = format!("About {}", section.key.as_str());
+        profile::update_section(&wp, section.key, &text, &section.revision)
+            .await
+            .unwrap();
+    }
+    for section in profile::load_profile(&rp).await.unwrap().sections {
+        assert_eq!(section.text, format!("About {}", section.key.as_str()));
+    }
+}
+
+#[tokio::test]
+async fn concurrent_profile_writes_from_one_revision_let_exactly_one_win() {
+    let t = TestDb::migrated().await;
+    let wp_a = t.write_pool().await;
+    let wp_b = t.write_pool().await;
+    let rp = t.reader().await;
+    let start = section_of(&rp, SectionKey::Other).await;
+
+    let (paused_tx, paused_rx) = tokio::sync::oneshot::channel::<()>();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel::<()>();
+    let revision = start.revision.clone();
+    let a = tokio::spawn({
+        let wp = wp_a.clone();
+        async move {
+            profile::update_section_with_pause(&wp, SectionKey::Other, "From A", &revision, async {
+                let _ = paused_tx.send(());
+                let _ = release_rx.await;
+            })
+            .await
+        }
+    });
+    paused_rx.await.unwrap();
+
+    // A is inside its transaction, after the revision check; readers still see the old section.
+    assert_eq!(section_of(&rp, SectionKey::Other).await, start);
+    let revision = start.revision.clone();
+    let b = tokio::spawn({
+        let wp = wp_b.clone();
+        async move { profile::update_section(&wp, SectionKey::Other, "From B", &revision).await }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    assert!(!b.is_finished(), "B waits for A's write lock");
+    release_tx.send(()).unwrap();
+
+    let saved_a = a.await.unwrap().unwrap();
+    let Err(UpdateError::Conflict { current }) = b.await.unwrap() else {
+        panic!("B must conflict");
+    };
+    assert_eq!(current, saved_a);
+    assert_eq!(section_of(&rp, SectionKey::Other).await, saved_a);
+    assert_eq!(saved_a.text, "From A");
+}
+
+#[tokio::test]
+async fn an_external_edit_changes_the_revision() {
+    let t = TestDb::migrated().await;
+    let wp = t.write_pool().await;
+    let rp = t.reader().await;
+    let before = section_of(&rp, SectionKey::Planning).await;
+    t.exec("UPDATE profile_sections SET text = 'Batch cook on Sunday.' WHERE key = 'planning'")
+        .await;
+    let Err(UpdateError::Conflict { current }) =
+        profile::update_section(&wp, SectionKey::Planning, "mine", &before.revision).await
+    else {
+        panic!("expected a conflict");
+    };
+    assert_eq!(current.text, "Batch cook on Sunday.");
+    assert_ne!(current.revision, before.revision);
 }
 
 #[tokio::test]

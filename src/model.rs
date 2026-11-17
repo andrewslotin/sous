@@ -219,6 +219,8 @@ pub enum Page {
         marked_days: Vec<MarkedDay>,
         displayed_date: Option<String>,
     },
+    /// `/profile`: the five household profile sections, in display order.
+    Profile { sections: Vec<ProfileSection> },
     /// Database failure.
     Unavailable,
 }
@@ -253,6 +255,77 @@ pub struct Context {
     /// IANA name of `APP_TIMEZONE`, e.g. `Europe/Berlin`.
     pub timezone: String,
     pub current_week: WeekSummary,
+    /// The household profile: always five sections, in display order.
+    pub profile: Profile,
+}
+
+/// One of the five fixed profile sections, in display order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SectionKey {
+    Household,
+    Food,
+    Kitchen,
+    Planning,
+    Other,
+}
+
+impl SectionKey {
+    /// Display order.
+    pub const ALL: [SectionKey; 5] = [
+        SectionKey::Household,
+        SectionKey::Food,
+        SectionKey::Kitchen,
+        SectionKey::Planning,
+        SectionKey::Other,
+    ];
+
+    /// The stored and serialized key.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            SectionKey::Household => "household",
+            SectionKey::Food => "food",
+            SectionKey::Kitchen => "kitchen",
+            SectionKey::Planning => "planning",
+            SectionKey::Other => "other",
+        }
+    }
+
+    /// The section's UI title.
+    pub fn title(self) -> &'static str {
+        match self {
+            SectionKey::Household => "Household",
+            SectionKey::Food => "Food preferences",
+            SectionKey::Kitchen => "Kitchen",
+            SectionKey::Planning => "Planning habits",
+            SectionKey::Other => "Other context",
+        }
+    }
+
+    /// Exact lowercase match only.
+    pub fn parse(key: &str) -> Option<SectionKey> {
+        SectionKey::ALL.into_iter().find(|k| k.as_str() == key)
+    }
+}
+
+/// One household profile section and its revision.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProfileSection {
+    pub key: SectionKey,
+    /// UI title of the section.
+    pub title: String,
+    /// Plain text, at most 4,000 characters; line breaks are LF.
+    pub text: String,
+    /// Opaque; changes whenever the section's text changes. Pass it back as `expectedRevision`.
+    pub revision: String,
+}
+
+/// The household profile: always five sections, in `SectionKey::ALL` order.
+#[derive(Debug, Clone, PartialEq, Serialize, JsonSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct Profile {
+    pub sections: Vec<ProfileSection>,
 }
 
 /// One stored week in `list_weeks`.

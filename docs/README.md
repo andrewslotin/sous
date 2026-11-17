@@ -1,6 +1,6 @@
 # Sous feature tracker
 
-The [technical design](technical-design.md) defines the service contract. The [design system](design-system.md) defines the visual reference; the [example page](examples/menu.html) is kept as history. The [OpenAPI document](openapi.json) describes the read API.
+The [technical design](technical-design.md) defines the service contract. The [design system](design-system.md) defines the visual reference; the [example page](examples/menu.html) is kept as history. The [OpenAPI document](openapi.json) describes the JSON API, including the household profile endpoint.
 
 Implement features in the order below. Each iteration includes its own verification and leaves a usable service. Status values: Planned, In progress, Done. Mark a feature Done when its acceptance criteria pass.
 
@@ -22,4 +22,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 14 | [Redesign](features/014-redesign.md) | Done | 13 |
 | 15 | [Self-contained tool schemas](features/015-inline-tool-schemas.md) | In progress | 6, 10 |
 | 16 | [Today link](features/016-today-link.md) | Done | 14 |
-| 17 | [Household profile](features/017-household-profile.md) | Planned | 6 |
+| 17 | [Household profile](features/017-household-profile.md) | Done | 6 |

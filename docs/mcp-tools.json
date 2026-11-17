@@ -6,7 +6,7 @@
       "openWorldHint": false,
       "readOnlyHint": true
     },
-    "description": "Returns the service's current date, its IANA timezone, and the current ISO week with its start and end dates and page path. Call this first to resolve relative dates such as \"today\" or \"three weeks ago\"; the server accepts only explicit YYYY-MM-DD dates. Takes no arguments.",
+    "description": "Returns the service's current date, its IANA timezone, and the current ISO week with its start and end dates and page path. Call this first to resolve relative dates such as \"today\" or \"three weeks ago\"; the server accepts only explicit YYYY-MM-DD dates. The result also includes the household profile: five sections (household, food, kitchen, planning, other), each with its text and revision. Read the profile before planning. Takes no arguments.",
     "inputSchema": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "additionalProperties": false,
@@ -48,6 +48,53 @@
           ],
           "type": "object"
         },
+        "profile": {
+          "description": "The household profile: always five sections, in display order.",
+          "properties": {
+            "sections": {
+              "items": {
+                "description": "One household profile section and its revision.",
+                "properties": {
+                  "key": {
+                    "description": "One of the five fixed profile sections, in display order.",
+                    "enum": [
+                      "household",
+                      "food",
+                      "kitchen",
+                      "planning",
+                      "other"
+                    ],
+                    "type": "string"
+                  },
+                  "revision": {
+                    "description": "Opaque; changes whenever the section's text changes. Pass it back as `expectedRevision`.",
+                    "type": "string"
+                  },
+                  "text": {
+                    "description": "Plain text, at most 4,000 characters; line breaks are LF.",
+                    "type": "string"
+                  },
+                  "title": {
+                    "description": "UI title of the section.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "key",
+                  "title",
+                  "text",
+                  "revision"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "sections"
+          ],
+          "type": "object"
+        },
         "timezone": {
           "description": "IANA name of `APP_TIMEZONE`, e.g. `Europe/Berlin`.",
           "type": "string"
@@ -60,7 +107,8 @@
       "required": [
         "today",
         "timezone",
-        "currentWeek"
+        "currentWeek",
+        "profile"
       ],
       "type": "object"
     },
@@ -1695,5 +1743,83 @@
       "type": "object"
     },
     "title": "Save a complete week"
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false,
+      "readOnlyHint": false
+    },
+    "description": "Use this to record lasting household knowledge in one section of the household profile that get_context returns: household (people, portions, dietary restrictions), food (likes, dislikes, cuisines), kitchen (equipment, storage, limitations), planning (cooking time, shopping, budget, leftovers, batch prep) or other. Save only what the user stated or confirmed, never preferences you inferred. To bootstrap the profile from a conversation, show the proposed text to the user and save it only after they approve. Circumstances that apply to one week only belong in that week (its subtitle or a reminder, via save_week), not in the profile. This replaces the whole section text, so to add a fact, start from the section's current text from get_context and submit all of it. Pass that section's revision as expectedRevision; if the section changed since, this returns revision_conflict, after which call get_context again, reconcile with the user and resubmit. There is no force option. Plain text, at most 4,000 characters; other sections and all weeks are untouched. Returns the saved section and its new revision.",
+    "inputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "expectedRevision": {
+          "description": "The section's revision from get_context.",
+          "type": "string"
+        },
+        "section": {
+          "description": "Section key: household, food, kitchen, planning or other.",
+          "enum": [
+            "household",
+            "food",
+            "kitchen",
+            "planning",
+            "other"
+          ],
+          "type": "string"
+        },
+        "text": {
+          "description": "The section's complete new text, plain text, at most 4,000 characters. Replaces the old text.",
+          "maxLength": 4000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "section",
+        "text",
+        "expectedRevision"
+      ],
+      "type": "object"
+    },
+    "name": "update_profile_section",
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "key": {
+          "description": "One of the five fixed profile sections, in display order.",
+          "enum": [
+            "household",
+            "food",
+            "kitchen",
+            "planning",
+            "other"
+          ],
+          "type": "string"
+        },
+        "revision": {
+          "description": "Opaque; changes whenever the section's text changes. Pass it back as `expectedRevision`.",
+          "type": "string"
+        },
+        "text": {
+          "description": "Plain text, at most 4,000 characters; line breaks are LF.",
+          "type": "string"
+        },
+        "title": {
+          "description": "UI title of the section.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "text",
+        "revision"
+      ],
+      "type": "object"
+    },
+    "title": "Update one household profile section"
   }
 ]

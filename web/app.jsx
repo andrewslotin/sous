@@ -25,7 +25,8 @@ const THEME_OPTIONS = [
   ["system", "System"],
 ];
 
-function ThemeToggle() {
+// The footer: a link to the household profile (every page but the profile's own), then the theme toggle.
+function ThemeToggle({ profileLink = true }) {
   const [choice, setChoice] = useState(storedTheme);
   // While the choice is System, follow the device's preference as it changes.
   useEffect(() => {
@@ -47,6 +48,11 @@ function ThemeToggle() {
   };
   return (
     <footer className="footer">
+      {profileLink && (
+        <a className="footer-link" href="/profile">
+          Household
+        </a>
+      )}
       <div className="theme" role="radiogroup" aria-labelledby="theme-label">
         <span id="theme-label" className="theme-label">
           Theme
@@ -753,8 +759,132 @@ function Unavailable() {
   );
 }
 
+const SECTION_HINTS = {
+  household: "People, portions and dietary restrictions.",
+  food: "Likes, dislikes and cuisines.",
+  kitchen: "Equipment, storage and limitations.",
+  planning: "Cooking time, shopping, budget, leftovers and batch prep.",
+  other: "Anything else worth knowing.",
+};
+
+// One profile section: a labelled text field, a Save button and one live region for the save status, an error
+// or the conflict notice. `saved` is the last saved text and revision; `onSaved` reports a new one to the page.
+function ProfileSection({ section, saved, onSaved }) {
+  const { key, title } = section;
+  const [draft, setDraft] = useState(saved.text);
+  const [busy, setBusy] = useState(false);
+  // What the live region shows: null, "saved", "error" or { text, revision } (a conflict with the saved section).
+  const [status, setStatus] = useState(null);
+  const fieldId = `profile-${key}`;
+  const hintId = `${fieldId}-hint`;
+  const conflict = status !== null && typeof status === "object" ? status : null;
+
+  const save = async (revision) => {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/profile/" + key, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: draft, expectedRevision: revision }),
+      });
+      if (response.status === 200) {
+        const next = await response.json();
+        onSaved(key, next);
+        setStatus("saved");
+      } else if (response.status === 409) {
+        const { current } = await response.json();
+        setStatus({ text: current.text, revision: current.revision });
+      } else {
+        setStatus("error");
+      }
+    } catch (e) {
+      setStatus("error");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const useSaved = () => {
+    onSaved(key, { text: conflict.text, revision: conflict.revision });
+    setDraft(conflict.text);
+    setStatus(null);
+  };
+
+  return (
+    <section className="field">
+      <label className="field-title" htmlFor={fieldId}>
+        {title}
+      </label>
+      <p className="field-hint" id={hintId}>
+        {SECTION_HINTS[key]}
+      </p>
+      <textarea
+        id={fieldId}
+        className="text-field"
+        rows={4}
+        value={draft}
+        aria-describedby={hintId}
+        onChange={(e) => {
+          setDraft(e.target.value);
+          setStatus(conflict);
+        }}
+      />
+      <div className="field-actions">
+        <button type="button" className="button" disabled={busy || draft === saved.text} onClick={() => save(saved.revision)}>
+          Save
+        </button>
+        <div role="status" className={status === "saved" || status === null ? "field-status" : "field-status is-notice"}>
+          {status === "saved" && "Saved."}
+          {status === "error" && <p className="notice">Couldn't save. Try again.</p>}
+          {conflict !== null && (
+            <div className="notice">
+              <p>This section was changed elsewhere.</p>
+              {conflict.text !== "" ? (
+                <p className="notice-text">{conflict.text}</p>
+              ) : (
+                <p className="notice-text notice-empty">The saved version is empty.</p>
+              )}
+              <div className="notice-actions">
+                <button type="button" className="button" disabled={busy} onClick={() => save(conflict.revision)}>
+                  Keep mine
+                </button>
+                <button type="button" className="button" disabled={busy} onClick={useSaved}>
+                  Use saved
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function ProfilePage({ page }) {
+  const [saved, setSaved] = useState(() => Object.fromEntries(page.sections.map((s) => [s.key, s])));
+  const onSaved = (key, next) => setSaved((all) => ({ ...all, [key]: { ...all[key], text: next.text, revision: next.revision } }));
+  const allEmpty = page.sections.every((s) => saved[s.key].text === "");
+  return (
+    <div className="app">
+      <Header title="Household">
+        <a className="all-weeks" href={THIS_WEEK.href}>
+          {THIS_WEEK.label}
+        </a>
+      </Header>
+      {allEmpty && <p className="empty">No household details yet.</p>}
+      <div className="fields">
+        {page.sections.map((s) => (
+          <ProfileSection key={s.key} section={s} saved={saved[s.key]} onSaved={onSaved} />
+        ))}
+      </div>
+      <ThemeToggle profileLink={false} />
+    </div>
+  );
+}
+
 function App({ page }) {
   switch (page.kind) {
+    case "profile":
+      return <ProfilePage page={page} />;
     case "week":
       return <MealPlan page={page} />;
     case "missing":

@@ -4,9 +4,10 @@ Sous is a small, single-household web service that shows a weekly meal plan. It 
 database and serves it as a mobile-friendly page: daily meals with nutrition summaries, shopping lists and prep
 sessions. It also has a week archive by year, a JSON read API and an MCP endpoint for AI assistants.
 
-The web pages and the API are read-only. To add or change plans, connect an assistant over [MCP](#mcp), or edit the
-database with another tool, such as `sqlite3` or a script. Changes show up on the next page load. The app has no
-accounts or authentication.
+The web pages and the API are read-only, except the household profile (preferences such as who eats, diets and
+kitchen equipment), which can be edited on the `/profile` page. To add or change plans, connect an assistant over
+[MCP](#mcp), or edit the database with another tool, such as `sqlite3` or a script. Changes show up on the next page
+load. The app has no accounts or authentication.
 
 ## Install
 
@@ -73,16 +74,18 @@ shopping list?"
 
 | Tool | Does |
 | --- | --- |
-| `get_context` | Today's date, the timezone and the current week |
+| `get_context` | Today's date, the timezone, the current week and the household profile |
 | `list_weeks` | Stored weeks in a date range |
 | `get_week` | One complete week and its revision |
 | `search_meals` | Meals whose name or description contains some text |
 | `get_meal` | One meal with its recipe and date |
 | `get_shopping_lists` | The shopping lists for one day, today by default |
 | `save_week` | Creates or replaces one complete week |
+| `update_profile_section` | Replaces the text of one household profile section |
 
-`save_week` is the only tool that writes. It replaces the whole week in one transaction, and it fails with a conflict
-if the week changed since the assistant read it.
+`save_week` and `update_profile_section` are the tools that write. `save_week` replaces the whole week in one
+transaction, and it fails with a conflict if the week changed since the assistant read it. `update_profile_section`
+does the same for one profile section.
 
 There is no authentication: keep Sous on the loopback address, or put an authenticated layer in front of it. The
 [MCP guide](docs/mcp.md) covers every tool, the save semantics and worked examples.

@@ -19,7 +19,7 @@ Included:
 
 Excluded:
 
-- Data-entry UI, import tools, public write API, and meal generation.
+- Data-entry UI, import tools, public write API, and meal generation. The exceptions are the MCP write tools (feature 6) and the household profile editor with its `PUT /api/profile/{key}` endpoint (feature 17).
 - Draft/publish workflow, accounts, shopping checkmarks, live updates, and offline mode.
 - Ingredient catalogs, recipe reuse, nutrition calculation from ingredients, and automatic shopping-list generation.
 
@@ -34,7 +34,7 @@ Browser → HTTP service
 
 The application serves frontend assets and data from the same origin and reads from one SQLite database. Use Rust with Axum and Tokio, SQLx for SQLite queries and versioned migrations, and Serde for serialization. Separate transport handlers, application queries, and persistence code, without a generic repository framework. Use runtime-checked queries with temporary-database integration tests; compilation does not require a database or checked-in SQLx query metadata. Compile the existing React frontend at build time and embed its assets in the `sous` binary. The service ships as a statically linked binary in a `scratch` container image.
 
-The [feature tracker](README.md) links the incremental implementation specs. Features 1–5 implement this read-only baseline. [Feature 6: MCP meal planning and recall](features/006-mcp-meal-planning.md) extends it with agent-facing queries and transactional writes at `/mcp`; its contract supersedes the baseline's data-entry exclusion and read-only connection rule only for MCP write tools. Existing page and JSON API contracts remain unchanged.
+The [feature tracker](README.md) links the incremental implementation specs. Features 1–5 implement this read-only baseline. [Feature 6: MCP meal planning and recall](features/006-mcp-meal-planning.md) extends it with agent-facing queries and transactional writes at `/mcp`; its contract supersedes the baseline's data-entry exclusion and read-only connection rule only for MCP write tools. Existing page and JSON API contracts remain unchanged. [Feature 17: Household profile](features/017-household-profile.md) adds the one browser-editable data, the household profile, with its own page and write endpoint; its contract supersedes the same rules only for that endpoint.
 
 ## Calendar and routing
 
@@ -53,6 +53,9 @@ The [feature tracker](README.md) links the incremental implementation specs. Fea
 | `/api/<year>/<week>` | Return a complete, ordered week document as JSON. |
 | `/api/<date>` | Return the document of the week containing the date as JSON. |
 | `/api/<year>` | Return the year page's listing as JSON. |
+| `/profile` | Render the household profile page. Matched before `/<year>` and `/<date>`. |
+| `/api/profile` | Return the five profile sections as JSON. Matched before the other `/api` routes, so it is never `not_found`. |
+| `/api/profile/<key>` | `PUT` saves one profile section (`household`, `food`, `kitchen`, `planning` or `other`). Matched before the week routes, so it is never `invalid_week`. |
 
 For example, `/2026/44` represents October 26–November 1, 2026. Validate that the requested week exists in the ISO calendar; some years have no week 53. Accept four-digit years from 0001–9999 only when the entire seven-day date range is representable. Redirect zero-padded valid week paths to their canonical form.
 
@@ -126,6 +129,7 @@ Ordered child collections have an integer `position >= 0`, unique within their p
 | `shopping_items` | `id` PK, `category_id` FK, `position`, `text`. |
 | `prep_sessions` | `id` PK, `week_id` FK, `position`, `title`, optional `covers`, optional `weekday` integer 1–7 (the day it shows on). |
 | `prep_tasks` | `id` PK, `session_id` FK, `position`, `name`, `time`, `instructions`. |
+| `profile_sections` | `key` PK, one of `household`, `food`, `kitchen`, `planning`, `other` (enforced by a CHECK); `text` non-null, empty until saved. Always exactly five rows, seeded by the migration. A section's revision is not stored: it is the lowercase hex SHA-256 of the key, a zero byte and the stored text. |
 
 Parent deletion cascades to owned children and association records. Index foreign keys used to assemble a week. Enforce cross-week shopping associations with insert/update triggers, including attempts to move referenced records between weeks.
 
@@ -162,6 +166,8 @@ Nested meals and tasks carry their stored display fields and IDs. Arrays are ord
 Do not cache HTML or week JSON: send `Cache-Control: no-store`. Serve content-hashed static assets with long-lived immutable caching. No application data cache or restart is needed to observe committed writes. An open page changes only after navigation or refresh.
 
 Request handlers use read-only database connections. Mutation requests to defined page and API routes receive 405. Do not enable broad cross-origin access.
+
+The household profile is the one exception, as MCP writes are for plans. `PUT /api/profile/<key>` and the MCP tool `update_profile_section` share one write function that runs on the write connection in a `BEGIN IMMEDIATE` transaction: it checks the revision, then replaces the section text, so a stale revision is a conflict and writes nothing. The HTTP route applies the same `Host` and `Origin` allowlists as `/mcp` (403 `forbidden`), accepts only `application/json` bodies up to 64 KiB, and answers in this order: 403, 404 `section_not_found`, 415, 413, 400 `invalid_input`, 409 `revision_conflict` (with the section as now saved), 503, 200. Text is at most 4,000 characters, and CRLF is saved as LF. Every other method on `/profile`, `/api/profile` and `/api/profile/<key>` receives 405 (`Allow: GET,HEAD`, or `PUT` on the section route). Without a write configuration the PUT answers 503.
 
 ## Verification and acceptance criteria
 
