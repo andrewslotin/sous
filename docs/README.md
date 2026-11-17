@@ -24,3 +24,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 16 | [Today link](features/016-today-link.md) | Done | 14 |
 | 17 | [Household profile](features/017-household-profile.md) | Done | 6 |
 | 18 | [Read-first household page](features/018-household-read-first.md) | Done | 17 |
+| 19 | [Back link on the household page](features/019-household-back-link.md) | Planned | 18 |
