@@ -16,7 +16,9 @@
   do next. Never end a turn silently. Keep exploratory command chains short (at most three calls before a status
   line), and post a one-line status after loading context (before writing a brief) and before a multi-call handoff
   such as typing a review request. Context loading counts as exploration: in feature 19 I made seven reads in a row
-  and the harness had to prompt me for a status line.
+  and the harness had to prompt me for a status line. The handoff itself counts too: finding the pane, writing,
+  typing, re-reading, Enter and confirming is six calls, so post a line once the paste shows. In feature 20 the
+  harness prompted me mid-handoff.
 - Change files with Edit/Write, never shell heredocs or inline scripts, and that includes `cat >>` appends. Run a
   multi-line script from a scratchpad file: multi-line inline Bash (`python3 -c`, heredocs) can trip the
   commit-message hook. Never run a placeholder or no-op command either: every Bash call needs a purpose.
@@ -28,6 +30,8 @@
   contract table, especially quantifiers ("any value", "every other path"): Codex caught "any value is
   `invalid_week`" for valid week paths. Validate documented example payloads against the advertised schema in a
   test: `expectedRevision: null` was required but the schema said string only.
+- When a brief pins validation of stored or user-supplied data, validate the meaning, not just the shape. A date must
+  round-trip through the calendar, not only match `\d{4}-\d{2}-\d{2}`: Codex caught `9999-99-99` ticking an item.
 - Scope a brief's text bans to the file and say why: "no `/api/weeks` text in the OpenAPI document" led the worker to
   paraphrase the spec's own paths in the verification record.
 - An optimistic-concurrency revision must hash every persisted row and column of the aggregate, not the rendered
