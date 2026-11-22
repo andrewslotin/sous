@@ -20,7 +20,7 @@ Included:
 Excluded:
 
 - Data-entry UI, import tools, public write API, and meal generation. The exceptions are the MCP write tools (feature 6) and the household profile editor with its `PUT /api/profile/{key}` endpoint (feature 17).
-- Draft/publish workflow, accounts, shopping checkmarks, live updates, and offline mode.
+- Draft/publish workflow, accounts, shared or synced shopping ticks, live updates, and offline mode.
 - Ingredient catalogs, recipe reuse, nutrition calculation from ingredients, and automatic shopping-list generation.
 
 ## Architecture
@@ -97,7 +97,7 @@ Intentional changes:
 
 - The interface is redesigned after Kandinsky's Bauhaus years: a cream canvas, thin black lines, Jost and mono type, and a primary per job, each with its shape (a blue circle for Sous, a red square for shopping, a yellow triangle for prep). It has no emoji in its own text (household data is rendered as given).
 - Every page ends with a theme toggle: Light, Dark or System. System is the default and follows the device's color-scheme preference.
-- Shopping items become plain lists: rows separated by hairlines, with no bullets. Remove checkbox controls, completion counts, checked colors, and strikethrough state.
+- Shopping items become plain lists: rows separated by hairlines, with no bullets. Remove checkbox controls, completion counts, checked colors, and strikethrough state. Feature 20 later brings back a checkbox per item and the strike-through for ticked items. Completion counts stay removed.
 - Display days in ISO week order.
 - Add year and missing-plan pages using the design system's typography and column.
 - Week, date, missing-plan and invalid pages show a month calendar. On week, date and missing-plan pages it is hidden until the day heading opens it, right below the heading; on invalid pages it is always shown, below the message. Every date is a link to its date path, week rows show the week number and a circle for planned weeks, and a day with a shopping list or prep session carries a mark (a square for shopping, a triangle for prep).
@@ -108,7 +108,7 @@ Move all week-specific text into the database, including the header subtitle, pr
 
 Continue using the existing React component structure. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. The interface uses two self-hosted families: Jost for words and JetBrains Mono for numbers.
 
-Expanded cards and the open calendar are transient browser state. The theme choice is the only UI state kept, in the browser's local storage. No shopping progress is required. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
+Expanded cards and the open calendar are transient browser state. The theme choice and shopping ticks are the only UI state kept, in the browser's local storage. Ticks are stored under `sous-shopping-ticks`, keyed by item id, with the item's text and the day it was ticked. A tick shows only while the item's text matches, expires after 30 days, and is never sent to the server. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
 
 ## Database contract
 
@@ -178,7 +178,7 @@ The household profile is the one exception, as MCP writes are for plans. `PUT /a
 3. Test ISO year boundaries, valid/invalid week 53, timezone midnight boundaries, canonical redirects, date paths, and the day shown for old, current and future weeks.
 4. Missing current plans, missing explicit weeks, empty archives, missing days, and unavailable databases produce their specified messages and HTTP statuses.
 5. Editing a meal through a separate database connection becomes visible on refresh without restarting. An uncommitted transaction is never partially rendered.
-6. Shopping lists render categorized plain rows with no checkboxes or progress state. Collection ordering remains stable after edits.
+6. Shopping lists render categorized rows with a checkbox each and no progress count. Collection ordering remains stable after edits.
 7. Nutrition totals sum stored values once per meal regardless of FOR TWO, and decimal formatting is deterministic.
 8. Database constraints reject invalid references, duplicate sibling positions, and cross-week shopping associations.
 9. User-supplied text is escaped in both React rendering and initial JSON embedding.

@@ -86,7 +86,7 @@ body {
   .app { padding-top: var(--space-6); }
 }
 
-a:focus-visible, button:focus-visible, input[type="radio"]:focus-visible {
+a:focus-visible, button:focus-visible, input[type="radio"]:focus-visible, input[type="checkbox"]:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
@@ -255,8 +255,19 @@ a.day-step[href]:hover { background: var(--ink); color: var(--surface); }
 .shop-cat + .shop-cat { margin-top: var(--space-4); }
 .shop-cat-name { font-size: 11px; line-height: 14px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--red); }
 .shop-items { list-style: none; margin: var(--space-1) 0 0; padding: 0; }
-.shop-items li { padding: 7px 0; border-bottom: 1px solid var(--line); font-size: 16px; line-height: 22px; color: var(--ink); overflow-wrap: anywhere; }
+.shop-items li { border-bottom: 1px solid var(--line); font-size: 16px; line-height: 22px; color: var(--ink); }
 .shop-items li:last-child { border-bottom: 0; }
+.shop-item { display: flex; align-items: flex-start; gap: var(--space-3); padding: 9px 0; cursor: pointer; }
+.shop-item-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.shop-check {
+  appearance: none; -webkit-appearance: none; flex: none;
+  width: 18px; height: 18px; margin: 2px 0 0;
+  border: 1.5px solid var(--ink); border-radius: var(--radius-square); background: var(--surface);
+  cursor: pointer;
+}
+.shop-item:hover .shop-check:not(:checked) { background: var(--surface-sunken); }
+.shop-check:checked { background: var(--red); border-color: var(--red); }
+.shop-check:checked + .shop-item-text { color: var(--ink-muted); text-decoration: line-through; text-decoration-thickness: 1.5px; }
 
 .prep-body { display: flex; flex-direction: column; gap: var(--space-2); }
 .prep-intro { margin: 0; font-size: 16px; line-height: 24px; color: var(--ink-muted); }

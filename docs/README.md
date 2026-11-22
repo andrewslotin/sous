@@ -25,4 +25,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 17 | [Household profile](features/017-household-profile.md) | Done | 6 |
 | 18 | [Read-first household page](features/018-household-read-first.md) | Done | 17 |
 | 19 | [Back link on the household page](features/019-household-back-link.md) | Done | 18 |
-| 20 | [Shopping checkboxes](features/020-shopping-checkboxes.md) | Planned | 14 |
+| 20 | [Shopping checkboxes](features/020-shopping-checkboxes.md) | Done | 14 |

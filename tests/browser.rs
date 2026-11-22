@@ -1781,7 +1781,10 @@ fn shopping_content_matches_fixture_and_reloads_changes() {
 fn shopping_items_are_plain_rows() {
     let h = Harness::start("", 1280);
     h.expand_all_shops();
-    assert_eq!(h.count("input[type=checkbox], [role=checkbox]"), 0);
+    assert_eq!(h.count("[role=checkbox]"), 0);
+    let items = h.count(".shop li");
+    assert!(items > 0);
+    assert_eq!(h.count(".shop li input[type=checkbox]"), items);
     assert_eq!(
         h.js("/\\d+\\/\\d+ items/.test(document.body.textContent)"),
         false
@@ -1795,12 +1798,6 @@ fn shopping_items_are_plain_rows() {
         h.js("[...document.querySelectorAll('.shop li')].some(li => getComputedStyle(li).textDecorationLine.includes('line-through'))"),
         false
     );
-    let probe = "(() => { const s = getComputedStyle(document.querySelector('.shop li')); \
-                 return [s.backgroundColor, s.textDecorationLine, s.cursor]; })()";
-    let before = h.js(probe);
-    h.click(".shop li");
-    assert_eq!(h.js(probe), before);
-    assert_eq!(before[2], "auto");
 }
 
 #[test]
@@ -5649,6 +5646,574 @@ fn visual_capture_019() {
         for t in [LIGHT, DARK] {
             h.use_theme(&t);
             h.capture_file(&format!("profile-back-{width}-{}.png", t.scheme));
+        }
+        h.use_theme(&LIGHT);
+    }
+}
+
+// ---- Feature 20: shopping checkboxes ---------------------------------------------------------
+
+const TICKS_KEY: &str = "sous-shopping-ticks";
+const GINGER: &str = "Fresh ginger";
+const GINGER_ID: &str = "00000007-0000-4000-8000-00000000002c";
+/// The fixture's "Produce" category, where the tests add an item.
+const PRODUCE_ID: &str = "00000006-0000-4000-8000-000000000023";
+/// Page script that records every script error, for `window.__errors`.
+const ERROR_RECORDER: &str = "(() => { window.__errors = []; \
+    window.addEventListener('error', e => window.__errors.push(String(e.message))); \
+    window.addEventListener('unhandledrejection', e => window.__errors.push('rejection: ' + e.reason)); \
+    const consoleError = console.error; \
+    console.error = (...a) => { window.__errors.push(a.join(' ')); consoleError.apply(console, a); }; })();";
+
+/// JS for the `.shop-item` row (label) whose text is exactly `text`.
+fn row_js(text: &str) -> String {
+    format!("[...document.querySelectorAll('.shop-item')].find(l => l.textContent === '{text}')")
+}
+
+fn text_xpath(text: &str) -> String {
+    format!("//span[@class='shop-item-text'][.='{text}']")
+}
+
+fn tick_json(id: &str, text: &str, at: &str) -> serde_json::Value {
+    serde_json::json!({ (id): { "text": text, "at": at } })
+}
+
+impl Harness {
+    /// Run `source` in every document loaded from now on, before the page's own scripts.
+    fn add_init_script(&self, source: &str) {
+        use headless_chrome::protocol::cdp::Page::AddScriptToEvaluateOnNewDocument;
+        self.tab
+            .call_method(AddScriptToEvaluateOnNewDocument {
+                source: source.to_string(),
+                world_name: None,
+                include_command_line_api: None,
+                run_immediately: None,
+            })
+            .unwrap();
+    }
+
+    /// Monday with every shopping card open.
+    fn open_monday(&self) {
+        self.goto("/2026-10-26");
+        self.expand_all_shops();
+    }
+
+    fn is_ticked(&self, text: &str) -> bool {
+        self.js(&format!("{}.querySelector('input').checked", row_js(text))) == true
+    }
+
+    fn wait_ticked(&self, text: &str, ticked: bool) {
+        self.wait_for(&format!(
+            "{}.querySelector('input').checked === {ticked}",
+            row_js(text)
+        ));
+    }
+
+    /// Click the item's text.
+    fn click_text(&self, text: &str) {
+        self.tab
+            .find_element_by_xpath(&text_xpath(text))
+            .unwrap()
+            .click()
+            .unwrap();
+    }
+
+    /// Click the item's box.
+    fn click_box(&self, text: &str) {
+        self.tab
+            .find_element_by_xpath(&format!("{}/preceding-sibling::input", text_xpath(text)))
+            .unwrap()
+            .click()
+            .unwrap();
+    }
+
+    /// Tick or untick through the box and wait for the new state.
+    fn toggle(&self, text: &str) {
+        let want = !self.is_ticked(text);
+        self.click_box(text);
+        self.wait_ticked(text, want);
+    }
+
+    /// The stored ticks (`null` when nothing is stored).
+    fn stored_ticks(&self) -> serde_json::Value {
+        self.js(&format!("JSON.parse(localStorage.getItem('{TICKS_KEY}'))"))
+    }
+
+    /// Click the toggle of the card with the Monday Shop list.
+    fn toggle_l1(&self) {
+        self.js(&format!(
+            "[...document.querySelectorAll('.shop')].find(s => s.querySelector('.shop-label').textContent === '{L1_LABEL}')\
+             .querySelector('.shop-toggle').click()"
+        ));
+    }
+
+    /// The box and text colours of an item.
+    fn tick_styles(&self, text: &str) -> serde_json::Value {
+        self.js(&format!(
+            "(() => {{ const row = {}; const b = getComputedStyle(row.querySelector('input')); \
+               const t = getComputedStyle(row.querySelector('.shop-item-text')); \
+               return {{ bg: b.backgroundColor, ring: b.borderTopColor, color: t.color, line: t.textDecorationLine }}; }})()",
+            row_js(text)
+        ))
+    }
+
+    fn assert_tick_styles(&self, t: &Theme, text: &str, ticked: bool) {
+        let s = self.tick_styles(text);
+        let (bg, ring, color) = if ticked {
+            ("red", "red", "ink-muted")
+        } else {
+            ("surface", "ink", "ink")
+        };
+        let at = format!("{text} ticked={ticked} {}", t.scheme);
+        assert_eq!(s["bg"], t.rgb(bg), "{at}");
+        assert_eq!(s["ring"], t.rgb(ring), "{at}");
+        assert_eq!(s["color"], t.rgb(color), "{at}");
+        assert_eq!(
+            s["line"].as_str().unwrap().contains("line-through"),
+            ticked,
+            "{at}"
+        );
+    }
+}
+
+/// AC1: one native checkbox per item, named by the item's text, toggled by row, box and Space.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_checkboxes_are_named_and_toggle() {
+    use headless_chrome::protocol::cdp::Accessibility::GetPartialAXTree;
+    let h = Harness::start("", 1280);
+    h.open_monday();
+    let items = h.count(".shop li");
+    assert_eq!(items, L1_ITEMS.len() as u64 + 1);
+    assert_eq!(h.count(".shop li input[type=checkbox]"), items);
+    assert_eq!(h.count(".shop li [role=checkbox]"), 0);
+    assert_eq!(
+        h.js("[...document.querySelectorAll('.shop li input')].every(i => i.labels.length === 1 \
+              && i.labels[0].textContent === i.closest('li').textContent && i.labels[0].textContent !== '')"),
+        true
+    );
+
+    // The accessibility tree names the box by the item's text.
+    let el = h
+        .tab
+        .find_element_by_xpath(&format!("{}/preceding-sibling::input", text_xpath(GINGER)))
+        .unwrap();
+    let tree = h
+        .tab
+        .call_method(GetPartialAXTree {
+            node_id: None,
+            backend_node_id: Some(el.backend_node_id),
+            object_id: None,
+            fetch_relatives: Some(false),
+        })
+        .unwrap();
+    let node = &tree.nodes[0];
+    let name = serde_json::to_value(node.name.as_ref().unwrap().value.as_ref().unwrap()).unwrap();
+    let role = serde_json::to_value(node.role.as_ref().unwrap().value.as_ref().unwrap()).unwrap();
+    assert_eq!(name, GINGER);
+    assert_eq!(role, "checkbox");
+
+    assert!(!h.is_ticked(GINGER));
+    h.click_text(GINGER);
+    h.wait_ticked(GINGER, true);
+    h.click_text(GINGER);
+    h.wait_ticked(GINGER, false);
+    h.click_box(GINGER);
+    h.wait_ticked(GINGER, true);
+    h.click_box(GINGER);
+    h.wait_ticked(GINGER, false);
+    h.js(&format!(
+        "{}.querySelector('input').focus()",
+        row_js(GINGER)
+    ));
+    h.press(" ");
+    h.wait_ticked(GINGER, true);
+    h.press(" ");
+    h.wait_ticked(GINGER, false);
+
+    // Tab moves from one box to the next, in list order.
+    h.tab_to(".shop-check");
+    let at = h.js("[...document.querySelectorAll('.shop-check')].indexOf(document.activeElement)");
+    let at = at.as_u64().unwrap();
+    h.press("Tab");
+    assert_eq!(
+        h.js(&format!(
+            "document.activeElement === document.querySelectorAll('.shop-check')[{}]",
+            at + 1
+        )),
+        true
+    );
+}
+
+/// AC2: the box and text styles in light and dark, the order, the hover and the band.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_style_the_row_and_keep_the_order() {
+    let h = Harness::start("", 1280);
+    h.goto("/2026-10-26");
+    let bands = h.texts(".shop-toggle");
+    h.expand_all_shops();
+    let order = h.texts(".shop-items li");
+    let expanded =
+        "[...document.querySelectorAll('.shop-toggle')].map(b => b.getAttribute('aria-expanded'))";
+    let open = h.js(expanded);
+
+    h.assert_tick_styles(&LIGHT, GINGER, false);
+    h.toggle(GINGER);
+    h.toggle("1 cucumber");
+    h.assert_tick_styles(&LIGHT, GINGER, true);
+    h.assert_tick_styles(&LIGHT, "1 cucumber", true);
+    h.assert_tick_styles(&LIGHT, "Skyr (400g)", false);
+    assert_eq!(h.texts(".shop-items li"), order);
+    assert_eq!(h.js(expanded), open);
+
+    h.use_theme(&DARK);
+    h.assert_tick_styles(&DARK, GINGER, true);
+    h.assert_tick_styles(&DARK, "Skyr (400g)", false);
+    h.toggle(GINGER);
+    // The pointer is still over the row, which fills its box: move it away first.
+    h.tab
+        .find_element(".day-heading")
+        .unwrap()
+        .move_mouse_over()
+        .unwrap();
+    h.assert_tick_styles(&DARK, GINGER, false);
+    h.toggle(GINGER);
+    assert_eq!(h.texts(".shop-items li"), order);
+    h.use_theme(&LIGHT);
+
+    // The collapsed band shows no ticks or counts.
+    h.js("document.querySelectorAll('.shop-toggle').forEach(b => b.click())");
+    h.wait_for("document.querySelectorAll('.shop-body').length === 0");
+    assert_eq!(h.texts(".shop-toggle"), bands);
+
+    // Hover fills an unticked box with surface-sunken and leaves a ticked box red.
+    h.expand_all_shops();
+    let box_bg = |text: &str| {
+        h.js(&format!(
+            "getComputedStyle({}.querySelector('input')).backgroundColor",
+            row_js(text)
+        ))
+    };
+    h.tab
+        .find_element_by_xpath(&text_xpath("Skyr (400g)"))
+        .unwrap()
+        .move_mouse_over()
+        .unwrap();
+    h.wait_for(&format!(
+        "getComputedStyle({}.querySelector('input')).backgroundColor === '{}'",
+        row_js("Skyr (400g)"),
+        LIGHT.rgb("surface-sunken")
+    ));
+    assert_eq!(box_bg("2L oat milk"), LIGHT.rgb("surface"));
+    h.tab
+        .find_element_by_xpath(&text_xpath("1 cucumber"))
+        .unwrap()
+        .move_mouse_over()
+        .unwrap();
+    h.wait_for(&format!(
+        "getComputedStyle({}.querySelector('input')).backgroundColor === '{}'",
+        row_js("Skyr (400g)"),
+        LIGHT.rgb("surface")
+    ));
+    assert_eq!(box_bg("1 cucumber"), LIGHT.rgb("red"));
+}
+
+/// AC3: ticks survive closing the card, a reload and another day, and unticking removes the entry.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_persist() {
+    let h = Harness::start("", 1280);
+    h.open_monday();
+    assert_eq!(h.stored_ticks(), serde_json::Value::Null);
+    h.toggle(GINGER);
+
+    h.toggle_l1();
+    h.wait_for("document.querySelectorAll('.shop-body').length === 1");
+    h.toggle_l1();
+    h.wait_for("document.querySelectorAll('.shop-body').length === 2");
+    assert!(h.is_ticked(GINGER));
+
+    h.goto("/2026-10-26");
+    h.expand_all_shops();
+    assert!(h.is_ticked(GINGER));
+
+    h.goto("/2026-10-28");
+    h.expand_all_shops();
+    assert_eq!(h.count(".shop"), 1);
+    assert!(h.is_ticked(GINGER));
+    assert!(!h.is_ticked("Skyr (400g)"));
+    assert_eq!(h.stored_ticks(), tick_json(GINGER_ID, GINGER, "2026-12-02"));
+
+    h.toggle(GINGER);
+    assert_eq!(h.stored_ticks(), serde_json::json!({}));
+    h.goto("/2026-10-28");
+    h.expand_all_shops();
+    assert!(!h.is_ticked(GINGER));
+}
+
+/// AC4: a rewritten item is unticked, and a new item starts unticked.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_tick_follows_item_text_and_id() {
+    let h = Harness::start("", 1280);
+    h.open_monday();
+    h.toggle(GINGER);
+    h.exec(&format!(
+        "UPDATE shopping_items SET text = 'Fresh ginger root' WHERE id = '{GINGER_ID}'"
+    ));
+    h.exec(&format!(
+        "INSERT INTO shopping_items (id, category_id, position, text) \
+         VALUES ('00000007-0000-4000-8000-0000000000ff', '{PRODUCE_ID}', 50, 'Fennel')"
+    ));
+    h.open_monday();
+    assert!(
+        h.texts(".shop-item-text")
+            .contains(&"Fresh ginger root".to_string())
+    );
+    assert!(h.texts(".shop-item-text").contains(&"Fennel".to_string()));
+    assert!(!h.is_ticked("Fresh ginger root"));
+    assert!(!h.is_ticked("Fennel"));
+    // The stale entry stays until it expires, and ticking the new text overwrites it.
+    assert_eq!(h.stored_ticks(), tick_json(GINGER_ID, GINGER, "2026-12-02"));
+    h.toggle("Fresh ginger root");
+    assert_eq!(
+        h.stored_ticks(),
+        tick_json(GINGER_ID, "Fresh ginger root", "2026-12-02")
+    );
+}
+
+/// AC5: entries older than 30 days go on load, an entry exactly 30 days old stays.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_expire_after_30_days() {
+    let h = Harness::start("", 1280);
+    h.js(&format!(
+        "localStorage.setItem('{TICKS_KEY}', JSON.stringify({{ \
+           'aaaa': {{ text: 'x', at: '2026-11-01' }}, 'bbbb': {{ text: 'y', at: '2026-11-02' }} }}))"
+    ));
+    h.open_monday();
+    assert_eq!(h.stored_ticks(), tick_json("bbbb", "y", "2026-11-02"));
+}
+
+/// AC6: storage that throws or holds junk never breaks the page.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_survive_broken_storage() {
+    // (a) Every storage access throws: ticks last while the page is open.
+    let h = Harness::start("", 1280);
+    h.add_init_script(&format!(
+        "{ERROR_RECORDER} Object.defineProperty(window, 'localStorage', \
+         {{ configurable: true, get() {{ throw new Error('denied'); }} }});"
+    ));
+    h.open_monday();
+    assert_eq!(h.count(".shop"), 2);
+    assert_eq!(
+        h.js("(() => { try { window.localStorage; return false; } catch (e) { return true; } })()"),
+        true
+    );
+    h.toggle(GINGER);
+    h.toggle("Skyr (400g)");
+    h.toggle(GINGER);
+    assert!(!h.is_ticked(GINGER));
+    assert!(h.is_ticked("Skyr (400g)"));
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+
+    // (b) Malformed JSON is treated as empty and replaced by the next tick.
+    let h = Harness::start("", 1280);
+    h.js(&format!(
+        "localStorage.setItem('{TICKS_KEY}', '{{not json')"
+    ));
+    h.add_init_script(ERROR_RECORDER);
+    h.open_monday();
+    assert_eq!(h.count(".shop"), 2);
+    assert!(!h.is_ticked(GINGER));
+    h.toggle(GINGER);
+    assert_eq!(h.stored_ticks(), tick_json(GINGER_ID, GINGER, "2026-12-02"));
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+    // Values that are valid JSON but not an object count as empty too.
+    for junk in ["null", "[1]", "5", "\"x\""] {
+        h.js(&format!("localStorage.setItem('{TICKS_KEY}', '{junk}')"));
+        h.open_monday();
+        assert!(!h.is_ticked(GINGER), "{junk}");
+        h.toggle(GINGER);
+        assert_eq!(h.stored_ticks(), tick_json(GINGER_ID, GINGER, "2026-12-02"));
+    }
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+
+    // (c) One malformed entry is ignored, and the valid one next to it still shows.
+    let h = Harness::start("", 1280);
+    let skyr = "00000007-0000-4000-8000-000000000028";
+    h.js(&format!(
+        "localStorage.setItem('{TICKS_KEY}', JSON.stringify({{ '{skyr}': 5, \
+           '00000007-0000-4000-8000-00000000002b': {{ text: 7, at: '2026-12-01' }}, \
+           '00000007-0000-4000-8000-00000000002d': {{ text: '1 bag baby spinach (200g)', at: 'soon' }}, \
+           '{GINGER_ID}': {{ text: '{GINGER}', at: '2026-12-01' }} }}))"
+    ));
+    h.add_init_script(ERROR_RECORDER);
+    h.open_monday();
+    assert!(h.is_ticked(GINGER));
+    assert_eq!(h.count(".shop-check:checked"), 1);
+    h.toggle("2L oat milk");
+    let stored = h.stored_ticks();
+    assert_eq!(stored.as_object().unwrap().len(), 2);
+    assert_eq!(stored[GINGER_ID]["at"], "2026-12-01");
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+}
+
+/// AC6: an entry whose date matches the pattern but does not exist is ignored.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_ignore_impossible_dates() {
+    let h = Harness::start("", 1280);
+    let skyr = "00000007-0000-4000-8000-000000000028";
+    h.js(&format!(
+        "localStorage.setItem('{TICKS_KEY}', JSON.stringify({{ \
+           '{GINGER_ID}': {{ text: '{GINGER}', at: '9999-99-99' }}, \
+           '00000007-0000-4000-8000-00000000002b': {{ text: '1 cucumber', at: '2026-02-30' }}, \
+           '{skyr}': {{ text: 'Skyr (400g)', at: '2026-12-01' }} }}))"
+    ));
+    h.add_init_script(ERROR_RECORDER);
+    h.open_monday();
+    assert!(!h.is_ticked(GINGER));
+    assert!(!h.is_ticked("1 cucumber"));
+    assert!(h.is_ticked("Skyr (400g)"));
+    assert_eq!(h.count(".shop-check:checked"), 1);
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+}
+
+/// AC7: ticking sends nothing to the server.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_ticks_make_no_request() {
+    let h = Harness::start("", 1280);
+    h.add_init_script(
+        "(() => { window.__net = 0; \
+         const f = window.fetch; window.fetch = function (...a) { window.__net++; return f.apply(this, a); }; \
+         const o = XMLHttpRequest.prototype.open; \
+         XMLHttpRequest.prototype.open = function (...a) { window.__net++; return o.apply(this, a); }; \
+         if (navigator.sendBeacon) { const b = navigator.sendBeacon; \
+           navigator.sendBeacon = function (...a) { window.__net++; return b.apply(this, a); }; } })();",
+    );
+    h.open_monday();
+    let before = h.requested_urls().len();
+    for text in [GINGER, "1 cucumber", "Skyr (400g)", GINGER, "Dish soap"] {
+        h.toggle(text);
+    }
+    h.click_text("1 cucumber");
+    std::thread::sleep(Duration::from_millis(300));
+    assert_eq!(h.requested_urls().len(), before);
+    assert_eq!(h.js("window.__net"), 0);
+}
+
+fn assert_checkbox_layout(width: u32) {
+    let h = Harness::start("", width);
+    h.open_monday();
+    let report = h.js(
+        "(() => { const rows = [...document.querySelectorAll('.shop-item')]; \
+           const geo = rows.map(r => { const b = r.querySelector('input'); const t = r.querySelector('.shop-item-text'); \
+             const rr = r.getBoundingClientRect(), br = b.getBoundingClientRect(), tr = t.getBoundingClientRect(); \
+             return { height: rr.height, bw: br.width, bh: br.height, boxLeft: br.left - rr.left, \
+                      gap: tr.left - br.right, appearance: getComputedStyle(b).appearance }; }); \
+           return { count: rows.length, geo, noScroll: document.documentElement.scrollWidth <= window.innerWidth }; })()",
+    );
+    assert!(report["count"].as_u64().unwrap() > 0);
+    assert_eq!(report["noScroll"], true);
+    for g in report["geo"].as_array().unwrap() {
+        assert!(g["height"].as_f64().unwrap() >= 40.0 - 0.01, "{width}: {g}");
+        assert_eq!(g["bw"].as_f64().unwrap(), 18.0, "{width}: {g}");
+        assert_eq!(g["bh"].as_f64().unwrap(), 18.0, "{width}: {g}");
+        assert_eq!(g["boxLeft"].as_f64().unwrap(), 0.0, "{width}: {g}");
+        assert!(
+            (g["gap"].as_f64().unwrap() - 12.0).abs() < 0.01,
+            "{width}: {g}"
+        );
+        assert_eq!(g["appearance"], "none");
+    }
+
+    // The keyboard focus outline: 2px, offset 2px, the focus token (ink).
+    h.tab_to(".shop-check");
+    let outline = h.js(
+        "(() => { const s = getComputedStyle(document.activeElement); \
+           return [s.outlineStyle, s.outlineWidth, s.outlineOffset, s.outlineColor]; })()",
+    );
+    assert_eq!(
+        outline,
+        serde_json::json!(["solid", "2px", "2px", LIGHT.rgb("ink")]),
+        "{width}"
+    );
+}
+
+/// AC8: layout at 320, 375 and 1280 px.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_checkbox_layout_at_320px() {
+    assert_checkbox_layout(320);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_checkbox_layout_at_375px() {
+    assert_checkbox_layout(375);
+}
+
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_checkbox_layout_at_1280px() {
+    assert_checkbox_layout(1280);
+}
+
+/// AC8: a long item wraps beside the box, which stays on the first line.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn shopping_long_item_wraps_beside_the_box() {
+    let long = "Organic heirloom tomatoes, fresh basil leaves, flat leaf parsley, a large jar of olives from the deli \
+                counter, two sourdough loaves, a wedge of aged cheddar and a small bag of roasted hazelnuts for the salad";
+    assert!(long.len() >= 200);
+    let sql = shop_week(47, "Long", None, &[("Produce", &[long])]);
+    let h = Opts::new().sql(&sql).width(320).launch();
+    h.goto("/2026/47");
+    h.expand_all_shops();
+    let r = h.js(
+        "(() => { const row = document.querySelector('.shop-item'); const b = row.querySelector('input').getBoundingClientRect(); \
+           const span = row.querySelector('.shop-item-text'); const s = span.getBoundingClientRect(); \
+           const range = document.createRange(); range.selectNodeContents(span); \
+           const lefts = [...range.getClientRects()].map(x => x.left); \
+           return { top: row.getBoundingClientRect().top, boxTop: b.top, textHeight: s.height, textLeft: s.left, lefts, \
+                    noScroll: document.documentElement.scrollWidth <= window.innerWidth }; })()",
+    );
+    assert!(r["textHeight"].as_f64().unwrap() > 22.0);
+    assert!((r["boxTop"].as_f64().unwrap() - (r["top"].as_f64().unwrap() + 11.0)).abs() <= 0.5);
+    let text_left = r["textLeft"].as_f64().unwrap();
+    let lefts = r["lefts"].as_array().unwrap();
+    assert!(lefts.len() > 1);
+    for left in lefts {
+        let left = left.as_f64().unwrap();
+        assert!(
+            left >= text_left - 0.5,
+            "wraps under the box: {left} < {text_left}"
+        );
+        assert!(
+            (left - text_left).abs() <= 0.5,
+            "ragged left edge: {left} vs {text_left}"
+        );
+    }
+    assert_eq!(r["noScroll"], true);
+}
+
+/// Full-page PNGs of an open shopping card with some items ticked, at 375 and 1280 px, light and dark.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_020() {
+    for width in [375, 1280] {
+        let h = Opts::new().width(width).launch();
+        h.open_monday();
+        for text in [GINGER, "200g mixed berries", "2L oat milk"] {
+            h.toggle(text);
+        }
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture(width, &format!("shopping-ticks-{}", t.scheme));
         }
         h.use_theme(&LIGHT);
     }

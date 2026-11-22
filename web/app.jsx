@@ -13,6 +13,56 @@ function storedTheme() {
   }
 }
 
+const TICKS_KEY = "sous-shopping-ticks";
+const TICK_DAYS = 30;
+
+function validTick(entry) {
+  return (
+    typeof entry === "object" &&
+    entry !== null &&
+    !Array.isArray(entry) &&
+    typeof entry.text === "string" &&
+    typeof entry.at === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(entry.at) &&
+    isoDate(dayNumber(entry.at)) === entry.at
+  );
+}
+
+// Writes the ticks; unavailable or full storage is ignored, the ticks then last while the page is open.
+function saveTicks(ticks) {
+  try {
+    window.localStorage.setItem(TICKS_KEY, JSON.stringify(ticks));
+  } catch (e) {
+    // Nothing to show: the page keeps working without storage.
+  }
+}
+
+// The stored ticks that are well formed and at most TICK_DAYS old; expired entries are removed from storage.
+function loadTicks(today) {
+  const kept = {};
+  let expired = false;
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(TICKS_KEY));
+    if (typeof stored === "object" && stored !== null && !Array.isArray(stored)) {
+      const oldest = dayNumber(today) - TICK_DAYS;
+      for (const id of Object.keys(stored)) {
+        if (!validTick(stored[id])) continue;
+        if (dayNumber(stored[id].at) < oldest) expired = true;
+        else kept[id] = stored[id];
+      }
+    }
+  } catch (e) {
+    return kept;
+  }
+  if (expired) saveTicks(kept);
+  return kept;
+}
+
+// A tick counts only while the item's text is the one that was ticked.
+function isTicked(ticks, item) {
+  return Object.prototype.hasOwnProperty.call(ticks, item.id) && ticks[item.id].text === item.text;
+}
+
 // Sets data-theme to the theme in effect; "system" resolves through the device's preference.
 function applyTheme(choice) {
   const theme = choice === "system" ? (window.matchMedia(DARK_QUERY).matches ? "dark" : "light") : choice;
@@ -207,7 +257,7 @@ function MealCard({ meal }) {
   );
 }
 
-function ShoppingListCard({ list }) {
+function ShoppingListCard({ list, ticks, onToggle }) {
   const [expanded, setExpanded] = useState(false);
   const bodyId = `shop-${list.id}`;
   return (
@@ -242,7 +292,17 @@ function ShoppingListCard({ list }) {
               {cat.items.length > 0 && (
                 <ul className="shop-items">
                   {cat.items.map((item) => (
-                    <li key={item.id}>{item.text}</li>
+                    <li key={item.id}>
+                      <label className="shop-item">
+                        <input
+                          type="checkbox"
+                          className="shop-check"
+                          checked={isTicked(ticks, item)}
+                          onChange={() => onToggle(item)}
+                        />
+                        <span className="shop-item-text">{item.text}</span>
+                      </label>
+                    </li>
                   ))}
                 </ul>
               )}
@@ -374,6 +434,14 @@ function MealPlan({ page }) {
   const prepSessions = data.prepSessions.filter((s) => s.weekday === day.weekday && s.tasks.length > 0);
   const listsById = new Map(data.shoppingLists.map((l) => [l.id, l]));
   const hasTasks = day.shoppingListIds.length > 0 || prepSessions.length > 0 || day.reminder !== null;
+  const [ticks, setTicks] = useState(() => (data.shoppingLists.length > 0 ? loadTicks(page.today) : {}));
+  const toggleTick = (item) => {
+    const next = { ...ticks };
+    if (isTicked(ticks, item)) delete next[item.id];
+    else next[item.id] = { text: item.text, at: page.today };
+    saveTicks(next);
+    setTicks(next);
+  };
   return (
     <DayShell
       page={page}
@@ -397,7 +465,7 @@ function MealPlan({ page }) {
       {hasTasks && (
         <div className="tasks">
           {day.shoppingListIds.map((listId) => (
-            <ShoppingListCard key={listId} list={listsById.get(listId)} />
+            <ShoppingListCard key={listId} list={listsById.get(listId)} ticks={ticks} onToggle={toggleTick} />
           ))}
           {prepSessions.length > 0 && (
             <>

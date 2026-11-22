@@ -28,7 +28,7 @@ There are two themes, light and dark. The reader picks Light, Dark or System in 
 - **Grounds.** `paper` is the page: raw canvas in light, a deep blue-black in dark. `surface` is cards, and `surface-sunken` holds things inside a card (the nutrition strip, prep tasks, the reminder) and is the hover fill.
 - **Ink.** Text is `ink`, secondary text `ink-muted`. `ink-faint` is for disabled steppers, out-of-month dates and weekday heads only (3:1), never reading text.
 - **Blue (Sous).** The selected calendar day is a solid `blue` disc with `on-blue` text, and the only colour in the calendar. The "For two" badge and the tip box use `blue` on `blue-soft`.
-- **Red (shopping).** A shopping card's band is solid `red` with `on-red` text and a square before `SHOPPING`. Category names inside are `red`.
+- **Red (shopping).** A shopping card's band is solid `red` with `on-red` text and a square before `SHOPPING`. Category names inside are `red`. A ticked item's box fills `red`: crossing an item off turns its empty square into the shopping square.
 - **Yellow (prep).** A prep card's band is solid `yellow` with `on-yellow` text and a triangle before `PREP`. Task times are `ink` chips on `yellow-soft`. Yellow only fills; it's never text on a light ground.
 - **Meals stay plain.** Meal rows sit straight on `paper` and carry no primary. Macro figures use `macro-protein`, `macro-fat`, `macro-carbs` and `macro-fiber`, always beside their letter (P, F, C, Fib). Calories stay `ink`.
 - **The calendar is ink.** Its shopping squares and prep triangles are `ink`, and the planned-week circle is `ink-muted`. Only the selected day is blue, and its marks turn `on-blue`.
@@ -38,16 +38,16 @@ There are two themes, light and dark. The reader picks Light, Dark or System in 
 | --- | --- | --- | --- |
 | `paper` | `#f1e9d8` | `#0f1220` | Page background behind every view. |
 | `surface` | `#fbf7ee` | `#181c2c` | Cards: shopping lists, prep sessions, the week list; the stepper fill. |
-| `surface-sunken` | `#e9e0cc` | `#0a0c16` | Recessed areas: the nutrition strip, a prep task, the reminder; hover on calendar days and week rows. |
+| `surface-sunken` | `#e9e0cc` | `#0a0c16` | Recessed areas: the nutrition strip, a prep task, the reminder; hover on calendar days, week rows and unticked shopping boxes. |
 | `line` | `#dcd1ba` | `#2b3044` | Hairline borders and dividers. Decorative only: never the sole edge of a control. |
 | `line-strong` | `#7a705c` | `#737a96` | Borders that carry meaning: disabled steppers, dashed reminder and empty-state borders, header link underlines. 3:1 on paper and surface. |
-| `ink` | `#17171c` | `#f2ede1` | Primary text and the black line: stepper rings, the today ring, an open card's edge, calendar marks. |
-| `ink-muted` | `#55514a` | `#b0b2bf` | Secondary text: subtitles, ranges, meal-type labels, descriptions, header links, unchosen theme options. |
+| `ink` | `#17171c` | `#f2ede1` | Primary text and the black line: stepper rings, the today ring, an open card's edge, calendar marks, the shopping checkbox ring. |
+| `ink-muted` | `#55514a` | `#b0b2bf` | Secondary text: subtitles, ranges, meal-type labels, descriptions, header links, unchosen theme options, a ticked shopping item's text. |
 | `ink-faint` | `#857c69` | `#7f8499` | Out-of-month dates, disabled steppers, weekday heads. 3:1 only. |
 | `blue` | `#1d3f9e` | `#86a0ff` | Sous: the selected calendar day, the "For two" badge, the tip label and its circle. |
 | `blue-soft` | `#dde3f4` | `#1c2550` | Behind blue text: the "For two" badge and the tip box. |
 | `on-blue` | `#fbf7ee` | `#0a0c16` | Text, marks and the today ring on the selected day. |
-| `red` | `#b8321b` | `#ff7a5c` | Shopping: the shopping band, category names. |
+| `red` | `#b8321b` | `#ff7a5c` | Shopping: the shopping band, category names, a ticked item's box. |
 | `on-red` | `#fbf7ee` | `#0a0c16` | Text and the square on the shopping band. |
 | `yellow` | `#f2c12e` | `#f5c84a` | Prep: the prep band. A fill only. |
 | `on-yellow` | `#17171c` | `#0a0c16` | Text and the triangle on the prep band. |
@@ -83,7 +83,7 @@ There are two themes, light and dark. The reader picks Light, Dark or System in 
 - Spacing runs `space-1` 4, `space-2` 8, `space-3` 12, `space-4` 16, `space-5` 24 and `space-6` 32 (px). Cards pad `space-4`. Cards in a stack sit `space-3` apart, and page sections `space-5` apart. Meal rows pad `space-4` top and bottom and nothing at the sides, and stack with no gap.
 - The page is one centred column of at most `column-width` (560px) on every width, padded `space-4` on phones and `space-6` at the top on wide screens. Nothing sits beside it.
 - **The calendar is hidden by default** on day pages. The day heading is its toggle, marked as a link by a dashed underline: tap it and the month opens as a section of the column, right below the heading, straight on `paper` between two `line` hairlines. Tap it again to close it; picking a day opens that day's page with the calendar closed.
-- **Focus:** every link, button and radio shows a solid 2px `focus` outline at a 2px offset, outside the element, so it sits on `paper` or `surface` and never on a band. Nothing clips it.
+- **Focus:** every link, button, radio and checkbox shows a solid 2px `focus` outline at a 2px offset, outside the element, so it sits on `paper` or `surface` and never on a band. Nothing clips it.
 
 ## Components
 
@@ -93,7 +93,7 @@ There are two themes, light and dark. The reader picks Light, Dark or System in 
 - **Nutrition summary:** a five-column square `surface-sunken` strip with `line` dividers. Each column has a `figure` value, its unit stacked under it, and a `label` under that. Calories are `ink`; the macros take their macro colours.
 - **Meal card:** an open row on `paper` with a `line` hairline above it; one more hairline closes the list. The toggle shows the meal type as a `label` in `ink-muted` with the badges, the meal name in `title`, the kcal in `figure-sm` on the right (`520 kcal`, the unit `ink-muted`) and a `+`/`−` indicator in `mono`. Open, the top hairline turns `ink`, and it shows the description in `body-italic` `ink-muted`, the macros in `figure-sm`, an `INSTRUCTIONS` `label` over numbered steps in `body`, and the tip: a square `blue-soft` box headed by a blue circle and a `TIP` label in `blue`.
 - **Badges:** 11px `mono` 600, uppercase, `radius-soft`. "For two" is `blue` on `blue-soft`. "Assemble 10 min" and "Cook 25 min" are `ink-muted` on `surface-sunken`.
-- **Shopping list:** a square `surface` card with a `line` border, turning `ink` when open. Its header band is solid `red` with `on-red` text: a square and `SHOPPING` in `label`, the list label in `title` and its note in `small`, and the `+`/`−` indicator. Open, category names in `label` `red` over items in `body` `ink`, separated by `line` rules.
+- **Shopping list:** a square `surface` card with a `line` border, turning `ink` when open. Its header band is solid `red` with `on-red` text: a square and `SHOPPING` in `label`, the list label in `title` and its note in `small`, and the `+`/`−` indicator. Open, category names in `label` `red` over items in `body` `ink`, separated by `line` rules. Each item is a checkbox row, a native checkbox in a label with the item's text. The box is an 18px square (`radius-square`) with a 1.5px `ink` ring on `surface`, `space-3` before the text and aligned to its first line. Hover fills an unticked box `surface-sunken`. Ticked, the box fills solid `red` with a `red` ring and no tick glyph, and the text turns `ink-muted` with a 1.5px line-through. Focus is the standard outline. The row is a 40px tap target (9px above and below a 22px line) between the same `line` rules, and a long item wraps under its own text, not under the box. Ticking never reorders the list. Ticks are kept on the device in local storage under `sous-shopping-ticks`, next to the theme choice (`sous-theme`), and never leave it.
 - **Prep session:** like the shopping list with a solid `yellow` band, `on-yellow` text, a triangle and `PREP`. Open, each task is a square `surface-sunken` block with its name in `body` semibold, its time as an `ink` chip on `yellow-soft`, and its instructions in `body` `ink-muted`. The prep introduction sits above the cards in `body` `ink-muted`.
 - **Reminder:** a square `surface-sunken` block with a dashed `line-strong` border, its icon, the title in `body` semibold and the body in `small` `ink-muted`.
 - **Week list:** one square `surface` panel with `line` dividers; each row has `Week 46` in `title`, `· 2026` in `ink-muted`, its range in `small` `ink-muted` and a `›` in `mono` on the right.
