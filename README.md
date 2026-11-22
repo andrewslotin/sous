@@ -1,4 +1,9 @@
-# Sous
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/logo-dark.svg">
+    <img src="docs/assets/logo-light.svg" alt="Sous">
+  </picture>
+</h1>
 
 Sous is a small, single-household web service that shows a weekly meal plan. It reads the plan from a SQLite
 database and serves it as a mobile-friendly page: daily meals with nutrition summaries, shopping lists and prep
