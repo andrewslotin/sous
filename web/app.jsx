@@ -75,9 +75,152 @@ const THEME_OPTIONS = [
   ["system", "System"],
 ];
 
+const KEEP_AWAKE_KEY = "sous-keep-awake";
+const COARSE_QUERY = "(pointer: coarse)";
+const LANDSCAPE_QUERY = "(orientation: landscape)";
+
+function currentOrientation() {
+  return window.matchMedia(LANDSCAPE_QUERY).matches ? "landscape" : "portrait";
+}
+
+// The stored tap, { on, orientation }, or null (nothing stored, a malformed value or unreadable storage).
+function storedKeepAwake() {
+  try {
+    const value = JSON.parse(window.localStorage.getItem(KEEP_AWAKE_KEY));
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !Array.isArray(value) &&
+      typeof value.on === "boolean" &&
+      (value.orientation === "portrait" || value.orientation === "landscape")
+    ) {
+      return value;
+    }
+  } catch (e) {
+    // Unreadable storage counts as nothing stored.
+  }
+  return null;
+}
+
+// Holds the screen wake lock while it is wanted: the choice is On and the page is visible.
+// At most one request is in flight, and a sentinel that arrives after the choice became Off is released.
+function createWakeLock() {
+  let on = false;
+  let sentinel = null;
+  let pending = false;
+  const sync = () => {
+    if (!on) {
+      if (sentinel !== null) {
+        const s = sentinel;
+        sentinel = null;
+        s.release().catch(() => {});
+      }
+      return;
+    }
+    if (document.visibilityState !== "visible" || sentinel !== null || pending) return;
+    pending = true;
+    navigator.wakeLock.request("screen").then(
+      (s) => {
+        pending = false;
+        if (!on) {
+          s.release().catch(() => {});
+          return;
+        }
+        sentinel = s;
+        s.addEventListener("release", () => {
+          if (sentinel === s) sentinel = null;
+        });
+      },
+      // Refused: stay On and show nothing; the next visibility change or click asks again.
+      () => {
+        pending = false;
+      },
+    );
+  };
+  return {
+    setOn(next) {
+      on = next;
+      sync();
+    },
+    sync,
+  };
+}
+
+// The Keep awake group. On a touch device (coarse pointer) orientation sets the choice: landscape On, portrait Off,
+// and a tap holds until the next rotation. On a desktop the choice is the stored one.
+function KeepAwake() {
+  const [touch] = useState(() => window.matchMedia(COARSE_QUERY).matches);
+  const [on, setOn] = useState(() => {
+    const stored = storedKeepAwake();
+    if (!touch) return stored ? stored.on : false;
+    const orientation = currentOrientation();
+    return stored && stored.orientation === orientation ? stored.on : orientation === "landscape";
+  });
+  const lock = useRef(null);
+  if (lock.current === null) lock.current = createWakeLock();
+  useEffect(() => lock.current.setOn(on), [on]);
+  // A hidden page loses its lock; ask again when it is visible, and on a click if a request was refused.
+  useEffect(() => {
+    const sync = () => lock.current.sync();
+    document.addEventListener("visibilitychange", sync);
+    document.addEventListener("click", sync);
+    return () => {
+      document.removeEventListener("visibilitychange", sync);
+      document.removeEventListener("click", sync);
+    };
+  }, []);
+  // A rotation ends a tap's override.
+  useEffect(() => {
+    if (!touch) return undefined;
+    const query = window.matchMedia(LANDSCAPE_QUERY);
+    const onChange = () => {
+      setOn(query.matches);
+      try {
+        window.localStorage.removeItem(KEEP_AWAKE_KEY);
+      } catch (e) {
+        // Storage is unavailable: the choice still applies to the open page.
+      }
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [touch]);
+  const choose = (next) => {
+    setOn(next);
+    try {
+      window.localStorage.setItem(KEEP_AWAKE_KEY, JSON.stringify({ on: next, orientation: currentOrientation() }));
+    } catch (e) {
+      // Storage is unavailable: the choice still applies to the open page.
+    }
+  };
+  return (
+    <div className="choice keep-awake" role="radiogroup" aria-labelledby="keep-awake-label">
+      <span id="keep-awake-label" className="choice-label keep-awake-label">
+        Keep awake
+      </span>
+      {[
+        ["off", "Off"],
+        ["on", "On"],
+      ].map(([value, label]) => (
+        <label key={value} className="choice-option keep-awake-option">
+          <input
+            type="radio"
+            name="keep-awake"
+            value={value}
+            checked={on === (value === "on")}
+            onChange={() => choose(value === "on")}
+          />
+          <span>{label}</span>
+        </label>
+      ))}
+    </div>
+  );
+}
+
 // The footer: a link to the household profile (every page but the profile's own), then the theme toggle.
 // `from` is the page path the link carries, so the household page can link back to it.
-function ThemeToggle({ profileLink = true, from = null }) {
+// Day pages pass `keepAwake`: the Keep awake group follows Theme, where the browser can hold a wake lock.
+function ThemeToggle({ profileLink = true, from = null, keepAwake = false }) {
+  const showKeepAwake = keepAwake && "wakeLock" in navigator;
   const [choice, setChoice] = useState(storedTheme);
   // While the choice is System, follow the device's preference as it changes.
   useEffect(() => {
@@ -97,6 +240,19 @@ function ThemeToggle({ profileLink = true, from = null }) {
     setChoice(next);
     applyTheme(next);
   };
+  const theme = (
+    <div className="choice theme" role="radiogroup" aria-labelledby="theme-label">
+      <span id="theme-label" className="choice-label theme-label">
+        Theme
+      </span>
+      {THEME_OPTIONS.map(([value, label]) => (
+        <label key={value} className="choice-option theme-option">
+          <input type="radio" name="theme" value={value} checked={choice === value} onChange={() => choose(value)} />
+          <span>{label}</span>
+        </label>
+      ))}
+    </div>
+  );
   return (
     <footer className="footer">
       {profileLink && (
@@ -104,17 +260,17 @@ function ThemeToggle({ profileLink = true, from = null }) {
           Household
         </a>
       )}
-      <div className="theme" role="radiogroup" aria-labelledby="theme-label">
-        <span id="theme-label" className="theme-label">
-          Theme
-        </span>
-        {THEME_OPTIONS.map(([value, label]) => (
-          <label key={value} className="theme-option">
-            <input type="radio" name="theme" value={value} checked={choice === value} onChange={() => choose(value)} />
-            <span>{label}</span>
-          </label>
-        ))}
-      </div>
+      {showKeepAwake ? (
+        <div className="footer-row">
+          {theme}
+          <span className="footer-dot" aria-hidden="true">
+            ·
+          </span>
+          <KeepAwake />
+        </div>
+      ) : (
+        theme
+      )}
     </footer>
   );
 }
@@ -422,7 +578,7 @@ function DayShell({ page, week, heading, subtitle, date, children }) {
       </div>
       <Calendar open={open} page={page} week={week} />
       {children}
-      <ThemeToggle from={datePath(dayNum)} />
+      <ThemeToggle from={datePath(dayNum)} keepAwake />
     </div>
   );
 }

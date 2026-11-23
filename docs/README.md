@@ -26,4 +26,4 @@ Implement features in the order below. Each iteration includes its own verificat
 | 18 | [Read-first household page](features/018-household-read-first.md) | Done | 17 |
 | 19 | [Back link on the household page](features/019-household-back-link.md) | Done | 18 |
 | 20 | [Shopping checkboxes](features/020-shopping-checkboxes.md) | Done | 14 |
-| 21 | [Keep the screen awake](features/021-keep-screen-awake.md) | Planned | 14 |
+| 21 | [Keep the screen awake](features/021-keep-screen-awake.md) | In progress | 14 |

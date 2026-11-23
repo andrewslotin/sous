@@ -5102,7 +5102,8 @@ fn footer_link_is_on_every_page_but_the_profile() {
             assert_eq!(
                 h.js("(() => { const f = document.querySelector('.footer'); \
                       return f.firstElementChild === f.querySelector('a.footer-link') \
-                      && f.children[1].classList.contains('theme'); })()"),
+                      && (f.children[1].classList.contains('theme') \
+                          || f.children[1].classList.contains('footer-row')); })()"),
                 true,
                 "{path}"
             );
@@ -6214,6 +6215,846 @@ fn visual_capture_020() {
         for t in [LIGHT, DARK] {
             h.use_theme(&t);
             h.capture(width, &format!("shopping-ticks-{}", t.scheme));
+        }
+        h.use_theme(&LIGHT);
+    }
+}
+
+// ---- Feature 21: keep the screen awake -------------------------------------------------------
+
+const KEEP_AWAKE_KEY: &str = "sous-keep-awake";
+/// The narrowest footer width (px) where Theme, the dot and Keep awake fit on one line; pinned in styles.css.
+const KEEP_AWAKE_ROW_MIN: f64 = 376.0;
+
+/// Init script: a `navigator.wakeLock` stub. `mode` is "resolve", "reject" or "late" (resolved by
+/// `__wakeResolveAll()`); `window.__wake.mode` can change at runtime. Also `__setVisibility`.
+fn wake_stub(mode: &str) -> String {
+    r#"(() => {
+  const w = window.__wake = { mode: "__MODE__", requests: 0, types: [], appReleases: 0, sentinels: [], resolvers: [],
+    held() { return this.sentinels.filter((s) => !s.released).length; } };
+  const make = (type) => {
+    const s = new EventTarget();
+    s.released = false;
+    s.type = type;
+    s.release = () => {
+      if (!s.released) { w.appReleases++; s.released = true; s.dispatchEvent(new Event("release")); }
+      return Promise.resolve();
+    };
+    w.sentinels.push(s);
+    return s;
+  };
+  const api = {
+    request(type) {
+      w.requests++;
+      w.types.push(type);
+      if (w.mode === "reject") return Promise.reject(new DOMException("denied", "NotAllowedError"));
+      if (w.mode === "late") return new Promise((resolve) => w.resolvers.push(() => resolve(make(type))));
+      return Promise.resolve(make(type));
+    },
+  };
+  Object.defineProperty(Navigator.prototype, "wakeLock", { configurable: true, get() { return api; } });
+  window.__wakeResolveAll = () => w.resolvers.splice(0).forEach((f) => f());
+  window.__wakeBrowserRelease = () => w.sentinels.forEach((s) => {
+    if (!s.released) { s.released = true; s.dispatchEvent(new Event("release")); }
+  });
+  window.__setVisibility = (state) => {
+    Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+    Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
+    document.dispatchEvent(new Event("visibilitychange"));
+  };
+})();"#
+        .replace("__MODE__", mode)
+}
+
+/// Init script: a browser without the Screen Wake Lock API.
+fn no_wake_lock() -> &'static str {
+    "delete Navigator.prototype.wakeLock;"
+}
+
+/// Init script: `(pointer: coarse)` fixed to `coarse`; one shared `(orientation: landscape)` list that
+/// `window.__rotate(bool)` flips and fires `change` on. A reload keeps the device's current orientation.
+fn media_stub(coarse: bool, landscape: bool) -> String {
+    r#"(() => {
+  const real = window.matchMedia.bind(window);
+  const saved = sessionStorage.getItem("__landscape");
+  let landscape = saved === null ? __LANDSCAPE__ : saved === "true";
+  const land = new EventTarget();
+  Object.defineProperty(land, "matches", { get: () => landscape });
+  land.media = "(orientation: landscape)";
+  land.addListener = (f) => land.addEventListener("change", f);
+  land.removeListener = (f) => land.removeEventListener("change", f);
+  const coarse = { matches: __COARSE__, media: "(pointer: coarse)", onchange: null,
+    addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} };
+  window.matchMedia = (q) => (q === "(orientation: landscape)" ? land : q === "(pointer: coarse)" ? coarse : real(q));
+  window.__rotate = (value) => {
+    landscape = value;
+    sessionStorage.setItem("__landscape", String(value));
+    const e = new Event("change");
+    e.matches = value;
+    land.dispatchEvent(e);
+  };
+})();"#
+        .replace("__LANDSCAPE__", &landscape.to_string())
+        .replace("__COARSE__", &coarse.to_string())
+}
+
+fn awake_json(on: bool, orientation: &str) -> String {
+    serde_json::json!({ "on": on, "orientation": orientation }).to_string()
+}
+
+/// A short pause before asserting that something did NOT happen.
+fn settle() {
+    std::thread::sleep(Duration::from_millis(300));
+}
+
+impl Harness {
+    fn wake(&self, expr: &str) -> serde_json::Value {
+        self.js(&format!("window.__wake.{expr}"))
+    }
+
+    fn wake_requests(&self) -> u64 {
+        self.wake("requests").as_u64().unwrap()
+    }
+
+    fn wake_held(&self) -> u64 {
+        self.wake("held()").as_u64().unwrap()
+    }
+
+    fn wake_app_releases(&self) -> u64 {
+        self.wake("appReleases").as_u64().unwrap()
+    }
+
+    fn wait_requests(&self, n: u64) {
+        self.wait_for(&format!("window.__wake.requests === {n}"));
+    }
+
+    /// The checked Keep awake option: "on" or "off".
+    fn awake(&self) -> String {
+        self.js("document.querySelector('input[name=keep-awake]:checked').value")
+            .as_str()
+            .unwrap()
+            .to_string()
+    }
+
+    fn wait_awake(&self, value: &str) {
+        self.wait_for(&format!(
+            "document.querySelector('input[name=keep-awake]:checked')?.value === '{value}'"
+        ));
+    }
+
+    /// Tap Off or On and wait for it to be checked.
+    fn choose_awake(&self, value: &str) {
+        self.js(&format!(
+            "document.querySelector('input[name=keep-awake][value={value}]').click()"
+        ));
+        self.wait_awake(value);
+    }
+
+    fn stored_awake(&self) -> serde_json::Value {
+        self.js(&format!(
+            "JSON.parse(localStorage.getItem('{KEEP_AWAKE_KEY}'))"
+        ))
+    }
+
+    fn stored_awake_raw(&self) -> serde_json::Value {
+        self.js(&format!("localStorage.getItem('{KEEP_AWAKE_KEY}')"))
+    }
+
+    fn store_awake_raw(&self, raw: &str) {
+        self.js(&format!(
+            "localStorage.setItem('{KEEP_AWAKE_KEY}', {})",
+            serde_json::to_string(raw).unwrap()
+        ));
+    }
+
+    fn rotate(&self, landscape: bool) {
+        self.js(&format!("window.__rotate({landscape})"));
+    }
+
+    fn visibility(&self, state: &str) {
+        self.js(&format!("window.__setVisibility('{state}')"));
+    }
+
+    /// A click on a non-interactive part of the page.
+    fn click_page(&self) {
+        self.js("document.body.click()");
+    }
+
+    /// Reload the day page in `landscape` (the device's orientation) with `stored` in storage.
+    fn awake_load(&self, landscape: bool, stored: Option<&str>) {
+        self.js(&format!(
+            "sessionStorage.setItem('__landscape', '{landscape}')"
+        ));
+        match stored {
+            Some(raw) => self.store_awake_raw(raw),
+            None => {
+                self.js(&format!("localStorage.removeItem('{KEEP_AWAKE_KEY}')"));
+            }
+        }
+        self.goto("/2026-10-26");
+        self.wait_for("document.querySelector('input[name=keep-awake]:checked') !== null");
+    }
+
+    fn set_viewport(&self, width: u32) {
+        self.tab
+            .call_method(SetDeviceMetricsOverride {
+                width,
+                height: 900,
+                device_scale_factor: 1.0,
+                mobile: false,
+                scale: None,
+                screen_width: None,
+                screen_height: None,
+                position_x: None,
+                position_y: None,
+                dont_set_visible_size: None,
+                screen_orientation: None,
+                viewport: None,
+                display_feature: None,
+                device_posture: None,
+            })
+            .unwrap();
+    }
+}
+
+/// A harness on a phone or tablet (`coarse`) or a laptop, with the wake lock stub in `mode`.
+fn awake_harness(coarse: bool, landscape: bool, mode: &str) -> Harness {
+    let h = Harness::start("", 1280);
+    h.add_init_script(&media_stub(coarse, landscape));
+    h.add_init_script(&wake_stub(mode));
+    h
+}
+
+/// AC1: the group, its dot and its place; absent on every other page kind.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_group_only_on_day_pages() {
+    let h = Harness::start("", 1280);
+    h.add_init_script(&wake_stub("resolve"));
+    for path in ["/2026-10-26", "/2026/45"] {
+        h.goto(path);
+        assert_eq!(h.count(".keep-awake[role=radiogroup]"), 1, "{path}");
+        assert_eq!(h.text(".keep-awake-label"), "Keep awake", "{path}");
+        assert_eq!(
+            h.js("document.querySelector('.keep-awake').getAttribute('aria-labelledby')"),
+            "keep-awake-label"
+        );
+        assert_eq!(h.js("document.getElementById('keep-awake-label') === document.querySelector('.keep-awake-label')"), true);
+        assert_eq!(h.texts(".keep-awake-option"), ["Off", "On"], "{path}");
+        assert_eq!(
+            h.js("[...document.querySelectorAll('input[name=keep-awake]')].map(i => i.type + ':' + i.value)"),
+            serde_json::json!(["radio:off", "radio:on"])
+        );
+        assert_eq!(h.count(".footer-dot"), 1, "{path}");
+        assert_eq!(h.text(".footer-dot"), "·");
+        assert_eq!(
+            h.js("document.querySelector('.footer-dot').getAttribute('aria-hidden')"),
+            "true"
+        );
+        // Theme, the dot, Keep awake, in one row inside the footer, after the household link.
+        assert_eq!(
+            h.js("(() => { const r = document.querySelector('.footer-row'); \
+                  return [r.parentElement.className, ...[...r.children].map(c => c.className)]; })()"),
+            serde_json::json!(["footer", "choice theme", "footer-dot", "choice keep-awake"]),
+            "{path}"
+        );
+        assert_eq!(h.count(".footer-row .theme input[name=theme]"), 3);
+    }
+    assert_eq!(h.count(".day-heading"), 1);
+
+    for path in ["/2026", "/profile", "/2026-02-30", "/2025/53"] {
+        h.goto_page(path);
+        assert_eq!(
+            h.count(".keep-awake, .footer-dot, .footer-row"),
+            0,
+            "{path}"
+        );
+        assert_eq!(h.count("input[name=keep-awake]"), 0, "{path}");
+        assert_eq!(
+            h.js("document.querySelector('.footer .theme').parentElement.className"),
+            "footer",
+            "{path}"
+        );
+        assert_eq!(h.count(".footer input[name=theme]"), 3, "{path}");
+    }
+}
+
+/// AC2: without the API there is no group, no request, and rotation changes nothing.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_absent_without_the_api() {
+    let h = Harness::start("", 1280);
+    let stored = awake_json(true, "landscape");
+    h.store_awake_raw(&stored);
+    h.add_init_script(&media_stub(true, true));
+    h.add_init_script(no_wake_lock());
+    h.goto("/2026-10-26");
+    assert_eq!(h.js("'wakeLock' in navigator"), false);
+    assert_eq!(h.count(".keep-awake, .footer-dot, .footer-row"), 0);
+    assert_eq!(
+        h.js("document.querySelector('.footer .theme').parentElement.className"),
+        "footer"
+    );
+    assert_eq!(h.count(".footer input[name=theme]"), 3);
+    h.rotate(false);
+    h.rotate(true);
+    settle();
+    assert_eq!(h.stored_awake_raw(), serde_json::json!(stored));
+}
+
+/// AC3: the load state on a touch device, with nothing stored, a matching tap and a mismatching one.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_touch_load_follows_orientation() {
+    let h = awake_harness(true, true, "resolve");
+
+    // Nothing stored.
+    h.awake_load(true, None);
+    assert_eq!(h.awake(), "on");
+    h.wait_requests(1);
+    assert_eq!(h.wake("types"), serde_json::json!(["screen"]));
+    h.wait_for("window.__wake.held() === 1");
+    h.awake_load(false, None);
+    assert_eq!(h.awake(), "off");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+    // Loading changes nothing in storage.
+    assert_eq!(h.stored_awake_raw(), serde_json::Value::Null);
+
+    // A tap made in this orientation holds.
+    h.awake_load(true, Some(&awake_json(false, "landscape")));
+    assert_eq!(h.awake(), "off");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+    h.awake_load(false, Some(&awake_json(true, "portrait")));
+    assert_eq!(h.awake(), "on");
+    h.wait_requests(1);
+    assert_eq!(h.wake_held(), 1);
+
+    // A tap made in the other orientation is ignored, and stays stored.
+    let stale = awake_json(false, "portrait");
+    h.awake_load(true, Some(&stale));
+    assert_eq!(h.awake(), "on");
+    h.wait_requests(1);
+    assert_eq!(h.stored_awake_raw(), serde_json::json!(stale));
+    h.awake_load(false, Some(&awake_json(true, "landscape")));
+    assert_eq!(h.awake(), "off");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+}
+
+/// AC4: a rotation sets the choice, takes or drops the lock, and clears the stored tap without moving focus.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_rotation_switches_and_clears_the_tap() {
+    let h = awake_harness(true, false, "resolve");
+    h.awake_load(false, Some(&awake_json(false, "portrait")));
+    assert_eq!(h.awake(), "off");
+    h.js("(() => { const i = document.querySelector('input[name=keep-awake][value=off]'); i.focus(); window.__focused = i; })()");
+    assert_eq!(h.js("document.activeElement === window.__focused"), true);
+
+    h.rotate(true);
+    h.wait_awake("on");
+    h.wait_requests(1);
+    h.wait_for("window.__wake.held() === 1");
+    assert_eq!(h.stored_awake_raw(), serde_json::Value::Null);
+    assert_eq!(h.js("document.activeElement === window.__focused"), true);
+
+    h.store_awake_raw(&awake_json(true, "landscape"));
+    h.rotate(false);
+    h.wait_awake("off");
+    h.wait_for("window.__wake.appReleases === 1");
+    assert_eq!(h.wake_held(), 0);
+    assert_eq!(h.stored_awake_raw(), serde_json::Value::Null);
+    assert_eq!(h.js("document.activeElement === window.__focused"), true);
+}
+
+/// AC5: on a touch device a tap holds across reloads and pages, until the next rotation.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_touch_tap_holds_until_rotation() {
+    let h = awake_harness(true, true, "resolve");
+    h.awake_load(true, None);
+    h.wait_for("window.__wake.held() === 1");
+    h.choose_awake("off");
+    h.wait_for("window.__wake.held() === 0");
+    assert_eq!(h.wake_app_releases(), 1);
+    assert_eq!(
+        h.stored_awake(),
+        serde_json::json!({ "on": false, "orientation": "landscape" })
+    );
+    h.goto("/2026-10-26");
+    assert_eq!(h.awake(), "off");
+    h.goto("/2026-10-27");
+    assert_eq!(h.awake(), "off");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+    h.rotate(false);
+    h.rotate(true);
+    h.wait_awake("on");
+    h.wait_requests(1);
+    assert_eq!(h.stored_awake_raw(), serde_json::Value::Null);
+
+    // The other round: a tap on On in portrait.
+    h.awake_load(false, None);
+    assert_eq!(h.awake(), "off");
+    h.choose_awake("on");
+    h.wait_requests(1);
+    h.wait_for("window.__wake.held() === 1");
+    assert_eq!(
+        h.stored_awake(),
+        serde_json::json!({ "on": true, "orientation": "portrait" })
+    );
+    h.goto("/2026-10-26");
+    assert_eq!(h.awake(), "on");
+    h.wait_requests(1);
+    h.rotate(true);
+    h.rotate(false);
+    h.wait_awake("off");
+    assert_eq!(h.stored_awake_raw(), serde_json::Value::Null);
+}
+
+/// AC6: on a desktop the stored choice rules, whatever the orientation.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_desktop_uses_the_stored_choice() {
+    let h = awake_harness(false, true, "resolve");
+    for landscape in [true, false] {
+        h.awake_load(landscape, None);
+        assert_eq!(h.awake(), "off");
+    }
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+
+    let stored = awake_json(true, "portrait");
+    for landscape in [true, false] {
+        h.awake_load(landscape, Some(&stored));
+        assert_eq!(h.awake(), "on", "landscape={landscape}");
+        h.wait_requests(1);
+    }
+    h.rotate(true);
+    h.rotate(false);
+    settle();
+    assert_eq!(h.awake(), "on");
+    assert_eq!(h.wake_requests(), 1);
+    assert_eq!(h.stored_awake_raw(), serde_json::json!(stored));
+
+    // A tap survives a reload, in the other orientation too.
+    h.awake_load(true, None);
+    h.choose_awake("on");
+    assert_eq!(
+        h.stored_awake(),
+        serde_json::json!({ "on": true, "orientation": "landscape" })
+    );
+    h.rotate(false);
+    h.goto("/2026-10-26");
+    assert_eq!(h.awake(), "on");
+
+    // The default: real headless Chrome has a fine pointer.
+    let h = Harness::start("", 1280);
+    h.add_init_script(&wake_stub("resolve"));
+    h.goto("/2026-10-26");
+    assert_eq!(h.js("matchMedia('(pointer: coarse)').matches"), false);
+    assert_eq!(h.awake(), "off");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+}
+
+/// AC7: a lock the browser released is asked for again when the page is visible, with On only.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_reacquires_when_visible() {
+    let h = awake_harness(true, true, "resolve");
+    h.awake_load(true, None);
+    h.wait_for("window.__wake.held() === 1");
+    h.js("window.__wakeBrowserRelease()");
+    h.visibility("hidden");
+    settle();
+    assert_eq!(h.wake_requests(), 1);
+    assert_eq!(h.wake_held(), 0);
+    h.visibility("visible");
+    h.wait_requests(2);
+    h.wait_for("window.__wake.held() === 1");
+
+    h.awake_load(false, None);
+    assert_eq!(h.awake(), "off");
+    h.visibility("hidden");
+    h.visibility("visible");
+    settle();
+    assert_eq!(h.wake_requests(), 0);
+}
+
+/// AC8: a refused request shows and logs nothing, and the next visibility change or click asks again.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_rejected_requests_retry_quietly() {
+    let h = Harness::start("", 1280);
+    h.add_init_script(ERROR_RECORDER);
+    h.add_init_script(&media_stub(true, true));
+    h.add_init_script(&wake_stub("reject"));
+    h.awake_load(true, None);
+    h.wait_requests(1);
+    settle();
+    assert_eq!(h.awake(), "on");
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+    h.visibility("hidden");
+    h.visibility("visible");
+    h.wait_requests(2);
+    h.click_page();
+    h.wait_requests(3);
+    assert_eq!(h.awake(), "on");
+
+    // Granted at last: a click while held, or with Off, asks for nothing.
+    h.js("window.__wake.mode = 'resolve'");
+    h.click_page();
+    h.wait_requests(4);
+    h.wait_for("window.__wake.held() === 1");
+    h.click_page();
+    settle();
+    assert_eq!(h.wake_requests(), 4);
+    h.choose_awake("off");
+    h.wait_for("window.__wake.held() === 0");
+    h.click_page();
+    h.visibility("hidden");
+    h.visibility("visible");
+    settle();
+    assert_eq!(h.wake_requests(), 4);
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+}
+
+/// AC8: one request at a time; a sentinel that arrives after Off is released.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_requests_never_overlap() {
+    let h = awake_harness(true, true, "late");
+    h.awake_load(true, None);
+    h.wait_requests(1);
+    h.visibility("visible");
+    h.click_page();
+    h.rotate(false);
+    h.rotate(true);
+    h.click_page();
+    settle();
+    assert_eq!(h.awake(), "on");
+    assert_eq!(h.wake_requests(), 1);
+    h.js("window.__wakeResolveAll()");
+    h.wait_for("window.__wake.held() === 1");
+    assert_eq!(h.wake_requests(), 1);
+
+    // Off while the request is in flight: the sentinel is released on arrival.
+    h.awake_load(true, None);
+    h.wait_requests(1);
+    h.choose_awake("off");
+    h.js("window.__wakeResolveAll()");
+    h.wait_for("window.__wake.appReleases === 1");
+    assert_eq!(h.wake_held(), 0);
+    settle();
+    assert_eq!(h.wake_requests(), 1);
+}
+
+/// AC9: unreadable storage, and malformed stored values.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_survives_broken_storage() {
+    // (a) Every storage access throws: choices and rotations still apply to the open page.
+    let h = Harness::start("", 1280);
+    h.add_init_script(&format!(
+        "{ERROR_RECORDER} Object.defineProperty(window, 'localStorage', \
+         {{ configurable: true, get() {{ throw new Error('denied'); }} }});"
+    ));
+    h.add_init_script(&media_stub(true, true));
+    h.add_init_script(&wake_stub("resolve"));
+    h.goto("/2026-10-26");
+    assert_eq!(
+        h.js("(() => { try { window.localStorage; return false; } catch (e) { return true; } })()"),
+        true
+    );
+    assert_eq!(h.awake(), "on");
+    h.wait_for("window.__wake.held() === 1");
+    h.choose_awake("off");
+    h.wait_for("window.__wake.held() === 0");
+    h.choose_awake("on");
+    h.wait_for("window.__wake.held() === 1");
+    h.rotate(false);
+    h.wait_awake("off");
+    h.wait_for("window.__wake.held() === 0");
+    h.rotate(true);
+    h.wait_awake("on");
+    h.wait_for("window.__wake.held() === 1");
+    assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+
+    // (b) Malformed values count as nothing stored, are left alone on load, and the next tap replaces them.
+    let junk = [
+        "{not json",
+        "[]",
+        "\"on\"",
+        "{\"on\":\"yes\",\"orientation\":\"landscape\"}",
+        "{\"on\":true}",
+        "{\"on\":true,\"orientation\":\"sideways\"}",
+    ];
+    for (coarse, nothing, tap, tapped) in [(true, "on", "off", false), (false, "off", "on", true)] {
+        let h = awake_harness(coarse, true, "resolve");
+        h.add_init_script(ERROR_RECORDER);
+        for raw in junk {
+            h.awake_load(true, Some(raw));
+            assert_eq!(h.awake(), nothing, "coarse={coarse} {raw}");
+            assert_eq!(h.stored_awake_raw(), serde_json::json!(raw));
+            h.choose_awake(tap);
+            assert_eq!(
+                h.stored_awake(),
+                serde_json::json!({ "on": tapped, "orientation": "landscape" }),
+                "coarse={coarse} {raw}"
+            );
+        }
+        assert_eq!(h.js("window.__errors"), serde_json::json!([]));
+    }
+}
+
+/// AC10: choosing, rotating and taking or dropping the lock send nothing to the server.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_makes_no_request() {
+    let h = awake_harness(true, true, "resolve");
+    h.add_init_script(
+        "(() => { window.__net = 0; \
+         const f = window.fetch; window.fetch = function (...a) { window.__net++; return f.apply(this, a); }; \
+         const o = XMLHttpRequest.prototype.open; \
+         XMLHttpRequest.prototype.open = function (...a) { window.__net++; return o.apply(this, a); }; \
+         if (navigator.sendBeacon) { const b = navigator.sendBeacon; \
+           navigator.sendBeacon = function (...a) { window.__net++; return b.apply(this, a); }; } })();",
+    );
+    h.awake_load(true, None);
+    h.wait_for("window.__wake.held() === 1");
+    let before = h.requested_urls().len();
+    h.choose_awake("off");
+    h.choose_awake("on");
+    h.rotate(false);
+    h.wait_awake("off");
+    h.rotate(true);
+    h.wait_awake("on");
+    h.js("window.__wakeBrowserRelease()");
+    h.visibility("hidden");
+    h.visibility("visible");
+    h.click_page();
+    h.wait_for("window.__wake.held() === 1");
+    settle();
+    assert_eq!(h.requested_urls().len(), before);
+    assert_eq!(h.js("window.__net"), 0);
+}
+
+const AWAKE_LABEL_PROPS: [&str; 6] = [
+    "fontSize",
+    "lineHeight",
+    "fontWeight",
+    "letterSpacing",
+    "textTransform",
+    "color",
+];
+const AWAKE_OPTION_PROPS: [&str; 8] = [
+    "fontSize",
+    "lineHeight",
+    "color",
+    "textDecorationLine",
+    "textDecorationStyle",
+    "textDecorationThickness",
+    "textUnderlineOffset",
+    "textDecorationColor",
+];
+
+/// AC11: the group looks and behaves like the Theme group, in both themes.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_matches_the_theme_toggle() {
+    use headless_chrome::browser::tab::point::Point;
+    let h = Harness::start("", 1280);
+    h.add_init_script(&wake_stub("resolve"));
+    h.goto("/2026-10-26");
+    for t in [LIGHT, DARK] {
+        h.use_theme(&t);
+        let what = t.scheme;
+        assert_eq!(
+            h.styles(".keep-awake-label", &AWAKE_LABEL_PROPS),
+            h.styles(".theme-label", &AWAKE_LABEL_PROPS),
+            "{what} label"
+        );
+        for (awake, theme, ink) in [
+            (
+                ".keep-awake-option input:checked + span",
+                ".theme-option input:checked + span",
+                "ink",
+            ),
+            (
+                ".keep-awake-option input:not(:checked) + span",
+                ".theme-option input:not(:checked) + span",
+                "ink-muted",
+            ),
+        ] {
+            let styles = h.styles(awake, &AWAKE_OPTION_PROPS);
+            assert_eq!(
+                styles,
+                h.styles(theme, &AWAKE_OPTION_PROPS),
+                "{what} {awake}"
+            );
+            assert_eq!(styles[2], t.rgb(ink), "{what} {awake}");
+        }
+        let chosen = h.styles(
+            ".keep-awake-option input:checked + span",
+            &AWAKE_OPTION_PROPS,
+        );
+        assert_eq!(
+            chosen[3..7],
+            ["underline", "solid", "1.5px", "5px"],
+            "{what}"
+        );
+
+        // Hover turns an unchosen option to ink.
+        h.tab
+            .find_element("input[name=keep-awake][value=on]")
+            .unwrap()
+            .move_mouse_over()
+            .unwrap();
+        assert_eq!(
+            h.styles(".keep-awake-option input[value=on] + span", &["color"]),
+            [t.rgb("ink")],
+            "{what} hover"
+        );
+        h.tab.move_mouse_to_point(Point { x: 2.0, y: 2.0 }).unwrap();
+
+        // Keyboard focus: the standard 2px outline at a 2px offset, on the span.
+        h.tab_to("input[name=keep-awake]");
+        assert_eq!(
+            h.js(
+                "(() => { const s = getComputedStyle(document.activeElement.nextElementSibling); \
+                  return [s.outlineStyle, s.outlineWidth, s.outlineColor, s.outlineOffset]; })()"
+            ),
+            serde_json::json!(["solid", "2px", t.rgb("ink"), "2px"]),
+            "{what} focus"
+        );
+    }
+    // Arrow keys move between the options.
+    assert_eq!(h.awake(), "off");
+    h.press("ArrowRight");
+    h.wait_awake("on");
+    h.wait_for("window.__wake.held() === 1");
+}
+
+/// The width of Theme, the dot and Keep awake side by side, plus the two 16px gaps, with Jost loaded.
+fn measure_row_min(h: &Harness) -> f64 {
+    h.wait_for("document.fonts.status === 'loaded' && document.fonts.check('14px Jost')");
+    h.js(
+        "(() => { const w = (s) => document.querySelector(s).getBoundingClientRect().width; \
+         return w('.theme') + w('.footer-dot') + w('.keep-awake') + 32; })()",
+    )
+    .as_f64()
+    .unwrap()
+}
+
+/// The footer's rectangles, for the layout checks.
+fn footer_layout(h: &Harness) -> serde_json::Value {
+    h.js(
+        "(() => { const r = (s) => { const b = document.querySelector(s).getBoundingClientRect(); \
+           return { left: b.left, right: b.right, top: b.top, bottom: b.bottom }; }; \
+         return { footer: r('.footer'), theme: r('.theme'), awake: r('.keep-awake'), dot: r('.footer-dot'), \
+           dotDisplay: getComputedStyle(document.querySelector('.footer-dot')).display, \
+           noScroll: document.documentElement.scrollWidth <= window.innerWidth }; })()",
+    )
+}
+
+fn edge(l: &serde_json::Value, name: &str, side: &str) -> f64 {
+    l[name][side].as_f64().unwrap()
+}
+
+/// AC11: one line from the pinned footer width, two lines without the dot below it, nothing overflowing.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn keep_awake_layout_follows_the_breakpoint() {
+    let h = Harness::start("", 1280);
+    h.add_init_script(&wake_stub("resolve"));
+    h.goto("/2026-10-26");
+    let measured = measure_row_min(&h);
+    assert_eq!(measured.ceil(), KEEP_AWAKE_ROW_MIN, "measured {measured}");
+    let b = KEEP_AWAKE_ROW_MIN;
+
+    // 1280px: one line.
+    let l = footer_layout(&h);
+    assert!((edge(&l, "theme", "top") - edge(&l, "awake", "top")).abs() <= 1.0);
+    assert_ne!(l["dotDisplay"], "none");
+
+    // The viewport that gives the footer `width`: the difference is the column's padding.
+    h.set_viewport(375);
+    let footer = footer_layout(&h);
+    let diff = 375.0 - (edge(&footer, "footer", "right") - edge(&footer, "footer", "left"));
+    let at = |width: f64| {
+        h.set_viewport((width + diff) as u32);
+        let l = footer_layout(&h);
+        let got = edge(&l, "footer", "right") - edge(&l, "footer", "left");
+        assert!((got - width).abs() < 0.01, "footer {got} for {width}");
+        l
+    };
+    for width in [b + 1.0, b] {
+        let l = at(width);
+        let what = format!("footer {width}");
+        assert!(
+            (edge(&l, "theme", "top") - edge(&l, "awake", "top")).abs() <= 1.0,
+            "{what} one line"
+        );
+        assert_ne!(l["dotDisplay"], "none", "{what}");
+        assert!(
+            (edge(&l, "dot", "left") - edge(&l, "theme", "right") - 16.0).abs() <= 0.5,
+            "{what} dot gap left"
+        );
+        assert!(
+            (edge(&l, "awake", "left") - edge(&l, "dot", "right") - 16.0).abs() <= 0.5,
+            "{what} dot gap right"
+        );
+        let left = edge(&l, "theme", "left") - edge(&l, "footer", "left");
+        let right = edge(&l, "footer", "right") - edge(&l, "awake", "right");
+        assert!((left - right).abs() <= 1.0, "{what} centred {left} {right}");
+        assert_eq!(l["noScroll"], true, "{what}");
+    }
+    let l = at(b - 1.0);
+    assert_eq!(l["dotDisplay"], "none");
+    assert!(
+        (edge(&l, "awake", "top") - edge(&l, "theme", "bottom") - 16.0).abs() <= 0.5,
+        "two lines, 16px apart"
+    );
+    let middle = (edge(&l, "footer", "left") + edge(&l, "footer", "right")) / 2.0;
+    for name in ["theme", "awake"] {
+        let centre = (edge(&l, name, "left") + edge(&l, name, "right")) / 2.0;
+        assert!((centre - middle).abs() <= 0.5, "{name} centred");
+    }
+
+    // Phone widths: stacked, nothing overflows.
+    for width in [375, 320] {
+        h.set_viewport(width);
+        let l = footer_layout(&h);
+        assert_eq!(l["noScroll"], true, "{width}");
+        assert_eq!(l["dotDisplay"], "none", "{width}");
+        for name in ["theme", "awake"] {
+            assert!(
+                edge(&l, name, "left") >= edge(&l, "footer", "left") - 0.01,
+                "{width} {name}"
+            );
+            assert!(
+                edge(&l, name, "right") <= edge(&l, "footer", "right") + 0.01,
+                "{width} {name}"
+            );
+        }
+    }
+}
+
+/// Full-page PNGs of a day page's footer with Keep awake, at 375 and 1280 px, light and dark.
+#[test]
+#[ignore = "requires Google Chrome; run: cargo test --test browser -- --ignored"]
+fn visual_capture_021() {
+    for width in [375, 1280] {
+        let h = Opts::new().width(width).launch();
+        h.add_init_script(&wake_stub("resolve"));
+        h.goto("/2026-10-26");
+        h.choose_awake("on");
+        for t in [LIGHT, DARK] {
+            h.use_theme(&t);
+            h.capture(width, &format!("keep-awake-{}", t.scheme));
         }
         h.use_theme(&LIGHT);
     }

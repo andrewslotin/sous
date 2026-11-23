@@ -97,6 +97,7 @@ Intentional changes:
 
 - The interface is redesigned after Kandinsky's Bauhaus years: a cream canvas, thin black lines, Jost and mono type, and a primary per job, each with its shape (a blue circle for Sous, a red square for shopping, a yellow triangle for prep). It has no emoji in its own text (household data is rendered as given).
 - Every page ends with a theme toggle: Light, Dark or System. System is the default and follows the device's color-scheme preference.
+- Day pages add a Keep awake setting, Off or On, that keeps the screen awake where the browser supports the Screen Wake Lock API, and that turns On in landscape on phones and tablets.
 - Shopping items become plain lists: rows separated by hairlines, with no bullets. Remove checkbox controls, completion counts, checked colors, and strikethrough state. Feature 20 later brings back a checkbox per item and the strike-through for ticked items. Completion counts stay removed.
 - Display days in ISO week order.
 - Add year and missing-plan pages using the design system's typography and column.
@@ -108,7 +109,7 @@ Move all week-specific text into the database, including the header subtitle, pr
 
 Continue using the existing React component structure. Compile JSX at build time instead of loading Babel in the browser. Bundle React and self-host the reference fonts so page rendering does not depend on public CDNs. The interface uses two self-hosted families: Jost for words and JetBrains Mono for numbers.
 
-Expanded cards and the open calendar are transient browser state. The theme choice and shopping ticks are the only UI state kept, in the browser's local storage. Ticks are stored under `sous-shopping-ticks`, keyed by item id, with the item's text and the day it was ticked. A tick shows only while the item's text matches, expires after 30 days, and is never sent to the server. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
+Expanded cards and the open calendar are transient browser state. The theme choice, shopping ticks and the keep-awake choice are the only UI state kept, in the browser's local storage. Ticks are stored under `sous-shopping-ticks`, keyed by item id, with the item's text and the day it was ticked. A tick shows only while the item's text matches, expires after 30 days, and is never sent to the server. The keep-awake choice is stored under `sous-keep-awake` with the orientation it was made in. With On, day pages hold a screen wake lock while visible. On coarse-pointer devices, orientation sets the choice: landscape On, portrait Off, and a tap overrides until the next rotation. Nothing is sent to the server. Text from the database is rendered as escaped text, never executable HTML. Preserve keyboard access to day links, calendar dates and expandable controls.
 
 ## Database contract
 
