@@ -58,7 +58,8 @@
   A real client picked `get_week` for "today's shopping list" until the descriptions said so.
 - Once the user picks a design option, write the feature spec in `docs/features/` and add it to the tracker. Don't
   launch `implement-feature` unless the user asks for implementation. The skill takes a spec, and the user wanted to
-  review the spec first.
+  review the spec first. A yes to my own offer ("write it up and build it") is not a request to build: I launched
+  the skill on "that would work" for the wake lock, and the user stopped me. Offer only the spec, then ask.
 - When an MCP tool call fails with an error the server state can't explain, first suspect the client's argument
   encoding (Claude Code most likely sent `null` for a `["string","null"]` argument as the text `"null"`). Say so
   instead of blaming the database.
